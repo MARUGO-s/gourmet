@@ -10,11 +10,11 @@ export type SourceMeta = {
 export type Snapshot = {
   source: string;
   date: string;
-  rating: number;
-  reviews: number;
-  pv: number;
-  visits: number;
-  reservations: number;
+  rating: number | null;
+  reviews: number | null;
+  pv: number | null;
+  visits: number | null;
+  reservations: number | null;
 };
 
 export type Review = {
@@ -27,7 +27,7 @@ export type Review = {
   date: string;
 };
 
-export type Kpi = { value: number; delta: number };
+export type Kpi = { value: number | null; delta: number | null; asOf?: string | null };
 
 export type DashboardData = {
   kpis: {
@@ -103,7 +103,7 @@ export type SyncJob = {
   dispatchStatus?: "requesting" | "requested" | "failed" | "unconfigured" | null;
   results: {
     source: string;
-    status: "ok" | "error";
+    status: "ok" | "partial" | "error";
     step?: string;
     message?: string;
     warning?: string;

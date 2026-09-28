@@ -6,8 +6,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getSource } from "./sources.js";
 import { decrypt } from "./crypto.js";
-import { japanDate, validateTabelogResult } from "./sync-data.js";
+import { japanDate } from "./sync-data.js";
 import { collectTabelogPublicData } from "./tabelog-public.js";
+import { collectTabelogMetrics } from "./tabelog-result.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DUMP_DIR = path.join(__dirname, "..", "data", "dump");
@@ -265,6 +266,7 @@ async function extractTabelogReports(page, fallbackName) {
       waitUntil: "domcontentloaded",
       timeout: 30000,
     });
+    await assertAuthenticated(page);
     await page
       .waitForFunction(
         () =>
@@ -279,61 +281,30 @@ async function extractTabelogReports(page, fallbackName) {
     topPages = await page.evaluate(readTopPages);
     summary = await page.evaluate(readRanking);
   } catch (e) {
-    console.error("my_report extraction failed", e);
+    if (/追加認証|店舗管理用ID/.test(String(e?.message))) throw e;
   }
   try {
     await page.goto("https://owner.tabelog.com/owner_rst/access_ranking", {
       waitUntil: "domcontentloaded",
       timeout: 30000,
     });
+    await assertAuthenticated(page);
     await dumpChartPage(page, "access-ranking-tabelog");
     full = await page.evaluate(readRanking);
   } catch (e) {
-    console.error("access_ranking extraction failed", e);
+    if (/追加認証|店舗管理用ID/.test(String(e?.message))) throw e;
   }
   return { topPages, ranking: buildRanking(summary, full, fallbackName) };
 }
 
 // 店舗管理画面トップ（ログイン直後のページ）から呼ぶこと。公開ページへのリンクをトップから探すため。
 async function extractTabelog(page, onProgress) {
-  onProgress("public_metrics", "評価・口コミ数を取得しています");
-  const publicData = await extractTabelogPublicData(page);
-  onProgress("daily_pv", "日別・端末別PVを取得しています");
-  const pv = await extractTabelogDailyPv(page);
-  onProgress("monthly", "月別予約組数・来店指標を取得しています");
-  const reservations = await extractTabelogConversion(page);
-  onProgress("reports", "エリア順位・ページ別PVを取得しています");
-  const reports = await extractTabelogReports(page, publicData.name);
-
-  const problems = [];
-  if (publicData.rating == null || publicData.reviews == null) {
-    problems.push(publicData.issue ?? "店舗の公開ページへのリンクが見つかりません");
-  }
-  if (!pv.daily?.length) {
-    problems.push(`日別PVを取得できません（グラフ系列: ${pv.seriesNames.join("/") || "なし"}）`);
-  }
-  if (!reservations.months?.length) {
-    problems.push(
-      `月別ネット予約組数を取得できません（表の見出し: ${reservations.headers.join(", ") || "表なし"}）`,
-    );
-  }
-  if (problems.length > 0) return err("extraction", `食べログ: ${problems.join(" / ")}`);
-
-  const result = {
-    status: "ok",
-    data: { rating: publicData.rating, reviews: publicData.reviews },
-    daily: pv.daily,
-    monthly: reservations.months,
-    reviews: publicData.reviewItems,
-    reports,
-  };
-  validateTabelogResult(result);
-  const missing = [];
-  if (!reports.ranking) missing.push("エリア順位");
-  if (!reports.topPages) missing.push("よく見られるページ");
-  if (pv.daily.some((d) => [d.pc, d.sp, d.app].some((v) => v == null))) missing.push("一部の端末別PV");
-  if (missing.length) result.warning = `${missing.join("・")}を取得できませんでした。基本数値と、今回取得できた詳細項目を保存します`;
-  return result;
+  return collectTabelogMetrics({
+    publicMetrics: () => extractTabelogPublicData(page),
+    dailyMetrics: () => extractTabelogDailyPv(page),
+    monthlyMetrics: () => extractTabelogConversion(page),
+    detailReports: (name) => extractTabelogReports(page, name),
+  }, onProgress);
 }
 
 // ---------- 食べログ: 公開店舗ページ（JSON-LD）から評価・口コミ数・口コミ本文を抽出 ----------

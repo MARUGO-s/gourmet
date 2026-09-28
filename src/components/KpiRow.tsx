@@ -3,8 +3,9 @@ import type { DashboardData } from "../types";
 type Card = {
   label: string;
   unit?: string;
-  value: number;
-  delta: number;
+  value: number | null;
+  delta: number | null;
+  asOf?: string | null;
   digits?: number;
   compare: string;
 };
@@ -17,7 +18,8 @@ function fmt(n: number, digits = 0) {
   });
 }
 
-function Delta({ delta, unit, digits = 0 }: { delta: number; unit?: string; digits?: number }) {
+function Delta({ delta, unit, digits = 0 }: { delta: number | null; unit?: string; digits?: number }) {
+  if (delta == null) return <span className="text-[11px] text-faint">比較データなし</span>;
   if (delta === 0) {
     return <span className="text-[11px] font-semibold text-faint">±{fmt(0, digits)}</span>;
   }
@@ -37,8 +39,8 @@ function Delta({ delta, unit, digits = 0 }: { delta: number; unit?: string; digi
 export default function KpiRow({ kpis }: { kpis: DashboardData["kpis"] }) {
   const month = kpis.reservations.month;
   const cards: Card[] = [
-    { label: "平均評価", unit: "pt", value: kpis.rating.value, delta: kpis.rating.delta, digits: 2, compare: "前週比" },
-    { label: "累計口コミ", unit: "件", value: kpis.reviews.value, delta: kpis.reviews.delta, compare: "前週比" },
+    { label: "平均評価", unit: "pt", ...kpis.rating, digits: 2, compare: "前週比" },
+    { label: "累計口コミ", unit: "件", ...kpis.reviews, compare: "前週比" },
     { label: "ページビュー（直近7日）", unit: "PV", value: kpis.pv.value, delta: kpis.pv.delta, compare: "前週比" },
     {
       label: month ? `ネット予約組数（${Number(month.slice(5))}月）` : "ネット予約組数（月間）",
@@ -55,14 +57,15 @@ export default function KpiRow({ kpis }: { kpis: DashboardData["kpis"] }) {
           <div className="text-[11px] font-bold tracking-wide text-faint">{c.label}</div>
           <div className="mt-1.5 flex items-baseline gap-1">
             <span className="text-[24px] leading-none font-bold tracking-tight">
-              {fmt(c.value, c.digits ?? 0)}
+              {c.value == null ? "未取得" : fmt(c.value, c.digits ?? 0)}
             </span>
-            {c.unit ? <span className="text-[11px] font-bold text-faint">{c.unit}</span> : null}
+            {c.unit && c.value != null ? <span className="text-[11px] font-bold text-faint">{c.unit}</span> : null}
           </div>
           <div className="mt-2">
             <Delta delta={c.delta} unit={c.unit === "pt" ? "pt" : undefined} digits={c.digits ?? 0} />
-            <span className="ml-1.5 text-[10px] font-semibold text-faint">{c.compare}</span>
+            {c.delta != null ? <span className="ml-1.5 text-[10px] font-semibold text-faint">{c.compare}</span> : null}
           </div>
+          {c.asOf ? <p className="mt-1 text-[10px] text-faint" title="複数サイトの場合は、集計に含まれる取得日のうち最も古い日を表示します">取得日 {c.asOf}</p> : null}
         </div>
       ))}
     </div>

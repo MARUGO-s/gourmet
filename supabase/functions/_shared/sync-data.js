@@ -7,9 +7,13 @@ const validDate = (value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.
   && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
 
 export function validateTabelogResult(result) {
-  if (!Number.isFinite(result.data?.rating) || result.data.rating < 0 || result.data.rating > 5
-    || !count(result.data?.reviews)) throw new Error("評価または口コミ数を正しく取得できませんでした");
-  if (!result.daily?.length || !result.monthly?.length) throw new Error("日別PVまたは月別予約組数がありません");
+  if (!result.data || !Array.isArray(result.daily) || !Array.isArray(result.monthly)) throw new Error("取得結果の形式が不正です");
+  const { rating, reviews } = result.data;
+  if ((rating != null && (!Number.isFinite(rating) || rating < 0 || rating > 5))
+    || (reviews != null && !count(reviews))) throw new Error("評価または口コミ数を正しく取得できませんでした");
+  const missing = rating == null || reviews == null || !result.daily.length || !result.monthly.length;
+  if (missing && (result.status !== "partial" || !result.warning)) throw new Error("評価・口コミ数・日別PV・月別予約組数に未取得の項目があります");
+  if (rating == null && reviews == null && !result.daily.length && !result.monthly.length) throw new Error("保存できる数値がありません");
   const dates = new Set();
   for (const row of result.daily) {
     if (!validDate(row.date) || !count(row.pv) || dates.has(row.date)) throw new Error("日別PVの日付または数値が不正です");
@@ -41,7 +45,8 @@ export function snapshotUpdates(userId, source, result, today = japanDate()) {
   if (result.daily) {
     for (const d of result.daily) add(d.date, { pv: d.pv });
     for (const m of result.monthly ?? []) add(`${m.month}-01`, { reservations: m.reservations });
-    add(today, { rating: result.data.rating, reviews: result.data.reviews });
+    const current = Object.fromEntries(Object.entries(result.data ?? {}).filter(([key, value]) => ["rating", "reviews"].includes(key) && value != null));
+    if (Object.keys(current).length) add(today, current);
   } else {
     add(today, Object.fromEntries(Object.entries(result.data ?? {}).filter(([, v]) => v != null)));
   }
@@ -51,7 +56,7 @@ export function snapshotUpdates(userId, source, result, today = japanDate()) {
 // 同じ行のPV・予約・評価をまとめる。取得対象外の既存列を0で上書きしない。
 export function mergeSnapshots(updates, existing) {
   const byDate = new Map(existing.map((row) => [row.date, row]));
-  return updates.map((row) => ({ rating: 0, reviews: 0, pv: 0, visits: 0, reservations: 0, ...byDate.get(row.date), ...row }));
+  return updates.map((row) => ({ rating: null, reviews: null, pv: null, visits: null, reservations: null, ...byDate.get(row.date), ...row }));
 }
 
 export function verifySnapshots(expected, saved) {
@@ -60,6 +65,10 @@ export function verifySnapshots(expected, saved) {
     const actual = byDate.get(row.date);
     if (!actual) throw new Error(`${row.date} の保存を確認できませんでした`);
     for (const key of ["rating", "reviews", "pv", "visits", "reservations"]) {
+      if (row[key] == null) {
+        if (actual[key] != null) throw new Error(`${row.date} の未取得項目が数値に置き換わっています（${key}）`);
+        continue;
+      }
       if (actual[key] == null || !Number.isFinite(Number(actual[key])) || Math.abs(Number(actual[key]) - row[key]) > 0.0001) {
         throw new Error(key === "rating"
           ? "評価の保存値が一致しません。データベースの小数点精度を確認してください"
