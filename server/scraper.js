@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { getSource } from "./sources.js";
 import { decrypt } from "./crypto.js";
 import { japanDate, validateTabelogResult } from "./sync-data.js";
+import { collectTabelogPublicData } from "./tabelog-public.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DUMP_DIR = path.join(__dirname, "..", "data", "dump");
@@ -306,7 +307,7 @@ async function extractTabelog(page, onProgress) {
 
   const problems = [];
   if (publicData.rating == null || publicData.reviews == null) {
-    problems.push(`評価・口コミ数を取得できません（公開ページ: ${publicData.url ?? "リンクなし"}）`);
+    problems.push(publicData.issue ?? "店舗の公開ページへのリンクが見つかりません");
   }
   if (!pv.daily?.length) {
     problems.push(`日別PVを取得できません（グラフ系列: ${pv.seriesNames.join("/") || "なし"}）`);
@@ -352,46 +353,7 @@ async function extractTabelogPublicData(page) {
     .catch(() => null);
   if (!publicUrl) return { url: null, rating: null, reviews: null, reviewItems: [] };
 
-  const publicPage = await page.context().newPage();
-  try {
-    await publicPage.goto(publicUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
-    const parsed = await publicPage.evaluate(() => {
-      const scripts = [...document.querySelectorAll('script[type="application/ld+json"]')];
-      for (const script of scripts) {
-        try {
-          const parsed = JSON.parse(script.textContent || "null");
-          const roots = Array.isArray(parsed) ? parsed : [parsed];
-          const entries = roots.flatMap((entry) => entry?.["@graph"] ?? [entry]);
-          const restaurant = entries.find(
-            (entry) => entry && [entry["@type"]].flat().includes("Restaurant") && entry.aggregateRating,
-          );
-          if (!restaurant) continue;
-          const rating = restaurant.aggregateRating.ratingValue == null ? NaN : Number(restaurant.aggregateRating.ratingValue);
-          const reviewCount = restaurant.aggregateRating.ratingCount ?? restaurant.aggregateRating.reviewCount;
-          const reviews = reviewCount == null ? NaN : Number(reviewCount);
-          const reviewItems = Array.isArray(restaurant.review)
-            ? restaurant.review.slice(0, 10).map((review) => ({
-                text: String(review.reviewBody || "").trim(),
-                author: String(review.author?.name || "匿名"),
-                rating: Number(review.reviewRating?.ratingValue || 0),
-              }))
-            : [];
-          return {
-            name: restaurant.name ? String(restaurant.name) : null,
-            rating: Number.isFinite(rating) ? rating : null,
-            reviews: Number.isFinite(reviews) ? reviews : null,
-            reviewItems: reviewItems.filter((review) => review.text),
-          };
-        } catch {
-          continue;
-        }
-      }
-      return { rating: null, reviews: null, reviewItems: [] };
-    });
-    return { url: publicUrl, ...parsed };
-  } finally {
-    await publicPage.close();
-  }
+  return collectTabelogPublicData(page.context(), publicUrl);
 }
 
 async function assertAuthenticated(page) {

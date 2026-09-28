@@ -36,4 +36,6 @@ for(let count=0;count<4;count++) {
   await progress;
   await request({action:"result",id:job.id,lease:job.lease,result});
   console.log(`Sync finished: ${result.status === "ok" ? "saved" : "needs attention"}.`);
+  // An Actions green check must not imply extraction succeeded when it did not.
+  if (result.status !== "ok") process.exitCode = 1;
 }
