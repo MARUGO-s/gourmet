@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, getActiveSync, getDashboard, getSources, getSyncJob, syncNow } from "./api";
 import type { DashboardData, SourceMeta, SyncJob } from "./types";
 import { supabase } from "./lib/supabase";
+import { getSyncState } from "./lib/sync-status";
 import Sidebar from "./components/Sidebar";
 import TopBar from "./components/TopBar";
 import KpiRow from "./components/KpiRow";
@@ -24,7 +25,8 @@ export default function App() {
   const [userId, setUserId] = useState<string | null>(null);
   const currentUser = useRef(userId);
   currentUser.current = userId;
-  const syncing = starting || job?.status === "running";
+  const syncState = getSyncState(job, starting);
+  const syncing = syncState.busy;
   const [notice, setNotice] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -130,7 +132,7 @@ export default function App() {
         <TopBar
           title={view === "dashboard" ? "ダッシュボード" : "アカウント管理"}
           subtitle={view === "dashboard" ? filteredSrc : "口コミサイトのアカウント"}
-          syncing={syncing}
+          syncState={syncState}
           lastSync={data?.lastSync ?? null}
           demo={data?.demo ?? false}
           onSync={() => void onSync()}
@@ -150,7 +152,7 @@ export default function App() {
         ) : null}
 
         <main className="flex flex-1 flex-col gap-5 px-6 py-6">
-          <SyncPanel job={job} signedIn={!!userId} sources={sources} syncing={syncing}
+          <SyncPanel job={job} signedIn={!!userId} sources={sources} syncState={syncState}
             onAccounts={() => setView("accounts")} onSync={() => void onSync("tabelog")} />
           {view === "dashboard" ? (
             <>

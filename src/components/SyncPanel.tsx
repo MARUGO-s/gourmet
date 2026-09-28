@@ -1,16 +1,19 @@
 import type { SourceMeta, SyncJob } from "../types";
+import type { SyncState } from "../lib/sync-status";
 
 type Props = {
   job: SyncJob | null;
   signedIn: boolean;
   sources: SourceMeta[];
-  syncing: boolean;
+  syncState: SyncState;
   onAccounts: () => void;
   onSync: () => void;
 };
 
-export default function SyncPanel({ job, signedIn, sources, syncing, onAccounts, onSync }: Props) {
+export default function SyncPanel({ job, signedIn, sources, syncState, onAccounts, onSync }: Props) {
   const registered = sources.some((s) => s.id === "tabelog" && s.hasCredential);
+  const queued = syncState.phase === "queued";
+  const waitingMinutes = job ? Math.max(0, Math.floor((Date.now() - Date.parse(job.startedAt)) / 60000)) : 0;
   return (
     <section className="rounded-md border border-line bg-card p-5" aria-label="食べログ自動取得">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -24,8 +27,8 @@ export default function SyncPanel({ job, signedIn, sources, syncing, onAccounts,
           </p>
         </div>
         {signedIn && registered ? (
-          <button onClick={onSync} disabled={syncing} className="rounded-md bg-brand px-4 py-2 text-[12px] font-bold text-white disabled:opacity-50">
-            {syncing ? "取得中…" : "食べログを同期"}
+          <button onClick={onSync} disabled={syncState.busy} className="rounded-md bg-brand px-4 py-2 text-[12px] font-bold text-white disabled:opacity-50">
+            {syncState.busy ? syncState.label : "食べログを同期"}
           </button>
         ) : signedIn ? (
           <button onClick={onAccounts} className="rounded-md border border-brand px-4 py-2 text-[12px] font-bold text-brand">
@@ -36,13 +39,17 @@ export default function SyncPanel({ job, signedIn, sources, syncing, onAccounts,
         )}
       </div>
       <p className="mt-3 text-[11px] leading-relaxed text-faint">
-        「同期」でクラウドの取得待ちに登録します。通常は数分後に開始しますが、混雑時は遅れることがあります。画面やPCを閉じても処理は続きます。追加認証が必要な場合は停止してお知らせします。
+        「同期」で依頼を登録し、クラウドの定期実行を待ちます。定期実行は5分間隔の設定ですが、開始時刻は保証されません。依頼は画面やPCを閉じても保持されます。追加認証が必要な場合は停止してお知らせします。
       </p>
       {job ? (
         <div className="mt-4 border-t border-line pt-3" role="status" aria-live="polite">
-          <p className={`text-[12px] font-bold ${job.status === "error" ? "text-danger" : job.status === "running" ? "text-brand" : "text-ok"}`}>
-            {job.message}
+          <p className={`text-[12px] font-bold ${job.status === "error" ? "text-danger" : queued ? "text-warn" : job.status === "running" ? "text-brand" : "text-ok"}`}>
+            {queued ? "開始待ち：依頼は受付済みですが、サイトへのアクセスはまだ始まっていません" : job.message}
           </p>
+          {queued && Number.isFinite(waitingMinutes) ? <p className="mt-1 text-[11px] leading-relaxed text-subtle">
+            受付：{new Date(job.startedAt).toLocaleString("ja-JP")}（約{waitingMinutes}分経過）。同期を押し直す必要はありません。
+            {waitingMinutes >= 5 ? " 定期実行の起動待ちが続いています。開始しない場合は管理者に手動起動を依頼してください。" : ""}
+          </p> : null}
           {job.results.map((result) => (
             <div key={result.source} className="mt-2 rounded bg-surface px-3 py-2 text-[12px] leading-relaxed">
               <p className={`font-bold ${result.status === "error" ? "text-danger" : "text-ink"}`}>
