@@ -1,7 +1,9 @@
+import type { SyncState } from "../lib/sync-status";
+
 type Props = {
   title: string;
   subtitle: string;
-  syncing: boolean;
+  syncState: SyncState;
   syncDisabled?: boolean;
   lastSync: string | null;
   demo: boolean;
@@ -10,7 +12,7 @@ type Props = {
 
 import AuthButton from "./AuthButton";
 
-export default function TopBar({ title, subtitle, syncing, syncDisabled, lastSync, demo, onSync }: Props) {
+export default function TopBar({ title, subtitle, syncState, syncDisabled, lastSync, demo, onSync }: Props) {
   const lastSyncLabel = lastSync
     ? new Date(lastSync).toLocaleString("ja-JP", { dateStyle: "short", timeStyle: "short" })
     : "—";
@@ -29,8 +31,8 @@ export default function TopBar({ title, subtitle, syncing, syncDisabled, lastSyn
       ) : null}
       <button
         onClick={onSync}
-        disabled={syncing || syncDisabled}
-        title={syncDisabled ? "アプリにログインし、対象サイトのアカウントを登録してください" : undefined}
+        disabled={syncState.busy || syncDisabled}
+        title={syncState.phase === "queued" ? "依頼は受付済みです。取得処理はまだ始まっていません" : syncDisabled ? "アプリにログインし、対象サイトのアカウントを登録してください" : undefined}
         className="flex items-center gap-2 rounded-md bg-brand px-3.5 py-2 text-[12px] font-bold text-white transition hover:opacity-90 disabled:opacity-50"
       >
         <svg
@@ -41,12 +43,12 @@ export default function TopBar({ title, subtitle, syncing, syncDisabled, lastSyn
           stroke="currentColor"
           strokeWidth="2.2"
           strokeLinecap="round"
-          className={syncing ? "animate-spin" : ""}
+          className={syncState.animate ? "animate-spin" : ""}
         >
           <path d="M21 12a9 9 0 1 1-2.6-6.3" />
           <path d="M21 3v6h-6" />
         </svg>
-        {syncing ? "同期中…" : "今すぐ同期"}
+        {syncState.label}
       </button>
       <AuthButton />
     </header>
