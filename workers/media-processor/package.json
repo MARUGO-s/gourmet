@@ -1,8 +1,0 @@
-{
-  "name": "instatic-talksx-media-processor",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "test": "node --test crop-plan.test.mjs encoding-plan.test.mjs timeline-plan.test.mjs"
-  }
-}
