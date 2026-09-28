@@ -3,6 +3,11 @@ on:
   schedule:
     - cron: '3-58/5 * * * *'
   workflow_dispatch:
+    inputs:
+      public_diagnostic:
+        description: '公開ページだけを診断（ログイン・DB変更なし）'
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -20,7 +25,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm run worker
+      - if: ${{ inputs.public_diagnostic }}
+        run: node scripts/check-public-page.mjs
+      - if: ${{ !inputs.public_diagnostic }}
+        run: npm run worker
         env:
           GOURMET_WORKER_TOKEN: ${{ secrets.GOURMET_WORKER_TOKEN }}
           SCRAPER_DEBUG_DUMPS: 'false'

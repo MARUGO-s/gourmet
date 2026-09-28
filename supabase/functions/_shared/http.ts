@@ -11,4 +11,4 @@ export async function body(req: Request) {
   if(text.length>2_000_000) throw new Error("Request too large");
   return JSON.parse(text);
 }
-export const publicJob = (j: any) => ({id:j.id,sources:j.sources,status:j.status,step:j.step,message:j.message,startedAt:j.started_at,finishedAt:j.finished_at,results:j.results});
+export const publicJob = (j: any) => ({id:j.id,sources:j.sources,status:j.status,step:j.step,message:j.message,startedAt:j.started_at,finishedAt:j.finished_at,results:j.results,dispatchStatus:j.dispatch_status??null});

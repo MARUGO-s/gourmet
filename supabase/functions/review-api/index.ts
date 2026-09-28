@@ -5,10 +5,11 @@ import { computeDashboard, loadDetails } from "../_shared/dashboard.js";
 import { must } from "../_shared/sync-data.js";
 import { encrypt } from "../_shared/crypto.ts";
 import { service, json, body, publicJob } from "../_shared/http.ts";
+import { dispatchWorker } from "../_shared/dispatch.js";
 
 const demo = buildSeed();
 const credentialColumns = "id,source,label,username,updated_at";
-const jobColumns = "id,sources,status,step,message,started_at,finished_at,results";
+const jobColumns = "id,sources,status,step,message,started_at,finished_at,results,dispatch_status";
 
 Deno.serve(async req => {
   if (req.method === "OPTIONS") return json(req, {});
@@ -69,11 +70,19 @@ Deno.serve(async req => {
       if(source!=="all" && source!=="tabelog") return json(req,{error:"現在の自動取得は食べログのみ対応しています。他サイトは接続準備中です"},422);
       const {data,error}=await admin.rpc("enqueue_sync",{p_user:user.id});
       if(error) return json(req,{error:error.message.includes("同期は")?error.message:"食べログのアカウントを登録してから再度お試しください"},error.message.includes("同期は")?429:400);
-      return json(req,publicJob(data),202);
+      const reserved=await must(admin.rpc("reserve_sync_dispatch",{p_job:data.id,p_user:user.id}));
+      if(reserved) {
+        const dispatched=await dispatchWorker(Deno.env.get("GOURMET_DISPATCH_TOKEN"));
+        await must(admin.from("sync_jobs").update({dispatch_status:dispatched.status,message:dispatched.message})
+          .eq("id",data.id).eq("user_id",user.id).eq("status","running").eq("step","queued").is("lease_id",null));
+      }
+      const current=await must(client.from("sync_jobs").select(jobColumns).eq("id",data.id).single());
+      return json(req,publicJob(current),202);
     }
     if (path === "/sync/active" && req.method === "GET") {
       await must(admin.rpc("expire_sync_jobs"));
-      const rows=await must(client.from("sync_jobs").select(jobColumns).eq("status","running").order("started_at",{ascending:false}).limit(1));
+      // Also restore the last completed/error result after reload or sign-in.
+      const rows=await must(client.from("sync_jobs").select(jobColumns).order("started_at",{ascending:false}).limit(1));
       return json(req,{job:rows[0]?publicJob(rows[0]):null});
     }
     if (/^\/sync\/jobs\/[0-9a-f-]{36}$/.test(path) && req.method === "GET") {

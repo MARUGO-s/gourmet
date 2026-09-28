@@ -100,6 +100,7 @@ export type SyncJob = {
   message: string;
   startedAt: string;
   finishedAt: string | null;
+  dispatchStatus?: "requesting" | "requested" | "failed" | "unconfigured" | null;
   results: {
     source: string;
     status: "ok" | "error";

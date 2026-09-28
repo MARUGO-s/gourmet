@@ -39,16 +39,17 @@ export default function SyncPanel({ job, signedIn, sources, syncState, onAccount
         )}
       </div>
       <p className="mt-3 text-[11px] leading-relaxed text-faint">
-        「同期」で依頼を登録し、クラウドの定期実行を待ちます。定期実行は5分間隔の設定ですが、開始時刻は保証されません。依頼は画面やPCを閉じても保持されます。追加認証が必要な場合は停止してお知らせします。
+        「同期」でクラウドへ起動を依頼します。サーバーの準備中は「開始待ち」、サイトへのアクセス開始後は「取得中」と表示します。混雑で開始が遅れる場合があります。画面やPCを閉じても依頼は保持され、失敗・完了の結果も再表示できます。追加認証が必要な場合は停止します。
       </p>
       {job ? (
         <div className="mt-4 border-t border-line pt-3" role="status" aria-live="polite">
           <p className={`text-[12px] font-bold ${job.status === "error" ? "text-danger" : queued ? "text-warn" : job.status === "running" ? "text-brand" : "text-ok"}`}>
             {queued ? "開始待ち：依頼は受付済みですが、サイトへのアクセスはまだ始まっていません" : job.message}
           </p>
+          {queued ? <p className="mt-1 text-[11px] leading-relaxed text-subtle">{job.message}</p> : null}
           {queued && Number.isFinite(waitingMinutes) ? <p className="mt-1 text-[11px] leading-relaxed text-subtle">
             受付：{new Date(job.startedAt).toLocaleString("ja-JP")}（約{waitingMinutes}分経過）。同期を押し直す必要はありません。
-            {waitingMinutes >= 5 ? " 定期実行の起動待ちが続いています。開始しない場合は管理者に手動起動を依頼してください。" : ""}
+            {waitingMinutes >= 5 ? " 起動待ちが続いています。20分以内に開始しなければ待機を終了してお知らせします。管理者はActionsの実行状況を確認してください。" : ""}
           </p> : null}
           {job.results.map((result) => (
             <div key={result.source} className="mt-2 rounded bg-surface px-3 py-2 text-[12px] leading-relaxed">
