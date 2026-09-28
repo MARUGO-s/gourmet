@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+@theme {
+  --color-surface: #f7f8fa;
+  --color-card: #ffffff;
+  --color-ink: #101828;
+  --color-subtle: #475467;
+  --color-faint: #98a2b3;
+  --color-line: #e4e7ec;
+  --color-brand: #2563eb;
+  --color-brand-soft: #eff4ff;
+  --color-ok: #12b76a;
+  --color-ok-soft: #ecfdf3;
+  --color-warn: #f79009;
+  --color-warn-soft: #fffaeb;
+  --color-danger: #f04438;
+  --color-danger-soft: #fef3f2;
+  --font-sans: "Inter", "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+}
+
+html {
+  font-family: var(--font-sans);
+}
+
+body {
+  background: #f7f8fa;
+  color: #101828;
+  font-feature-settings: "tnum";
+}
+
+::selection {
+  background: #eff4ff;
+}
