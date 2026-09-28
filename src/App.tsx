@@ -40,6 +40,8 @@ export default function App() {
   useEffect(() => {
     let alive = true;
     setJob(null);
+    setData(null);
+    setSources([]);
     setStarting(false);
     setNotice(null);
     if (userId) getActiveSync().then(({ job: active }) => { if (alive && active) setJob(active); }).catch(() => {});
@@ -132,7 +134,7 @@ export default function App() {
           lastSync={data?.lastSync ?? null}
           demo={data?.demo ?? false}
           onSync={() => void onSync()}
-          syncDisabled={!userId || !sources.some((s) => s.hasCredential && (filter === "all" || filter === s.id))}
+          syncDisabled={!userId || !sources.some((s) => s.id === "tabelog" && s.hasCredential && (filter === "all" || filter === s.id))}
         />
 
         {notice ? (
