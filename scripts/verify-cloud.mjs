@@ -61,7 +61,7 @@ try {
   assert.equal((await check(admin.from('reviews').select('rating').eq('user_id',a.id)))[0].rating,3.47);
   assert.equal((await check(admin.from('sync_log').select('id').eq('user_id',a.id))).length,1);
   const dash=await api('/dashboard?source=tabelog',a.access);assert.equal(dash.status,200);assert.equal(dash.data.kpis.rating.value,3.47);assert.equal(dash.data.demo,false);
-  assert.equal((await api('/dashboard',b.access)).data.kpis.rating.value,0);
+  assert.equal((await api('/dashboard',b.access)).data.kpis.rating.value,null);
   assert.equal((await api(`/sync/jobs/${id}`,a.access)).data.status,'completed');
   const next=await api('/sync',a.access,'POST',{source:'tabelog'});assert.equal(next.status,202);
   await check(admin.from('sync_jobs').update({lease_id:randomUUID(),lease_until:'2000-01-01T00:00:00Z'}).eq('id',next.data.id));

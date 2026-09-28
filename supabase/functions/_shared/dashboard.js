@@ -11,76 +11,69 @@ function previousMonth(month) {
 // snapshots の保存規約（食べログ）:
 //   - 日別PV は各日付の行の pv
 //   - 月別の予約組数はその月の1日の行の reservations（食べログは月単位でしか提供しない）
-//   - 評価・口コミ数は同期した日の行の rating / reviews（rating = 0 は「値なし」）
+//   - 評価・口コミ数は同期した日の行の rating / reviews。未取得はnull、実測0は0。
 export function computeDashboard(snapshots, reviews, lastSync, targets, demo) {
   const rows = snapshots.filter((s) => targets.includes(s.source));
 
   // 日別PV: PVを持つ日だけを対象にする（月初の予約専用行・集計前の当日行を除外）
   const pvByDate = new Map();
-  for (const s of rows) pvByDate.set(s.date, (pvByDate.get(s.date) ?? 0) + Number(s.pv));
+  for (const s of rows) if (s.pv != null) pvByDate.set(s.date, (pvByDate.get(s.date) ?? 0) + Number(s.pv));
   const daily = [...pvByDate]
-    .filter(([, pv]) => pv > 0)
     .map(([date, pv]) => ({ date, pv }))
     .sort((a, b) => (a.date < b.date ? -1 : 1));
   const latestDate = daily.at(-1)?.date ?? null;
   const pvBetween = (from, to) =>
     daily.filter((d) => d.date >= from && d.date <= to).reduce((total, d) => total + d.pv, 0);
-  let pv = { value: 0, delta: 0 };
+  let pv = { value: null, delta: null };
   if (latestDate) {
     const now = pvBetween(shiftDate(latestDate, -6), latestDate);
     const prevFrom = shiftDate(latestDate, -13);
     const prevTo = shiftDate(latestDate, -7);
     const hasPrev = daily.some((d) => d.date >= prevFrom && d.date <= prevTo);
-    pv = { value: now, delta: hasPrev ? now - pvBetween(prevFrom, prevTo) : 0 };
+    pv = { value: now, delta: hasPrev ? now - pvBetween(prevFrom, prevTo) : null };
   }
   const series = latestDate ? daily.filter((d) => d.date > shiftDate(latestDate, -45)) : [];
 
   // 評価・口コミ数: サイトごとに値のある最新行と、その7日以上前の値のある最新行を比較
-  let ratingSum = 0;
-  let ratingCount = 0;
-  let reviewsNow = 0;
-  let ratingDeltaSum = 0;
-  let reviewsDelta = 0;
-  let deltaCount = 0;
-  for (const id of targets) {
-    const own = rows
-      .filter((s) => s.source === id && Number(s.rating) > 0)
-      .sort((a, b) => (a.date < b.date ? -1 : 1));
-    const current = own.at(-1);
-    if (!current) continue;
-    ratingSum += Number(current.rating);
-    ratingCount += 1;
-    reviewsNow += Number(current.reviews);
-    const prior = own.filter((s) => s.date <= shiftDate(current.date, -7)).at(-1);
-    if (prior) {
-      ratingDeltaSum += Number(current.rating) - Number(prior.rating);
-      reviewsDelta += Number(current.reviews) - Number(prior.reviews);
-      deltaCount += 1;
+  const metric = (key, average) => {
+    const current = [], differences = [], dates = [];
+    for (const id of targets) {
+      const own = rows.filter(s => s.source === id && s[key] != null).sort((a,b) => a.date.localeCompare(b.date));
+      const latest = own.at(-1);
+      if (!latest) continue;
+      current.push(Number(latest[key])); dates.push(latest.date);
+      const prior = own.filter(s => s.date <= shiftDate(latest.date, -7)).at(-1);
+      if (prior) differences.push(Number(latest[key]) - Number(prior[key]));
     }
-  }
+    const sum = values => values.reduce((a,b) => a+b,0);
+    return {
+      value: current.length ? (average ? round2(sum(current)/current.length) : sum(current)) : null,
+      delta: differences.length === current.length && current.length ? (average ? round2(sum(differences)/differences.length) : sum(differences)) : null,
+      // For aggregates, expose the oldest contributing observation rather than
+      // implying every source was fetched on the date of the newest one.
+      asOf: dates.sort()[0] ?? null,
+    };
+  };
 
   // 予約組数: 月別合計。今月は未確定のため、前月以前で最新の月を表示する
   const thisMonth = japanDate().slice(0, 7);
   const byMonth = new Map();
   for (const s of rows) {
     const month = s.date.slice(0, 7);
-    if (month < thisMonth) byMonth.set(month, (byMonth.get(month) ?? 0) + Number(s.reservations));
+    if (s.reservations != null && month < thisMonth) byMonth.set(month, (byMonth.get(month) ?? 0) + Number(s.reservations));
   }
   const latestMonth = [...byMonth.keys()].sort().at(-1) ?? null;
-  const monthNow = latestMonth ? byMonth.get(latestMonth) : 0;
+  const monthNow = latestMonth ? byMonth.get(latestMonth) : null;
   const prevMonthKey = latestMonth ? previousMonth(latestMonth) : null;
 
   return {
     kpis: {
-      rating: {
-        value: ratingCount ? round2(ratingSum / ratingCount) : 0,
-        delta: deltaCount ? round2(ratingDeltaSum / deltaCount) : 0,
-      },
-      reviews: { value: reviewsNow, delta: reviewsDelta },
+      rating: metric('rating', true),
+      reviews: metric('reviews', false),
       pv,
       reservations: {
         value: monthNow,
-        delta: byMonth.has(prevMonthKey) ? monthNow - byMonth.get(prevMonthKey) : 0,
+        delta: byMonth.has(prevMonthKey) ? monthNow - byMonth.get(prevMonthKey) : null,
         month: latestMonth,
       },
     },

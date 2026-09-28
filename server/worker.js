@@ -35,7 +35,8 @@ for(let count=0;count<4;count++) {
   job.credential=null;
   await progress;
   await request({action:"result",id:job.id,lease:job.lease,result});
-  console.log(`Sync finished: ${result.status === "ok" ? "saved" : "needs attention"}.`);
+  console.log(`Sync finished: ${result.status === "ok" ? "saved" : result.status === "partial" ? "partially saved; some metrics unavailable" : "needs attention"}.`);
+  if (result.status === "partial") console.log("::warning::Partial sync saved. Some metrics remain unavailable; see the dashboard warning.");
   // An Actions green check must not imply extraction succeeded when it did not.
-  if (result.status !== "ok") process.exitCode = 1;
+  if (!["ok", "partial"].includes(result.status)) process.exitCode = 1;
 }

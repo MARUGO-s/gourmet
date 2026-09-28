@@ -38,7 +38,7 @@ export default function TrafficChart({
     };
   }, [series]);
 
-  if (!geom) return <div className="p-6 text-[12px] font-semibold text-faint">データがありません</div>;
+  if (!geom) return <div className="p-6 text-[12px] font-semibold text-faint">{series.length === 1 ? `${series[0].date}：${series[0].pv.toLocaleString("ja-JP")} PV（1日分）` : "データがありません"}</div>;
 
   const gridValues = [0, 0.25, 0.5, 0.75, 1];
   const onMove = (e: React.MouseEvent) => {

@@ -41,7 +41,7 @@ Deno.serve(async req=>{
     const result=input.result;
     let publicResult:any={source:"tabelog",status:"error",step:String(result?.step??"worker").slice(0,50),message:String(result?.message??"取得処理を完了できませんでした").slice(0,500)};
     let snapshots:any[]=[],reviews:any[]=[],reports:any[]=[];
-    if(result?.status==="ok") {
+    if(result?.status==="ok" || result?.status==="partial") {
       validateTabelogResult(result);
       if(result.daily.length>2000 || result.monthly.length>120 || (result.reviews?.length??0)>100) throw new Error("Oversized result");
       snapshots=snapshotUpdates(job.user_id,"tabelog",result);
@@ -51,7 +51,7 @@ Deno.serve(async req=>{
       for(const {month,...metrics} of result.monthly) add("monthly_metrics",month,metrics);
       if(result.reports?.ranking) add("area_ranking",result.reports.ranking.updatedAt??japanDate(),result.reports.ranking);
       if(result.reports?.topPages) add("top_pages",result.reports.topPages.month,result.reports.topPages);
-      publicResult={source:"tabelog",status:"ok",warning:result.warning,summary:{rating:result.data.rating,reviews:result.data.reviews,dailyDays:result.daily.length,monthlyMonths:result.monthly.length,latestPvDate:result.daily.map((d:any)=>d.date).sort().at(-1)}};
+      publicResult={source:"tabelog",status:result.status,warning:typeof result.warning==="string"?result.warning.slice(0,1000):undefined,summary:{rating:result.data.rating??null,reviews:result.data.reviews??null,dailyDays:result.daily.length,monthlyMonths:result.monthly.length,latestPvDate:result.daily.map((d:any)=>d.date).sort().at(-1)??null}};
     }
     await must(admin.rpc("finish_sync",{p_job:input.id,p_lease:input.lease,p_result:publicResult,p_snapshots:snapshots,p_reviews:reviews,p_reports:reports}));
     return json(req,{ok:true});
