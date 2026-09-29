@@ -14,8 +14,14 @@ export async function collectTabelogMetrics(collectors, onProgress = () => {}) {
     }
   }
   const owner = collectors.ownerReviews ? await collect('owner_reviews', '管理画面の口コミ全件・個別点数', collectors.ownerReviews, {items:[]}) : null;
-  const publicData = owner ? {rating:null,reviews:null,reviewItems:owner.items,issue:'店舗総合点・公開ページの口コミ総数は管理画面では確認できないため未取得です。個別口コミの点数・管理画面の掲載件数とは別の指標です。'}
-    : await collect('public_metrics', '評価・口コミ数', collectors.publicMetrics, {});
+  // Official aggregate comes from the store's public page. Owner posts stay the review list.
+  const official = collectors.publicMetrics
+    ? await collect('public_metrics', '公開ページの総合点・口コミ総数', collectors.publicMetrics, {})
+    : null;
+  const publicData = owner
+    ? { name: official?.name, rating: official?.rating ?? null, reviews: official?.reviews ?? null, reviewItems: owner.items,
+        issue: official?.issue ?? (official ? undefined : '店舗総合点・公開ページの口コミ総数は未取得です。個別口コミの点数・管理画面の掲載件数とは別の指標です。') }
+    : official ?? await collect('public_metrics', '評価・口コミ数', collectors.publicMetrics, {});
   const pv = await collect('daily_pv', '日別・端末別PV', collectors.dailyMetrics, {});
   const reservations = await collect('monthly', '月別予約組数・来店指標', collectors.monthlyMetrics, {});
   const reports = await collect('reports', 'エリア順位・ページ別PV', () => collectors.detailReports(publicData.name), {});

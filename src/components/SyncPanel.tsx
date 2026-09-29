@@ -24,7 +24,7 @@ export default function SyncPanel({ job, signedIn, sources, syncState, onAccount
             管理画面の口コミ・個別評価・店舗返信・日別PV・月別予約組数を取得し、保存結果まで確認します。
           </p>
           <p className="mt-1 text-[11px] leading-relaxed text-faint">
-            管理画面で選べる過去の期間も取得します。店舗総合点・公開口コミ総数は管理画面に掲載されていないため「未取得」です。口コミの個別点数や掲載件数は口コミ一覧に表示します。
+            管理画面で選べる過去の期間も取得します。店舗総合点と公開口コミ総数は自店舗ページから取り、個別口コミの点数や本文とは別に表示します。本文が掲載されていない口コミは点数のみのままです。
           </p>
         </div>
         {signedIn && registered ? (
