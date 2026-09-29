@@ -47,7 +47,7 @@ Deno.serve(async req=>{
       reviews=(result.reviews??[]).map((r:any)=>({text:String(r.text??''),author:String(r.author??'匿名').slice(0,300),rating:r.rating??null,
         external_id:r.externalId??null,title:String(r.title??'').slice(0,1000),review_date:r.date??null,visit_month:r.visitMonth??null,details:r.details??{}}));
       const add=(kind:string,period:string,data:unknown)=>reports.push({kind,period,data});
-      for(const d of result.daily) if(d.pc!=null||d.sp!=null||d.app!=null) add("device_daily",d.date,{pc:d.pc,sp:d.sp,app:d.app});
+      for(const d of result.daily) if(d.pc!=null||d.sp!=null||d.app!=null) add("device_daily",d.date,{pc:d.pc,sp:d.sp,app:d.app,...(d.unclassified?{unclassified:d.unclassified}:{})});
       for(const {month,...metrics} of result.monthly) add("monthly_metrics",month,metrics);
       if(result.reports?.ranking) add("area_ranking",result.reports.ranking.updatedAt??japanDate(),result.reports.ranking);
       if(result.reports?.topPages) add("top_pages",result.reports.topPages.month,result.reports.topPages);

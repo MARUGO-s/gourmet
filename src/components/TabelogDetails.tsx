@@ -163,6 +163,7 @@ function Monthly({ monthly }: { monthly: Available["monthly"] }) {
               <Th right>ネット予約組数</Th>
               <Th right>電話 通話成立数</Th>
               <Th right>地図印刷PV</Th>
+              <Th right>端末内訳との差</Th>
             </tr>
           </thead>
           <tbody>
@@ -179,6 +180,7 @@ function Monthly({ monthly }: { monthly: Available["monthly"] }) {
                 <td className="px-4 py-2 text-right text-[12px] font-bold text-ok">{num(m.reservations)}</td>
                 <td className="px-4 py-2 text-right text-[12px] font-bold">{num(m.calls)}</td>
                 <td className="px-4 py-2 text-right text-[12px] font-bold">{num(m.mapPrints)}</td>
+                <td className="px-4 py-2 text-right text-[12px] font-bold">{num(m.unclassified ?? ([m.pv,m.pc,m.sp,m.app].every(n=>n!=null) ? 0 : null))}</td>
               </tr>
             ))}
           </tbody>
@@ -186,6 +188,7 @@ function Monthly({ monthly }: { monthly: Available["monthly"] }) {
       </div>
       <p className="border-t border-line px-5 py-2.5 text-[10px] font-semibold text-faint">
         電話 通話成立数は、食べログ予約専用番号への電話のうち通話が成立した数です（予約が成立した数ではありません）。
+        総合PVとPC・スマホ・アプリの合計に差がある月は、管理画面の表示値を保持し、計算上の差を別列に表示します。差の端末種別は管理画面に掲載されていません。
       </p>
     </Panel>
   );

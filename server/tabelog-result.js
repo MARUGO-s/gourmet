@@ -42,6 +42,8 @@ export async function collectTabelogMetrics(collectors, onProgress = () => {}) {
   if (collectors.pageHistory && !reports.pageHistory) detailsMissing.push('全期間のページ別PV');
   if (owner?.summary?.excerpts) issues.push(`管理画面で${owner.summary.excerpts}件は抜粋のみの表示です。全文とは区別して保存します。`);
   if (owner?.summary?.scoreOnly) issues.push(`管理画面で${owner.summary.scoreOnly}件は点数のみの表示で本文は掲載されていません。`);
+  const dailyDifferences=daily.filter(d=>d.unclassified).length,monthlyDifferences=monthly.filter(m=>m.unclassified).length;
+  if(dailyDifferences||monthlyDifferences)issues.push(`管理画面の総合PVと3端末の内訳に差があります（日別${dailyDifferences}日・月別${monthlyDifferences}か月）。表示値を保持し、計算上の差も保存しました。差の端末種別は未掲載です。`);
   if (daily.some(d => [d.pc,d.sp,d.app].some(v => v == null))) detailsMissing.push('一部の端末別PV');
   if (missing.length || detailsMissing.length) {
     result.warning = `${[...missing,...detailsMissing].join('・')}は未取得です。取得できた数値だけを保存します。以前の値がある項目は取得日付きで保持します。${issues.length ? ` ${issues.join(' / ')}` : ''}`;

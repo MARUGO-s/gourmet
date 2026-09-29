@@ -63,7 +63,9 @@ export function readOwnerDailyTable() {
     if(!date) return [];
     const numbers=[...tr.cells].slice(1).map(c=>{const s=c.textContent.trim().replaceAll(',','');return /^\d+$/.test(s)?Number(s):null;});
     if(numbers.length!==4 || numbers.some(n=>n==null)) throw new Error('管理画面の日別PVを正しく取得できません');
-    return [{date,pc:numbers[0],sp:numbers[1],app:numbers[2],pv:numbers[3]}];
+    const unclassified=numbers[3]-numbers[0]-numbers[1]-numbers[2];
+    if(unclassified<0)throw new Error('管理画面の日別PVの内訳が総合値を超えています');
+    return [{date,pc:numbers[0],sp:numbers[1],app:numbers[2],pv:numbers[3],...(unclassified?{unclassified}:{})}];
   });
 }
 

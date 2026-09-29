@@ -65,6 +65,7 @@ export type MonthlyMetrics = {
   pc: number | null;
   sp: number | null;
   app: number | null;
+  unclassified?: number;
 };
 
 export type Details =
@@ -86,7 +87,7 @@ export type Details =
       monthly: MonthlyMetrics[];
       ownerReviews?: { groups: number; entries: number; fullText: number; excerpts: number; scoreOnly?: number } | null;
       pageHistory?: { first: string; last: string; devices: Record<DeviceKey, { name: string; pv: number }[]> } | null;
-      deviceDaily: Record<string, Record<DeviceKey, number | null>>;
+      deviceDaily: Record<string, Record<DeviceKey, number | null> & { unclassified?: number }>;
     };
 
 export type CredentialRow = {

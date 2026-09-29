@@ -95,6 +95,12 @@ try {
   const reviewsOnly={...ownerResult,daily:[],monthly:[]};
   assert.equal((await worker({action:'result',...sixth,result:reviewsOnly})).status,200);
   assert.equal((await dashboard(a.access)).reviews.find(r=>r.external_id===ownerReviews[0].externalId).rating,3.48);
+  const seventh=await createJob();
+  const historic={...ownerResult,daily:[{date:'2020-10-02',pv:139,pc:48,sp:33,app:57,unclassified:1}],monthly:[{month:'2020-10',pv:5415,pc:869,sp:1501,app:3021,unclassified:24,reservations:2}]};
+  assert.equal((await worker({action:'result',...seventh,result:historic})).status,200);
+  const historicReports=await check(admin.from('source_reports').select('kind,data').eq('user_id',a.id).in('period',['2020-10-02','2020-10']));
+  assert.deepEqual(historicReports.find(r=>r.kind==='device_daily').data,{pc:48,sp:33,app:57,unclassified:1});
+  assert.equal(historicReports.find(r=>r.kind==='monthly_metrics').data.unclassified,24);
   console.log('PASS: partial atomic save, NULL vs measured zero, unchanged historical rating, reports, API/dashboard, last sync, invalid payload rollback, decimals, idempotency, lease/auth checks, cross-user isolation. No restaurant login or GitHub dispatch was attempted.');
 } finally {
   for(const user of users) await check(admin.auth.admin.deleteUser(user.id));
