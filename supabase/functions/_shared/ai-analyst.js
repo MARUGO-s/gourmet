@@ -455,7 +455,9 @@ const fmt = (v) => (v == null ? "—" : Number(v).toLocaleString("ja-JP"));
 const pct = (v) => (v == null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(2)}%`);
 const rating = (v) => (v == null ? "—" : Number(v).toFixed(2));
 const cell = (v) => String(v ?? "").replace(/\|/g, "／").replace(/\s+/g, " ");
-const table = (head, rows) => (rows.length ? [`| ${head.join(" | ")} |`, `| ${head.map((_, i) => (i ? "---:" : "---")).join(" | ")} |`, ...rows.map((r) => `| ${r.map(cell).join(" | ")} |`)].join("\n") : "_データがありません_");
+// align は列ごとの配置（"l"=文字の列・左寄せ、"r"=数値の列・右寄せ）。省略時は先頭列だけ文字、残りは数値。
+const table = (head, rows, align = "l" + "r".repeat(head.length - 1)) => (rows.length ? [`| ${head.join(" | ")} |`,
+  `| ${head.map((_, i) => (align[i] === "r" ? "---:" : "---")).join(" | ")} |`, ...rows.map((r) => `| ${r.map(cell).join(" | ")} |`)].join("\n") : "_データがありません_");
 // レポートのMarkdown（数値の表はサーバーの集計、文章はモデル）
 export function composeReportMarkdown(facts, ai, { title, model } = {}) {
   const k = facts.kpis;
@@ -484,12 +486,12 @@ export function composeReportMarkdown(facts, ai, { title, model } = {}) {
   if (ai.siteComment) out.push(ai.siteComment, "");
   const st = facts.reviewStats;
   out.push("## 4. 口コミの傾向", "", table(["件数", "平均評価", "★5", "★4", "★3", "★2", "★1", "返信済み", "未返信", "不明"],
-    [[fmt(st.count), rating(st.averageRating), ...["5", "4", "3", "2", "1"].map((x) => fmt(st.distribution[x])), fmt(st.replied), fmt(st.unreplied), fmt(st.unknown)]]), "");
+    [[fmt(st.count), rating(st.averageRating), ...["5", "4", "3", "2", "1"].map((x) => fmt(st.distribution[x])), fmt(st.replied), fmt(st.unreplied), fmt(st.unknown)]], "rrrrrrrrrr"), "");
   if (ai.reviewSentiment) out.push(ai.reviewSentiment, "");
   if (ai.positiveThemes.length) out.push("### 好評の点", "", ...ai.positiveThemes.map((t) => `- **${t.theme}**: ${t.detail}`), "");
   if (ai.negativeThemes.length) out.push("### 不満・改善点", "", ...ai.negativeThemes.map((t) => `- **${t.theme}**: ${t.detail}`), "");
   out.push("## 5. 未返信の口コミ", "", facts.unrepliedCount ? `未返信は **${facts.unrepliedCount}件** です（新しい順に最大${facts.unreplied.length}件）。` : "未返信の口コミはありません。", "");
-  if (facts.unreplied.length) out.push(table(["投稿日", "サイト", "評価", "内容"], facts.unreplied.map((r) => [r.date ?? "—", r.site, rating(r.rating), r.text.slice(0, 120)])), "");
+  if (facts.unreplied.length) out.push(table(["投稿日", "サイト", "評価", "内容"], facts.unreplied.map((r) => [r.date ?? "—", r.site, rating(r.rating), r.text.slice(0, 120)]), "llrl"), "");
   if (ai.unrepliedComment) out.push(ai.unrepliedComment, "");
   out.push("## 6. 改善提案", "", ...(ai.recommendations.length ? ai.recommendations.map((r, i) => `${i + 1}. **［${r.priority}］${r.title}** — ${r.detail}`) : ["（提案なし）"]), "",
     "---", "", "_数値は取り込み済みのデータの集計です（未取得は「—」）。文章はAIによる分析で、内容をご確認のうえご利用ください。_");

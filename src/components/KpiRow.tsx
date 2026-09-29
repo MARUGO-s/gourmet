@@ -26,7 +26,7 @@ function Delta({ delta, unit, digits = 0 }: { delta: number | null; unit?: strin
   const up = delta > 0;
   return (
     <span
-      className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] font-bold ${
+      className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] font-bold whitespace-nowrap ${
         up ? "bg-ok-soft text-ok" : "bg-danger-soft text-danger"
       }`}
     >
@@ -56,7 +56,7 @@ export default function KpiRow({ kpis }: { kpis: DashboardData["kpis"] }) {
         <div key={c.label} className="rounded-md border border-line bg-card p-4">
           <div className="text-[11px] font-bold tracking-wide text-faint">{c.label}</div>
           <div className="mt-1.5 flex items-baseline gap-1">
-            <span className="text-[24px] leading-none font-bold tracking-tight">
+            <span className="text-[24px] leading-none font-bold tracking-tight whitespace-nowrap">
               {c.value == null ? "未取得" : fmt(c.value, c.digits ?? 0)}
             </span>
             {c.unit && c.value != null ? <span className="text-[11px] font-bold text-faint">{c.unit}</span> : null}

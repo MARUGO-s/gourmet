@@ -164,7 +164,7 @@ export default function SchedulesPanel({ sources, credentials, stores, scopeKeys
                       {row.label}
                       <span className="ml-1 text-[10px] text-faint">{row.storeId || "既定"}</span>
                     </td>
-                    <td className="px-4 py-2.5">
+                    <td className="cell-wrap px-4 py-2.5">
                       <div className="flex flex-wrap items-center gap-1.5">
                         <select aria-label="周期" value={draft.mode} onChange={(e) => setDraft(row.key, saved, { mode: e.target.value as ScheduleMode })} className={inputClass}>
                           {SCHEDULE_MODES.map((m) => <option key={m} value={m}>{MODE_LABELS[m]}</option>)}
@@ -212,7 +212,7 @@ export default function SchedulesPanel({ sources, credentials, stores, scopeKeys
                 );
               })}
               {!rows.length ? (
-                <tr><td colSpan={7} className="px-5 py-6 text-center text-[12px] font-semibold text-faint">{loading ? "読み込み中…" : "店舗のアカウントが未登録です。下の欄から店舗を追加して設定できます。"}</td></tr>
+                <tr><td colSpan={7} className="cell-wrap px-5 py-6 text-center text-[12px] font-semibold text-faint">{loading ? "読み込み中…" : "店舗のアカウントが未登録です。下の欄から店舗を追加して設定できます。"}</td></tr>
               ) : null}
             </tbody>
           </table>

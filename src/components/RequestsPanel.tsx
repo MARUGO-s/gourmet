@@ -96,7 +96,7 @@ export default function RequestsPanel({ sources, credentials: allCredentials, re
                   </tr>
                 );
               })}
-              {!credentials.length ? <tr><td colSpan={5} className="px-2 py-4 text-center text-faint">{scopeKeys ? "この店舗のアカウントが未登録です。" : "店舗のアカウントが未登録です。"}下の欄から店舗を選んで依頼できます。</td></tr> : null}
+              {!credentials.length ? <tr><td colSpan={5} className="cell-wrap px-2 py-4 text-center text-faint">{scopeKeys ? "この店舗のアカウントが未登録です。" : "店舗のアカウントが未登録です。"}下の欄から店舗を選んで依頼できます。</td></tr> : null}
             </tbody>
           </table>
         </div>

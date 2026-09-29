@@ -140,8 +140,36 @@ test("レポート: 数値の表はサーバー集計、文章はAI（不正な�
   for (const h of ["## 1. サマリー", "## 2. KPIの推移", "## 3. サイト別の比較", "## 4. 口コミの傾向", "## 5. 未返信の口コミ", "## 6. 改善提案"]) assert.ok(md.includes(h), h);
   assert.ok(md.includes("3,080"));
   assert.ok(md.startsWith("# テスト／レポート"));
+  // 表の配置: 文字の列は ---（左）、数値の列だけ ---:（右）
+  assert.ok(md.includes("| 投稿日 | サイト | 評価 | 内容 |\n| --- | --- | ---: | --- |"));
+  assert.ok(md.includes("| 項目 | 対象期間 | 直前期間 | 増減 |\n| --- | ---: | ---: | ---: |"));
+  const html = markdownToHtml(md);
+  const unreplied = html.slice(html.indexOf("5. 未返信の口コミ"));
+  assert.ok(unreplied.includes('<th class="md-text md-wrap" style="text-align:left">内容</th>'));
+  assert.ok(unreplied.includes('<th class="md-num md-nowrap" style="text-align:right">評価</th>'));
+  assert.ok(/<td class="md-text md-nowrap" style="text-align:left">\d{4}-\d{2}-\d{2}<\/td>/.test(unreplied));
+  assert.ok(!/<td class="md-text[^"]*" style="text-align:right"/.test(html), "文字の列が右寄せになっていない");
   const all = buildReportFacts(ds, { store: "all", from: day(1), to: day(28) });
   assert.ok(all.comparison);
+});
+
+test("Markdownの表: 文字の列は左・数値の列は右、短い列は折り返さない（旧レポートの ---: も補正）", () => {
+  const long = "料理はとても美味しかったのですが、提供までの時間が長く、スタッフの対応ももう少し丁寧だと嬉しいです。";
+  // 旧レポート（全列 ---:）: 文字の列は左寄せに戻し、数値の列だけ右寄せ
+  const html = markdownToHtml(`| 投稿日 | サイト | 評価 | 内容 |\n| --- | ---: | ---: | ---: |\n| 2024-01-23 | 一休.comレストラン | 4.00 | ${long} |\n| — | 食べログ | — | 短い |`);
+  const cells = [...html.matchAll(/<(th|td) class="([^"]+)" style="text-align:(\w+)">/g)].map((m) => `${m[1]}:${m[2]}:${m[3]}`);
+  assert.deepEqual(cells.slice(0, 8), [
+    "th:md-text md-nowrap:left", "th:md-text md-nowrap:left", "th:md-num md-nowrap:right", "th:md-text md-wrap:left",
+    "td:md-text md-nowrap:left", "td:md-text md-nowrap:left", "td:md-num md-nowrap:right", "td:md-text md-wrap:left",
+  ]);
+  // 数値の書式（%・符号・桁区切り・「—」）は数値の列、日付・月・文字は文字の列。:---: は中央、:--- は左
+  const t = markdownToHtml("| 月 | PV | 増減 | 件数 | 中 | 左 |\n|---|---|---|---|:---:|:---|\n| 2026-09 | 1,234 | +12.50% | 3件 | a | 10 |\n| 2026-08 | — | -3.00% | 0件 | b | 20 |");
+  const t2 = [...t.matchAll(/<th class="([^"]+)" style="text-align:(\w+)">/g)].map((m) => `${m[1]}:${m[2]}`);
+  assert.deepEqual(t2, ["md-text md-nowrap:left", "md-num md-nowrap:right", "md-num md-nowrap:right", "md-num md-nowrap:right", "md-text md-nowrap:center", "md-num md-nowrap:left"]);
+  // ダウンロードHTML・印刷にも同じ規則（折り返し・配置）が入る
+  const doc = reportHtmlDocument("r", "| a | b |\n|---|---|\n| x | 1 |");
+  for (const rule of [".md-nowrap{white-space:nowrap;width:1%}", "text-align:left", "overflow-wrap:break-word", "thead{display:table-header-group}"]) assert.ok(doc.includes(rule), rule);
+  assert.ok(doc.includes('<td class="md-num md-nowrap" style="text-align:right">1</td>'));
 });
 
 const fakeFetch = (responses, seen = []) => async (url, init) => {
@@ -238,7 +266,8 @@ test("Markdownの表示はHTMLをエスケープし、http(s)のリンクだけ�
   assert.ok(html.includes("<code>code</code>"));
   assert.ok(!html.includes('href="javascript'));
   assert.ok(html.includes('href="https://example.com/?a=1&amp;b=2"'));
-  assert.ok(html.includes('<td style="text-align:right">1,000</td>'));
+  assert.ok(html.includes('<td class="md-num md-nowrap" style="text-align:right">1,000</td>'));
+  assert.ok(html.includes('<th class="md-text md-nowrap" style="text-align:left">項目</th>'));
   assert.ok(html.includes("<ol><li>一</li><li>二</li></ol>"));
   assert.ok(html.includes("<blockquote>"));
   assert.ok(markdownToHtml('[a](https://x.com/"onmouseover=1)').includes("&quot;"));

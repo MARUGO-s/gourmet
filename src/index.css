@@ -32,6 +32,12 @@ body {
   background: #eff4ff;
 }
 
+/* アプリの表（全店舗の比較・口コミ一覧・月別レポート・ランキング・取得設定など）:
+   日付・評価・PV・件数・サイト名・状態などの短いセルは折り返さない。幅が足りないときは各表を包む overflow-x-auto で横スクロールする。
+   長い文章のセル（口コミ本文・空の表の案内文・入力欄のまとまり）だけ .cell-wrap で折り返す。 */
+table th, table td { white-space: nowrap; font-variant-numeric: tabular-nums; }
+table .cell-wrap { white-space: normal; overflow-wrap: break-word; }
+
 /* AI分析: Markdown（markdownToHtml の出力）の表示 */
 .md { overflow-wrap: anywhere; }
 .md > * + * { margin-top: 0.6em; }
@@ -50,8 +56,12 @@ body {
 .md hr { border: 0; border-top: 1px solid var(--color-line); margin: 1.2em 0; }
 .md .md-table { overflow-x: auto; }
 .md table { border-collapse: collapse; width: 100%; font-size: 11px; background: #fff; }
-.md th, .md td { border: 1px solid var(--color-line); padding: 4px 8px; }
-.md th { background: var(--color-surface); font-weight: 700; }
+/* 表: 配置は markdownToHtml が列ごとに付ける（文字=左・数値=右、見出しも同じ）。短い列は折り返さず、長い文章の列だけ語の途中で切らずに折り返す */
+.md th, .md td { border: 1px solid var(--color-line); padding: 4px 8px; text-align: left; vertical-align: top; line-height: 1.6; overflow-wrap: break-word; word-break: normal; }
+.md th { background: var(--color-surface); font-weight: 700; vertical-align: bottom; }
+.md .md-nowrap { white-space: nowrap; width: 1%; }
+.md .md-wrap { white-space: normal; min-width: 16em; }
+.md .md-num { font-variant-numeric: tabular-nums; }
 .md-report { font-size: 13px; line-height: 1.75; }
 
 /* 印刷・PDF（window.print）: 画面の操作部分を隠し、レポート（開いている場合）だけを印刷する */
@@ -64,6 +74,7 @@ body {
   .ai-report { border: 0 !important; }
   .md-report { padding: 0 !important; }
   .md h2 { break-after: avoid; }
-  .md table, .md tr, .md li { break-inside: avoid; }
+  .md tr, .md li { break-inside: avoid; }
+  .md thead { display: table-header-group; }
   .md .md-table { overflow: visible; }
 }

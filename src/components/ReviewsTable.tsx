@@ -50,9 +50,9 @@ export default function ReviewsTable({ reviews, sources }: { reviews: DashboardD
           <td className="px-4 py-3 text-[11px] whitespace-nowrap text-faint">{r.date ?? "更新日未掲載"}{r.visit_month ? <span className="mt-1 block">{r.visit_month} 訪問</span> : null}</td>
           <td className="px-4 py-3 text-[11px] font-bold whitespace-nowrap">{srcMap.get(r.source)?.name ?? r.source}</td>
           <td className="px-4 py-3 text-[11px] whitespace-nowrap">{r.details?.scores && r.details.scores.length > 1 ? r.details.scores.map((s,i) => <p key={i}>{s.label} <Score rating={s.value} /></p>) : <Score rating={r.rating} />}</td>
-          <td className="px-4 py-3"><ReviewBody review={r} /></td>
+          <td className="cell-wrap px-4 py-3"><ReviewBody review={r} /></td>
         </tr>)}
-        {!reviews.length ? <tr><td colSpan={4} className="px-4 py-6 text-center text-[12px] text-faint">口コミはありません</td></tr> : null}</tbody>
+        {!reviews.length ? <tr><td colSpan={4} className="cell-wrap px-4 py-6 text-center text-[12px] text-faint">口コミはありません</td></tr> : null}</tbody>
       </table>
     </div>
     {reviews.length ? <nav aria-label="口コミのページ" className="flex items-center justify-end gap-3 border-t border-line px-4 py-3 text-[12px]">

@@ -134,7 +134,7 @@ export default function OverviewPage({ sources, onSelectStore, onManage }: Props
               {rows.map((r) => row(r))}
               {data.unassigned ? row(data.unassigned, true) : null}
               {!rows.length && !data.unassigned ? (
-                <tr><td colSpan={99} className="px-5 py-8 text-center text-faint">店舗が登録されていません（<button onClick={onManage} className="font-bold text-brand underline">店舗管理</button>）</td></tr>
+                <tr><td colSpan={99} className="cell-wrap px-5 py-8 text-center text-faint">店舗が登録されていません（<button onClick={onManage} className="font-bold text-brand underline">店舗管理</button>）</td></tr>
               ) : null}
             </tbody>
             <tfoot>
