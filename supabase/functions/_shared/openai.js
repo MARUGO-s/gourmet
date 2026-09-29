@@ -1,27 +1,53 @@
 // OpenAI Chat Completions の呼び出し（Node/Edge 共通。fetch は差し替え可能＝テスト用）。
 // APIキーはサーバーの環境変数（OPENAI_API_KEY）だけに置き、ブラウザ・ログ・応答へ出さない。
-import { AI_LIMITS, AI_TOOLS, runTool } from "./ai-analyst.js";
+import { AI_LIMITS, AI_TOOLS, DEFAULT_MODEL, runTool } from "./ai-analyst.js";
 
 export const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 export class AiError extends Error {
   /** @param {string} message @param {number} [status] */
   constructor(message, status = 502) { super(message); this.status = status; }
 }
-// 推論モデル（gpt-5 系・o 系）は temperature を受け付けず、reasoning_effort を受け付ける
-export const isReasoningModel = (model) => /^(gpt-5|o\d)/.test(String(model));
+// 推論モデル（gpt-5 系・gpt-5.x・gpt-6 系・o 系）は temperature を受け付けず、reasoning_effort を受け付ける
+export const isReasoningModel = (model) => /^(gpt-5|gpt-6|o\d)/.test(String(model));
+// gpt-6 系は、Chat Completions で関数（tools）を使うとき reasoning_effort "none" しか受け付けない
+export const isGpt6Model = (model) => /^gpt-6/.test(String(model));
+// reasoning_effort "none" を受け付けるモデル（gpt-5.1 以降・gpt-6 系）。gpt-5 / gpt-5-mini / o 系は "none" を送らない
+const supportsNoneEffort = (model) => /^(gpt-5\.\d|gpt-6)/.test(String(model));
+
+export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high"];
 
 export function openAiConfig(env) {
   const apiKey = env("OPENAI_API_KEY")?.trim() ?? "";
-  const model = env("OPENAI_MODEL")?.trim() || "gpt-5-mini";
+  const model = env("OPENAI_MODEL")?.trim() || DEFAULT_MODEL;
   const effort = env("OPENAI_REASONING_EFFORT")?.trim() || "low";
-  return { apiKey, model, reasoningEffort: ["minimal", "low", "medium", "high", "none"].includes(effort) ? effort : "low" };
+  return { apiKey, model, reasoningEffort: REASONING_EFFORTS.includes(effort) ? effort : "low" };
+}
+
+/** 送信する reasoning_effort（送らない場合は undefined）
+ * @param {string} model @param {string | undefined} effort @param {{ tools?: boolean }} [opts] */
+export function reasoningEffortFor(model, effort, { tools = false } = {}) {
+  if (!isReasoningModel(model)) return undefined;
+  if (tools && isGpt6Model(model)) return "none";
+  const e = effort || "low";
+  if (e === "none") return supportsNoneEffort(model) ? "none" : undefined;
+  return e;
+}
+
+/** Chat Completions のリクエスト本文を組み立てる（キーは含めない）
+ * @param {{ model: string, reasoningEffort?: string }} config @param {any} payload */
+export function buildChatRequest(config, payload) {
+  const body = { model: config.model, ...payload };
+  const tools = Array.isArray(payload?.tools) && payload.tools.length > 0;
+  const effort = reasoningEffortFor(config.model, config.reasoningEffort, { tools });
+  if (effort) body.reasoning_effort = effort;
+  else delete body.reasoning_effort;
+  return body;
 }
 
 /** @param {{ apiKey: string, model: string, reasoningEffort?: string }} config @param {any} payload @param {{ fetchImpl?: typeof fetch, timeoutMs?: number }} [options] */
 export async function chatCompletion(config, payload, { fetchImpl = fetch, timeoutMs = 120_000 } = {}) {
   if (!config.apiKey) throw new AiError("AI分析は未設定です（管理者がサーバーに OPENAI_API_KEY を設定すると利用できます）", 503);
-  const body = { model: config.model, ...payload };
-  if (isReasoningModel(config.model) && config.reasoningEffort && config.reasoningEffort !== "none") body.reasoning_effort = config.reasoningEffort;
+  const body = buildChatRequest(config, payload);
   let res;
   try {
     res = await fetchImpl(OPENAI_URL, {
