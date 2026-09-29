@@ -5,6 +5,9 @@ export type SourceMeta = {
   color: string;
   loginUrl: string;
   hasCredential: boolean;
+  // 登録済みの店舗数（店舗×サイトの資格情報）と、Grok Bot による最終取り込み日時
+  storeCount?: number;
+  lastUpdatedAt?: string | null;
 };
 
 export type Snapshot = {
@@ -33,6 +36,19 @@ export type Review = {
     scores?: { label: string; value: number | null; breakdown: string | null }[];
     usedPrice?: string | null;
     ownerReply?: { text: string; date: string; status: string } | null;
+    // 一休（外部取り込み）
+    origin?: string;
+    storeId?: string;
+    storeName?: string | null;
+    reservationNo?: string;
+    visitDate?: string | null;
+    visitTime?: string | null;
+    postedAt?: string | null;
+    publishedAt?: string | null;
+    publication?: string | null;
+    processing?: string | null;
+    needsReply?: boolean;
+    listUrl?: string;
   };
 };
 
@@ -50,7 +66,30 @@ export type DashboardData = {
   lastSync: string | null;
   demo: boolean;
   details: Details | null;
+  ikyu?: IkyuDetails | null;
 };
+
+export type IkyuPv = {
+  guideSp: number | null; guidePc: number | null; guide: number | null;
+  planSp: number | null; planPc: number | null; plan: number | null;
+  otherSp: number | null; otherPc: number | null; other: number | null;
+  sp: number | null; pc: number | null; pv: number | null;
+  reservations: number | null; amount: number | null;
+};
+export type IkyuDay = IkyuPv & { storeId: string; date: string };
+export type IkyuMonth = IkyuPv & { storeId: string; month: string; complete: boolean; days: number };
+export type IkyuStore = {
+  storeId: string; name: string | null; label: string | null; credentialUpdatedAt: string | null;
+  reviewTotal: number | null; pageviewsUpdatedAt: string | null; reviewsUpdatedAt: string | null;
+  publicRating: number | null; publicReviewCount: number | null; publicUpdatedAt: string | null;
+};
+export type IkyuRun = {
+  runKey: string; agent: string; capturedAt: string | null; receivedAt: string; status: "ok" | "partial";
+  stores: number; days: number; months: number; reviews: number; newReviews: number; message: string;
+};
+export type IkyuDetails =
+  | { unavailable: true }
+  | { unavailable?: undefined; demo?: boolean; stores: IkyuStore[]; months: IkyuMonth[]; daily: IkyuDay[]; runs: IkyuRun[] };
 
 export type DeviceKey = "app" | "pc" | "sp";
 
@@ -90,35 +129,31 @@ export type Details =
       deviceDaily: Record<string, Record<DeviceKey, number | null> & { unclassified?: number }>;
     };
 
+// ログインID・パスワードはブラウザへ返らない（登録済み・更新日時のみ）
 export type CredentialRow = {
   id: string;
   source: string;
   label: string;
-  username: string;
+  storeKey: string;
+  credentialsVersion: number;
   updatedAt: string;
 };
 
-export type SyncResult = {
-  ok: boolean;
-  results: { source: string; status: string; message?: string; warning?: string }[];
-};
-
-export type SyncJob = {
+// アプリ → Grok Bot の取得依頼（agent_requests）
+export type AgentRequestAction = "sync_now" | "fetch_metrics" | "fetch_reviews" | "backfill";
+export type AgentRequestStatus = "queued" | "claimed" | "done" | "failed";
+export type AgentRequest = {
   id: string;
-  sources: string[];
-  source?: string;
-  status: "running" | "completed" | "error";
-  step: string;
-  message: string;
-  startedAt: string;
+  source: string;
+  storeId: string;
+  action: AgentRequestAction;
+  params: { fromMonth?: string; toMonth?: string; note?: string };
+  status: AgentRequestStatus;
+  requestedAt: string;
+  claimedAt: string | null;
   finishedAt: string | null;
-  dispatchStatus?: "requesting" | "requested" | "failed" | "unconfigured" | null;
-  results: {
-    source: string;
-    status: "ok" | "partial" | "error";
-    step?: string;
-    message?: string;
-    warning?: string;
-    summary?: { rating: number | null; reviews: number | null; dailyDays: number; monthlyMonths: number; latestPvDate: string | null; ownerReviewEntries?: number; ownerReviewGroups?: number | null };
-  }[];
+  claimedBy: string | null;
+  attempts: number;
+  result: Record<string, unknown> | null;
+  error: string | null;
 };

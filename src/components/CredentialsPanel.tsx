@@ -2,12 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import { deleteCredential, getCredentials, saveCredential } from "../api";
 import type { CredentialRow, SourceMeta } from "../types";
 
-function ikyuAccount(username: string) {
-  const [storeId, operatorId, extra] = username.split("\u001e");
-  if (extra !== undefined || !/^\d{6}$/.test(storeId ?? "") || !operatorId) return null;
-  return { storeId, operatorId };
-}
-
 type Props = {
   sources: SourceMeta[];
   onChanged: () => void;
@@ -18,6 +12,7 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
   const [source, setSource] = useState<string>(sources[0]?.id ?? "");
   const [label, setLabel] = useState("");
   const [storeId, setStoreId] = useState("");
+  const [storeKey, setStoreKey] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -51,9 +46,10 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
       setSaving(true);
       setNotice(null);
       try {
-        await saveCredential({ source, label, username, password, ...(source === "ikyu" ? { storeId } : {}) });
+        await saveCredential({ source, label, username, password, ...(source === "ikyu" ? { storeId } : { storeKey }) });
         setLabel("");
         setStoreId("");
+        setStoreKey("");
         setUsername("");
         setPassword("");
         setShowPassword(false);
@@ -66,7 +62,7 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
         setSaving(false);
       }
     },
-    [source, label, storeId, username, password, refresh, onChanged],
+    [source, label, storeId, storeKey, username, password, refresh, onChanged],
   );
 
   const onDelete = useCallback(
@@ -95,7 +91,7 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
           <table className="w-full min-w-[560px] text-left">
             <thead>
               <tr className="border-b border-line">
-                {["サイト", "ラベル", "ログインID", "更新日時", ""].map((h) => (
+                {["サイト", "店舗", "ラベル", "状態", "更新日時", ""].map((h) => (
                   <th key={h} className="px-5 py-2.5 text-[10px] font-bold tracking-wide text-faint uppercase">
                     {h}
                   </th>
@@ -105,7 +101,6 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
             <tbody>
               {rows.map((r) => {
                 const s = srcMap.get(r.source);
-                const ikyu = r.source === "ikyu" ? ikyuAccount(r.username) : null;
                 return (
                   <tr key={r.id} className="border-b border-line last:border-b-0 hover:bg-surface">
                     <td className="px-5 py-2.5 whitespace-nowrap">
@@ -117,9 +112,12 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
                         {s?.name ?? r.source}
                       </span>
                     </td>
-                    <td className="px-5 py-2.5 text-[11px] font-medium text-subtle">{r.label || "—"}</td>
                     <td className="px-5 py-2.5 text-[11px] font-semibold">
-                      {ikyu ? `店舗 ${ikyu.storeId} / ${ikyu.operatorId}` : r.username}
+                      {r.source === "ikyu" ? (r.storeKey ? `店舗ID ${r.storeKey}` : "店舗ID未設定（登録し直してください）") : r.storeKey || "既定"}
+                    </td>
+                    <td className="px-5 py-2.5 text-[11px] font-medium text-subtle">{r.label || "—"}</td>
+                    <td className="px-5 py-2.5 text-[11px] font-bold whitespace-nowrap text-ok" title="ID・パスワードは暗号化して保存され、画面には表示されません">
+                      登録済み <span className="text-[9px] font-semibold text-faint">v{r.credentialsVersion}</span>
                     </td>
                     <td className="px-5 py-2.5 text-[11px] font-semibold whitespace-nowrap text-faint">
                       {new Date(r.updatedAt).toLocaleString("ja-JP", {
@@ -140,7 +138,7 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
               })}
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-5 py-6 text-center text-[12px] font-semibold text-faint">
+                  <td colSpan={6} className="px-5 py-6 text-center text-[12px] font-semibold text-faint">
                     登録されたアカウントはありません
                   </td>
                 </tr>
@@ -159,7 +157,7 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
             <span className="text-[11px] font-bold text-subtle">サイト</span>
             <select
               value={source}
-              onChange={(e) => { setSource(e.target.value); setStoreId(""); setShowPassword(false); }}
+              onChange={(e) => { setSource(e.target.value); setStoreId(""); setStoreKey(""); setShowPassword(false); }}
               className="rounded-md border border-line bg-card px-3 py-2 text-[12px] font-semibold focus:border-brand focus:outline-none"
             >
               {sources.map((s) => (
@@ -172,13 +170,14 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
           {source === "tabelog" ? (
             <p className="rounded bg-brand-soft px-3 py-2 text-[11px] leading-relaxed text-brand">
               食べログの店舗管理画面にログインする専用ID・パスワードを登録してください。
-              一般会員用のメールアドレスや価格.com IDとは異なります。
+              一般会員用のメールアドレスや価格.com IDとは異なります。複数店舗は店舗コード（食べログの店舗ID）ごとに登録してください。
             </p>
           ) : source === "ikyu" ? (
             <p className="rounded bg-brand-soft px-3 py-2 text-[11px] leading-relaxed text-brand">
-              一休.comレストラン管理画面と同じ3項目です。店舗IDは6桁の数字です。同期では公開ページの評価と口コミを取得します。
+              一休.comレストラン管理画面と同じ3項目です（1店舗=1ログイン、店舗IDは6桁）。店舗ごとに登録でき、同じ店舗IDで保存すると上書きします。
+              データの取り込みはGrok Botが行い、この登録情報を専用APIで受け取って使用します（アプリからは取得しません）。
             </p>
-          ) : <p className="rounded bg-surface px-3 py-2 text-[11px] leading-relaxed text-subtle">このサイトの自動取得は接続準備中です。現在、自動取得できるのは食べログです。</p>}
+          ) : <p className="rounded bg-surface px-3 py-2 text-[11px] leading-relaxed text-subtle">このサイトもGrok Botが取り込みます。店舗ごとに登録すると、Grok Botが専用APIで受け取って使用します（アプリからは取得しません）。</p>}
           <label className="flex flex-col gap-1.5">
             <span className="text-[11px] font-bold text-subtle">ラベル（任意）</span>
             <input
@@ -188,6 +187,18 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
               className="rounded-md border border-line bg-card px-3 py-2 text-[12px] font-semibold placeholder:text-faint placeholder:font-normal focus:border-brand focus:outline-none"
             />
           </label>
+          {source !== "ikyu" ? (
+            <label className="flex flex-col gap-1.5">
+              <span className="text-[11px] font-bold text-subtle">店舗コード（任意・複数店舗を登録する場合）</span>
+              <input
+                value={storeKey}
+                onChange={(e) => setStoreKey(e.target.value.replace(/[^0-9A-Za-z_-]/g, "").slice(0, 40))}
+                autoComplete="off"
+                placeholder="例: 13245351（未入力なら既定の1件）"
+                className="rounded-md border border-line bg-card px-3 py-2 text-[12px] font-semibold placeholder:text-faint placeholder:font-normal focus:border-brand focus:outline-none"
+              />
+            </label>
+          ) : null}
           {source === "ikyu" ? (
             <label className="flex flex-col gap-1.5">
               <span className="text-[11px] font-bold text-subtle">店舗ID</span>
@@ -237,7 +248,8 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
             {saving ? "保存中…" : "保存する"}
           </button>
           <p className="text-[10px] leading-relaxed font-medium text-faint">
-            パスワードは暗号化してgourmetのSupabaseに保存します。同期時だけGitHub Actionsの取得用ブラウザへ渡し、店舗管理画面のログインに使用します。GitHubの公開ファイルや実行ログには保存しません。
+            ID・パスワードは暗号化してgourmetのSupabaseに保存し、この画面には再表示しません（変更は同じ店舗で上書き保存）。
+            すべてのサイトとも、Grok Bot専用APIからのみ受け渡し、受け渡しのたびに記録します（アプリ・GitHubからサイトへはログインしません）。GitHubの公開ファイルや実行ログには保存しません。
           </p>
         </div>
       </form>

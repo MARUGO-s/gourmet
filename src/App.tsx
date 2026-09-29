@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, getActiveSync, getDashboard, getSources, getSyncJob, syncNow } from "./api";
-import type { DashboardData, SourceMeta, SyncJob } from "./types";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { createRequest, getCredentials, getDashboard, getRequests, getSources } from "./api";
+import type { AgentRequest, AgentRequestAction, CredentialRow, DashboardData, SourceMeta } from "./types";
 import { supabase } from "./lib/supabase";
-import { getSyncState } from "./lib/sync-status";
-import { headerSync, unconnectedSyncMessage } from "./lib/sync-availability";
+import { hasOpenRequests } from "./lib/agent-requests";
 import Sidebar from "./components/Sidebar";
 import TopBar from "./components/TopBar";
 import KpiRow from "./components/KpiRow";
@@ -11,9 +10,15 @@ import TrafficChart from "./components/TrafficChart";
 import ReviewsTable from "./components/ReviewsTable";
 import CredentialsPanel from "./components/CredentialsPanel";
 import TabelogDetails from "./components/TabelogDetails";
-import SyncPanel from "./components/SyncPanel";
+import IngestPanel from "./components/IngestPanel";
+import RequestsPanel from "./components/RequestsPanel";
+// 一休の詳細分析は選択時だけ読み込む（初期バンドルを小さく保つ）
+const IkyuDetails = lazy(() => import("./components/IkyuDetails"));
 
-type View = "dashboard" | "accounts";
+type View = "dashboard" | "requests" | "accounts";
+const VIEW_TITLES: Record<View, [string, string | null]> = {
+  dashboard: ["ダッシュボード", null], requests: ["取得依頼", "Grok Botへの取得依頼と履歴"], accounts: ["アカウント管理", "口コミサイトのアカウント（店舗×サイト）"],
+};
 
 export default function App() {
   const [view, setView] = useState<View>("dashboard");
@@ -21,15 +26,16 @@ export default function App() {
   const [filter, setFilter] = useState<"all" | string>("all");
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [starting, setStarting] = useState(false);
-  const [job, setJob] = useState<SyncJob | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [credentials, setCredentials] = useState<CredentialRow[]>([]);
+  const [requests, setRequests] = useState<AgentRequest[]>([]);
+  const [requestsLoading, setRequestsLoading] = useState(false);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
   const currentUser = useRef(userId);
   currentUser.current = userId;
-  const syncState = getSyncState(job, starting);
-  const syncing = syncState.busy;
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const openIds = useRef<Set<string>>(new Set());
 
   const refreshAll = useCallback(() => setRefreshKey((k) => k + 1), []);
 
@@ -41,19 +47,18 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    let alive = true;
-    setJob(null);
     setData(null);
     setSources([]);
-    setStarting(false);
+    setCredentials([]);
+    setRequests([]);
     setNotice(null);
-    if (userId) getActiveSync().then(({ job: active }) => { if (alive && active) setJob(active); }).catch(() => {});
-    return () => { alive = false; };
+    openIds.current = new Set();
   }, [userId]);
 
   useEffect(() => {
     let alive = true;
     getSources().then((rows) => { if (alive) setSources(rows); }).catch(() => { if (alive) setSources([]); });
+    if (userId) getCredentials().then((rows) => { if (alive) setCredentials(rows); }).catch(() => { if (alive) setCredentials([]); });
     return () => { alive = false; };
   }, [refreshKey, userId]);
 
@@ -61,111 +66,86 @@ export default function App() {
     let alive = true;
     setLoading(true);
     getDashboard(filter)
-      .then((d) => {
-        if (alive) {
-          setData(d);
-        }
-      })
-      .catch((e) => {
-        if (alive) setNotice(e instanceof Error ? e.message : "データの取得に失敗しました");
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
-    return () => {
-      alive = false;
-    };
+      .then((d) => { if (alive) setData(d); })
+      .catch((e) => { if (alive) setNotice({ text: e instanceof Error ? e.message : "データの取得に失敗しました", error: true }); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
   }, [filter, refreshKey, userId]);
 
-  useEffect(() => {
-    if (!job?.id || !userId) return;
-    const id = job.id;
-    let alive = true;
-    let timer: ReturnType<typeof setTimeout>;
-    const poll = async () => {
-      try {
-        const next = await getSyncJob(id);
-        if (!alive) return;
-        setJob(next);
-        setNotice(null);
-        if (next.status !== "running") { refreshAll(); return; }
-        timer = setTimeout(poll, next.step === "queued" ? 10000 : 3000);
-      } catch (e) {
-        if (!alive) return;
-        if (e instanceof ApiError && (e.status === 404 || e.status === 401)) {
-          setJob((current) => current ? { ...current, status: "error", message: e.message } : null);
-          return;
-        }
-        setNotice("進捗を確認できません。接続を再確認しています。取得処理はサーバーで継続しています");
-        timer = setTimeout(poll, 5000);
-      }
-    };
-    void poll();
-    return () => { alive = false; clearTimeout(timer); };
-  }, [job?.id, userId, refreshAll]);
+  // 取得依頼: 処理待ちがある間は30秒ごとに確認し、完了したらダッシュボードを読み直す
+  const loadRequests = useCallback(async () => {
+    if (!currentUser.current) return;
+    const user = currentUser.current;
+    setRequestsLoading(true);
+    try {
+      const { requests: rows } = await getRequests();
+      if (currentUser.current !== user) return;
+      const finished = rows.some((r) => openIds.current.has(r.id) && r.status === "done");
+      openIds.current = new Set(rows.filter((r) => r.status === "queued" || r.status === "claimed").map((r) => r.id));
+      setRequests(rows);
+      if (finished) refreshAll();
+    } catch (e) {
+      if (currentUser.current === user) setNotice({ text: e instanceof Error ? e.message : "取得依頼を読み込めませんでした", error: true });
+    } finally {
+      if (currentUser.current === user) setRequestsLoading(false);
+    }
+  }, [refreshAll]);
 
-  const onSync = useCallback(async (source = filter) => {
-    if (syncing || !userId) return;
-    setStarting(true);
+  useEffect(() => { if (userId) void loadRequests(); }, [userId, loadRequests]);
+  const pending = hasOpenRequests(requests);
+  useEffect(() => {
+    if (!userId || !pending) return;
+    const timer = setInterval(() => void loadRequests(), 30_000);
+    return () => clearInterval(timer);
+  }, [userId, pending, loadRequests]);
+
+  const onRequest = useCallback(async (source: string, storeId: string, action: AgentRequestAction = "sync_now", params?: { fromMonth?: string; note?: string }) => {
+    if (!userId) return;
+    const key = `${source}/${storeId}`;
+    setBusyKey(key);
     setNotice(null);
     try {
-      const next = await syncNow(source);
-      if (currentUser.current === userId) setJob(next);
+      await createRequest({ source, storeId, action, ...(params ? { params } : {}) });
+      if (currentUser.current === userId) setNotice({ text: "Grok Botへ依頼しました。約5分ごとに確認され、取得が始まると「取得中」になります", error: false });
     } catch (e) {
-      if (currentUser.current === userId) {
-        setNotice(e instanceof Error ? e.message : "同期に失敗しました");
-        // 開始応答だけが途切れた場合は、実行済みジョブの進捗へ復帰する。
-        const active = await getActiveSync().catch(() => null);
-        if (currentUser.current === userId && active?.job) setJob(active.job);
-      }
+      if (currentUser.current === userId) setNotice({ text: e instanceof Error ? e.message : "依頼を登録できませんでした", error: true });
     } finally {
-      if (currentUser.current === userId) setStarting(false);
+      if (currentUser.current === userId) setBusyKey(null);
+      void loadRequests();
     }
-  }, [filter, syncing, userId]);
+  }, [userId, loadRequests]);
 
   const filteredSrc = filter === "all" ? "すべてのサイト" : (sources.find((s) => s.id === filter)?.name ?? "");
-  const hasNoticeError = notice != null;
-  const header = headerSync(!!userId, filter, sources);
-  const onHeaderSync = useCallback(() => {
-    if (!header.enabled) return;
-    if (header.mode === "unconnected") {
-      setNotice(unconnectedSyncMessage(header.name, header.hasCredential));
-      if (!header.hasCredential) setView("accounts");
-      return;
-    }
-    void onSync(header.mode === "ikyu" ? "ikyu" : undefined);
-  }, [header, onSync]);
+  const [title, subtitle] = VIEW_TITLES[view];
+  const openCount = requests.filter((r) => r.status === "queued" || r.status === "claimed").length;
 
   return (
     <div className="flex min-h-screen">
       <Sidebar view={view} onView={setView} />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
-          title={view === "dashboard" ? "ダッシュボード" : "アカウント管理"}
-          subtitle={view === "dashboard" ? filteredSrc : "口コミサイトのアカウント"}
-          syncState={syncState}
+          title={title}
+          subtitle={subtitle ?? filteredSrc}
           lastSync={data?.lastSync ?? null}
           demo={data?.demo ?? false}
-          onSync={onHeaderSync}
-          syncDisabled={!header.enabled}
-          syncTitle={header.enabled ? undefined : header.reason}
+          signedIn={!!userId}
+          openRequests={openCount}
+          onRequests={() => setView("requests")}
         />
 
         {notice ? (
           <div
             className={`flex items-center gap-2 border-b px-6 py-2.5 text-[11px] font-bold ${
-              hasNoticeError
+              notice.error
                 ? "border-line bg-danger-soft text-danger"
                 : "border-line bg-ok-soft text-ok"
             }`}
           >
-            {hasNoticeError ? "⚠" : "✓"} {notice}
+            {notice.error ? "⚠" : "✓"} {notice.text}
           </div>
         ) : null}
 
         <main className="flex flex-1 flex-col gap-5 px-6 py-6">
-          <SyncPanel job={job} signedIn={!!userId} sources={sources} syncState={syncState} filter={filter}
-            onAccounts={() => setView("accounts")} onSync={() => void onSync(filter === "ikyu" ? "ikyu" : "tabelog")} />
           {view === "dashboard" ? (
             <>
               <nav className="flex flex-wrap items-center gap-1.5">
@@ -199,6 +179,9 @@ export default function App() {
                 ))}
               </nav>
 
+              <IngestPanel filter={filter} signedIn={!!userId} sources={sources} credentials={credentials} requests={requests} busyKey={busyKey}
+                onRequest={(source, storeId) => void onRequest(source, storeId)} onRequests={() => setView("requests")} onAccounts={() => setView("accounts")} />
+
               {loading ? (
                 <div className="rounded-md border border-line bg-card px-6 py-12 text-center text-[12px] font-semibold text-faint">
                   読み込み中…
@@ -221,6 +204,7 @@ export default function App() {
                     />
                   </section>
                   {data.details ? <TabelogDetails details={data.details} /> : null}
+                  {filter === "ikyu" && data.ikyu ? <Suspense fallback={<div className="rounded-md border border-line bg-card px-6 py-8 text-center text-[12px] font-semibold text-faint">読み込み中…</div>}><IkyuDetails ikyu={data.ikyu} reviews={data.reviews} /></Suspense> : null}
                   <section className="rounded-md border border-line bg-card">
                     <header className="flex items-center gap-2 border-b border-line px-5 py-3.5">
                       <h2 className="text-[13px] font-bold tracking-tight">取得済みの口コミ</h2>
@@ -237,6 +221,13 @@ export default function App() {
                 </div>
               )}
             </>
+          ) : view === "requests" ? (
+            userId ? (
+              <RequestsPanel sources={sources} credentials={credentials} requests={requests} loading={requestsLoading} busyKey={busyKey}
+                onRequest={(source, storeId, action, params) => void onRequest(source, storeId, action, params)} onRefresh={() => void loadRequests()} />
+            ) : (
+              <div className="rounded-md border border-line bg-card px-6 py-12 text-center text-[12px] font-semibold text-faint">右上の「ログイン」から開始してください</div>
+            )
           ) : (
             <CredentialsPanel key={userId ?? "guest"} sources={sources} onChanged={refreshAll} />
           )}

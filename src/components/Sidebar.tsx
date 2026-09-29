@@ -1,6 +1,6 @@
 type Props = {
-  view: "dashboard" | "accounts";
-  onView: (v: "dashboard" | "accounts") => void;
+  view: "dashboard" | "requests" | "accounts";
+  onView: (v: "dashboard" | "requests" | "accounts") => void;
 };
 
 function NavIcon({ name }: { name: string }) {
@@ -24,6 +24,15 @@ function NavIcon({ name }: { name: string }) {
       </svg>
     );
   }
+  if (name === "requests") {
+    return (
+      <svg {...common}>
+        <path d="M21 12a9 9 0 1 1-2.6-6.3" />
+        <path d="M21 3v6h-6" />
+        <path d="M12 8v4l3 2" />
+      </svg>
+    );
+  }
   return (
     <svg {...common}>
       <circle cx="12" cy="8" r="4" />
@@ -35,6 +44,7 @@ function NavIcon({ name }: { name: string }) {
 
 const ITEMS: { id: Props["view"]; label: string }[] = [
   { id: "dashboard", label: "ダッシュボード" },
+  { id: "requests", label: "取得依頼" },
   { id: "accounts", label: "アカウント管理" },
 ];
 
@@ -84,7 +94,7 @@ export default function Sidebar({ view, onView }: Props) {
 
       <div className="mt-auto border-t border-line px-5 py-4">
         <div className="text-[10px] leading-relaxed font-medium text-faint">
-          管理対象サイト（自動取得は食べログのみ）
+          管理対象サイト（すべてGrok Botが取り込み）
           <br />
           食べログ / ホットペッパー / Google / トレタ / 一休 / Retty
         </div>
