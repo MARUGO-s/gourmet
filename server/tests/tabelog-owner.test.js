@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mergeOwnerReviews, ownerGoto, selectAllMonths} from '../tabelog-owner.js';
+import {mergeOwnerReviews, ownerGoto, selectAllMonths,readOwnerDailyTable} from '../tabelog-owner.js';
 import {collectTabelogMetrics} from '../tabelog-result.js';
 import {validateTabelogResult, snapshotUpdates} from '../sync-data.js';
 import {computeDashboard} from '../../supabase/functions/_shared/dashboard.js';
@@ -47,4 +47,16 @@ test('owner navigation rejects external origins and redirects',async()=>{
   const page={goto:async()=>({status:()=>200}),url:()=>'https://other.example/'};
   await assert.rejects(ownerGoto(page,'https://other.example/',async()=>{}),/以外/);
   await assert.rejects(ownerGoto(page,'https://owner.tabelog.com/owner_rst/top',async()=>{}),/拒否/);
+});
+test('historic owner totals retain the displayed device counts and their explicit nonnegative difference',()=>{
+  const original=globalThis.document;
+  globalThis.document={querySelector:()=>({rows:[{cells:['2020-10-02 (金)','48','33','57','139'].map(textContent=>({textContent}))}]})};
+  try {
+    const [row]=readOwnerDailyTable();
+    assert.deepEqual(row,{date:'2020-10-02',pc:48,sp:33,app:57,pv:139,unclassified:1});
+    const result={status:'partial',warning:'公開総合点未取得',data:{},daily:[row],monthly:[{month:'2020-10',pv:5415,pc:869,sp:1501,app:3021,unclassified:24,reservations:2}]};
+    assert.doesNotThrow(()=>validateTabelogResult(result));
+    for(const difference of [undefined,2,-1]) assert.throws(()=>validateTabelogResult({...result,daily:[{...row,unclassified:difference}]}));
+    assert.throws(()=>validateTabelogResult({...result,monthly:[{...result.monthly[0],unclassified:25}]}));
+  } finally {globalThis.document=original;}
 });

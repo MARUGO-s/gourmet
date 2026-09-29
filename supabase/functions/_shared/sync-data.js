@@ -29,7 +29,8 @@ export function validateTabelogResult(result) {
     dates.add(row.date);
     const values = [row.pc, row.sp, row.app];
     if (values.some((v) => v != null && !count(v))) throw new Error("端末別PVの数値が不正です");
-    if (values.every((v) => v != null) && values.reduce((a, b) => a + b, 0) !== row.pv) {
+    if(row.unclassified!=null&&!count(row.unclassified))throw new Error('日別PVの内訳差が不正です');
+    if (values.every((v) => v != null) && values.reduce((a, b) => a + b, 0) + (row.unclassified??0) !== row.pv) {
       throw new Error("日別PVの合計と端末別PVの合計が一致しません");
     }
   }
@@ -42,7 +43,8 @@ export function validateTabelogResult(result) {
     if ([row.pv, row.pc, row.sp, row.app, row.calls, row.mapPrints].some((v) => v != null && !count(v))) {
       throw new Error("月別レポートの数値が不正です");
     }
-    if ([row.pv, row.pc, row.sp, row.app].every((v) => v != null) && row.pc + row.sp + row.app !== row.pv) {
+    if(row.unclassified!=null&&!count(row.unclassified))throw new Error('月別PVの内訳差が不正です');
+    if ([row.pv, row.pc, row.sp, row.app].every((v) => v != null) && row.pc + row.sp + row.app + (row.unclassified??0) !== row.pv) {
       throw new Error("月別PVの合計と端末別PVの合計が一致しません");
     }
   }

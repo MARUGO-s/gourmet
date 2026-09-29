@@ -141,6 +141,11 @@ export function readConversionTable() {
     .map((tr) => {
       const entry = { month: tr.cells[0].textContent.trim() };
       for (const [key, col] of Object.entries(cols)) entry[key] = num(tr, col);
+      if([entry.pv,entry.pc,entry.sp,entry.app].every(n=>n!=null)) {
+        const difference=entry.pv-entry.pc-entry.sp-entry.app;
+        if(difference<0)throw new Error('管理画面の月別PVの内訳が総合値を超えています');
+        if(difference)entry.unclassified=difference;
+      }
       return entry;
     });
   return { months, headers };
