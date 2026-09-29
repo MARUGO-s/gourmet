@@ -3,6 +3,7 @@ import { ApiError, getActiveSync, getDashboard, getSources, getSyncJob, syncNow 
 import type { DashboardData, SourceMeta, SyncJob } from "./types";
 import { supabase } from "./lib/supabase";
 import { getSyncState } from "./lib/sync-status";
+import { headerSync, unconnectedSyncMessage } from "./lib/sync-availability";
 import Sidebar from "./components/Sidebar";
 import TopBar from "./components/TopBar";
 import KpiRow from "./components/KpiRow";
@@ -124,6 +125,16 @@ export default function App() {
 
   const filteredSrc = filter === "all" ? "すべてのサイト" : (sources.find((s) => s.id === filter)?.name ?? "");
   const hasNoticeError = notice != null;
+  const header = headerSync(!!userId, filter, sources);
+  const onHeaderSync = useCallback(() => {
+    if (!header.enabled) return;
+    if (header.mode === "unconnected") {
+      setNotice(unconnectedSyncMessage(header.name, header.hasCredential));
+      if (!header.hasCredential) setView("accounts");
+      return;
+    }
+    void onSync();
+  }, [header, onSync]);
 
   return (
     <div className="flex min-h-screen">
@@ -135,8 +146,9 @@ export default function App() {
           syncState={syncState}
           lastSync={data?.lastSync ?? null}
           demo={data?.demo ?? false}
-          onSync={() => void onSync()}
-          syncDisabled={!userId || !sources.some((s) => s.id === "tabelog" && s.hasCredential && (filter === "all" || filter === s.id))}
+          onSync={onHeaderSync}
+          syncDisabled={!header.enabled}
+          syncTitle={header.enabled ? undefined : header.reason}
         />
 
         {notice ? (
@@ -152,7 +164,7 @@ export default function App() {
         ) : null}
 
         <main className="flex flex-1 flex-col gap-5 px-6 py-6">
-          <SyncPanel job={job} signedIn={!!userId} sources={sources} syncState={syncState}
+          <SyncPanel job={job} signedIn={!!userId} sources={sources} syncState={syncState} filter={filter}
             onAccounts={() => setView("accounts")} onSync={() => void onSync("tabelog")} />
           {view === "dashboard" ? (
             <>

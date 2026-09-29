@@ -5,6 +5,7 @@ type Props = {
   subtitle: string;
   syncState: SyncState;
   syncDisabled?: boolean;
+  syncTitle?: string;
   lastSync: string | null;
   demo: boolean;
   onSync: () => void;
@@ -12,7 +13,7 @@ type Props = {
 
 import AuthButton from "./AuthButton";
 
-export default function TopBar({ title, subtitle, syncState, syncDisabled, lastSync, demo, onSync }: Props) {
+export default function TopBar({ title, subtitle, syncState, syncDisabled, syncTitle, lastSync, demo, onSync }: Props) {
   const lastSyncLabel = lastSync
     ? new Date(lastSync).toLocaleString("ja-JP", { dateStyle: "short", timeStyle: "short" })
     : "—";
@@ -32,7 +33,7 @@ export default function TopBar({ title, subtitle, syncState, syncDisabled, lastS
       <button
         onClick={onSync}
         disabled={syncState.busy || syncDisabled}
-        title={syncState.phase === "queued" ? "依頼は受付済みです。取得処理はまだ始まっていません" : syncDisabled ? "アプリにログインし、対象サイトのアカウントを登録してください" : undefined}
+        title={syncState.phase === "queued" ? "依頼は受付済みです。取得処理はまだ始まっていません" : syncTitle}
         className="flex items-center gap-2 rounded-md bg-brand px-3.5 py-2 text-[12px] font-bold text-white transition hover:opacity-90 disabled:opacity-50"
       >
         <svg

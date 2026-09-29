@@ -6,12 +6,33 @@ type Props = {
   signedIn: boolean;
   sources: SourceMeta[];
   syncState: SyncState;
+  filter: string;
   onAccounts: () => void;
   onSync: () => void;
 };
 
-export default function SyncPanel({ job, signedIn, sources, syncState, onAccounts, onSync }: Props) {
+export default function SyncPanel({ job, signedIn, sources, syncState, filter, onAccounts, onSync }: Props) {
   const registered = sources.some((s) => s.id === "tabelog" && s.hasCredential);
+  const focused = filter !== "all" && filter !== "tabelog" ? sources.find((s) => s.id === filter) : null;
+  if (focused) {
+    return (
+      <section className="rounded-md border border-line bg-card p-5" aria-label={`${focused.name}の取得`}>
+        <h2 className="text-[13px] font-bold">{focused.name}</h2>
+        {focused.hasCredential ? (
+          <p className="mt-1 text-[12px] leading-relaxed text-subtle">
+            アカウントは保存済みです。自動取得はまだ接続していないため、同期を開始しても{focused.name}の評価・口コミ・PV・予約は入りません。食べログの取得は「食べログ」を選んでから行います。
+          </p>
+        ) : signedIn ? (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-[12px] leading-relaxed text-subtle">自動取得はまだ接続していません。先にアカウントを登録してください。</p>
+            <button onClick={onAccounts} className="rounded-md border border-brand px-4 py-2 text-[12px] font-bold text-brand">アカウントを登録</button>
+          </div>
+        ) : (
+          <p className="mt-3 rounded bg-surface px-3 py-2 text-[12px] text-subtle">右上の「ログイン」から開始してください</p>
+        )}
+      </section>
+    );
+  }
   const queued = syncState.phase === "queued";
   const partial = job?.results.some(result => result.status === "partial");
   const waitingMinutes = job ? Math.max(0, Math.floor((Date.now() - Date.parse(job.startedAt)) / 60000)) : 0;
