@@ -151,7 +151,7 @@ export default function CredentialsPanel({ sources, onChanged, stores, scopeKeys
               })}
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-5 py-6 text-center text-[12px] font-semibold text-faint">
+                  <td colSpan={6} className="cell-wrap px-5 py-6 text-center text-[12px] font-semibold text-faint">
                     {scopeKeys ? "この店舗に登録されたアカウントはありません" : "登録されたアカウントはありません"}
                   </td>
                 </tr>

@@ -253,7 +253,7 @@ export default function IkyuDetails({ ikyu, reviews }: { ikyu: Details; reviews:
                   </tr>
                 );
               })}
-              {!months.length ? <tr><td colSpan={12} className="px-4 py-6 text-center text-[12px] text-faint">月別データはまだ取り込まれていません</td></tr> : null}
+              {!months.length ? <tr><td colSpan={12} className="cell-wrap px-4 py-6 text-center text-[12px] text-faint">月別データはまだ取り込まれていません</td></tr> : null}
             </tbody>
           </table>
         </div>
