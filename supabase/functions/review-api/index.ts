@@ -6,6 +6,7 @@ import { must } from "../_shared/sync-data.js";
 import { encrypt } from "../_shared/crypto.ts";
 import { service, json, body, publicJob } from "../_shared/http.ts";
 import { dispatchWorker } from "../_shared/dispatch.js";
+import { packIkyuUsername } from "../_shared/ikyu-login.js";
 
 const demo = buildSeed();
 const credentialColumns = "id,source,label,username,updated_at";
@@ -59,8 +60,9 @@ Deno.serve(async req => {
     }
     if (path === "/credentials" && req.method === "POST") {
       const input=await body(req);
-      if(!getSource(input.source) || typeof input.username!=="string" || !input.username.trim() || input.username.length>320 || typeof input.password!=="string" || !input.password || input.password.length>1000 || (input.label && (typeof input.label!=="string" || input.label.length>200))) return json(req,{error:"サイト・ID・パスワードをご確認ください"},400);
-      await must(admin.from("credentials").upsert({user_id:user.id,source:input.source,label:input.label||"",username:input.username.trim(),password_enc:await encrypt(input.password),updated_at:new Date().toISOString()},{onConflict:"user_id,source"}));
+      const username = input.source === "ikyu" ? packIkyuUsername(input.storeId, input.username) : (typeof input.username === "string" ? input.username.trim() : "");
+      if(!getSource(input.source) || !username || username.length>320 || typeof input.password!=="string" || !input.password || input.password.length>1000 || (input.label && (typeof input.label!=="string" || input.label.length>200))) return json(req,{error:input.source==="ikyu"?"店舗ID（6桁）・オペレータID・パスワードをご確認ください":"サイト・ID・パスワードをご確認ください"},400);
+      await must(admin.from("credentials").upsert({user_id:user.id,source:input.source,label:input.label||"",username,password_enc:await encrypt(input.password),updated_at:new Date().toISOString()},{onConflict:"user_id,source"}));
       return json(req,{ok:true});
     }
     if (/^\/credentials\/[0-9a-f-]{36}$/.test(path) && req.method === "DELETE") {
