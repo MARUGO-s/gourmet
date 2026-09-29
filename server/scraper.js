@@ -308,9 +308,17 @@ async function extractTabelogReports(page, fallbackName) {
 async function collectStorePublicMetrics(page) {
   const href = await page.evaluate(readOwnerPublicUrl);
   if (!href) return { rating: null, reviews: null, reviewItems: [], issue: "管理画面の自店舗ページリンクを確認できないため、公開の総合点と口コミ総数は未取得です" };
-  const data = await collectTabelogPublicData(page.context(), href);
-  // Public structured snippets are not the owner review corpus.
-  return { ...data, reviewItems: [] };
+  // A fresh context: the owner session is not sent to the public restaurant page.
+  const clean = await page.context().browser().newContext({
+    locale: "ja-JP", timezoneId: "Asia/Tokyo", viewport: { width: 1280, height: 800 },
+    extraHTTPHeaders: { "Accept-Language": "ja,en;q=0.9" },
+  });
+  try {
+    const data = await collectTabelogPublicData(clean, href);
+    return { ...data, reviewItems: [] };
+  } finally {
+    await clean.close();
+  }
 }
 
 // Owner console for posts and history. The store's own public page supplies the official aggregate only.
