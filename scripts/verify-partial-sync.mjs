@@ -71,6 +71,30 @@ try {
   full.data.rating=3.48;
   assert.equal((await worker({action:'result',...third,result:full})).status,200);
   assert.equal((await dashboard(a.access)).kpis.rating.value,3.48);
+  const ownerReviews=[
+    {externalId:'B900000001:100001',date:'2020-01-02',visitMonth:'2019-12',title:'fixture title',author:'fixture',rating:3.47,text:'全文\n2行目',details:{textComplete:true,scores:[{label:'夜',value:3.47,breakdown:'料理・味 3.4'}],ownerReply:{text:'店舗返信',date:'2020/01/03',status:'公開中'}}},
+    {externalId:'B900000002:excerpt',date:null,visitMonth:'2026-08',title:'',author:'fixture',rating:null,text:'抜粋',details:{textComplete:false,scores:[]}},
+  ];
+  const ownerResult={...partial,reviews:ownerReviews,reports:{ownerReviews:{groups:2,entries:2,fullText:1,excerpts:1},pageHistory:{first:'201912',last:'202608',devices:{pc:[{name:'トップ',pv:42}],sp:[],app:[]}}}};
+  const fourth=await createJob();
+  assert.equal((await worker({action:'result',...fourth,result:ownerResult})).status,200);
+  const savedReviews=await check(admin.from('reviews').select('external_id,rating,text,review_date,visit_month,details').eq('user_id',a.id));
+  assert.equal(savedReviews.length,2);
+  const complete=savedReviews.find(r=>r.external_id===ownerReviews[0].externalId);
+  assert.equal(complete.rating,3.47);assert.equal(complete.review_date,'2020-01-02');assert.equal(complete.text,ownerReviews[0].text);assert.deepEqual(complete.details,ownerReviews[0].details);
+  const excerpt=savedReviews.find(r=>r.external_id===ownerReviews[1].externalId);assert.equal(excerpt.review_date,null);assert.equal(excerpt.rating,null);
+  assert.equal((await check(b.client.from('reviews').select('id').eq('user_id',a.id))).length,0);
+  const ownerDash=await dashboard(a.access);assert.equal(ownerDash.reviews.length,2);assert.equal(ownerDash.details.ownerReviews.fullText,1);assert.equal(ownerDash.details.pageHistory.first,'201912');
+  const fifth=await createJob();ownerReviews[0].text+='\n更新';
+  assert.equal((await worker({action:'result',...fifth,result:ownerResult})).status,200);
+  assert.equal((await check(admin.from('reviews').select('id').eq('user_id',a.id))).length,2);
+  const sixth=await createJob();ownerReviews[0].rating=3.476;
+  assert.equal((await worker({action:'result',...sixth,result:ownerResult})).status,500,'Review rounding must roll back');
+  assert.equal((await check(admin.from('sync_jobs').select('status').eq('id',sixth.id).single())).status,'running');
+  ownerReviews[0].rating=3.48;
+  const reviewsOnly={...ownerResult,daily:[],monthly:[]};
+  assert.equal((await worker({action:'result',...sixth,result:reviewsOnly})).status,200);
+  assert.equal((await dashboard(a.access)).reviews.find(r=>r.external_id===ownerReviews[0].externalId).rating,3.48);
   console.log('PASS: partial atomic save, NULL vs measured zero, unchanged historical rating, reports, API/dashboard, last sync, invalid payload rollback, decimals, idempotency, lease/auth checks, cross-user isolation. No restaurant login or GitHub dispatch was attempted.');
 } finally {
   for(const user of users) await check(admin.auth.admin.deleteUser(user.id));

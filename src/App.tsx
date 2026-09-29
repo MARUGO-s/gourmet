@@ -211,7 +211,7 @@ export default function App() {
                   {data.details ? <TabelogDetails details={data.details} /> : null}
                   <section className="rounded-md border border-line bg-card">
                     <header className="flex items-center gap-2 border-b border-line px-5 py-3.5">
-                      <h2 className="text-[13px] font-bold tracking-tight">最新の口コミ</h2>
+                      <h2 className="text-[13px] font-bold tracking-tight">取得済みの口コミ</h2>
                       <span className="ml-auto rounded bg-surface px-1.5 py-0.5 text-[10px] font-bold text-faint">
                         {data.reviews.length} 件
                       </span>

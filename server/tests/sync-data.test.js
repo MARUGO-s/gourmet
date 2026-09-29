@@ -51,7 +51,7 @@ test("日付・欠落・負数・重複・端末別合計の誤りを拒否", ()
     (r) => { r.daily[0].pv = -1; },
     (r) => { r.daily.push(r.daily[0]); },
     (r) => { r.monthly[0].month = "2026-13"; },
-    (r) => { r.monthly[0].reservations = null; },
+    (r) => { r.monthly[0].reservations = -1; },
     (r) => { r.monthly[0].sp = 99; },
   ];
   for (const change of mutations) { const r = sample(); change(r); assert.throws(() => validateTabelogResult(r)); }

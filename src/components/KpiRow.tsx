@@ -39,8 +39,8 @@ function Delta({ delta, unit, digits = 0 }: { delta: number | null; unit?: strin
 export default function KpiRow({ kpis }: { kpis: DashboardData["kpis"] }) {
   const month = kpis.reservations.month;
   const cards: Card[] = [
-    { label: "平均評価", unit: "pt", ...kpis.rating, digits: 2, compare: "前週比" },
-    { label: "累計口コミ", unit: "件", ...kpis.reviews, compare: "前週比" },
+    { label: "サイト総合評価", unit: "pt", ...kpis.rating, digits: 2, compare: "前週比" },
+    { label: "公開口コミ総数", unit: "件", ...kpis.reviews, compare: "前週比" },
     { label: "ページビュー（直近7日）", unit: "PV", value: kpis.pv.value, delta: kpis.pv.delta, compare: "前週比" },
     {
       label: month ? `ネット予約組数（${Number(month.slice(5))}月）` : "ネット予約組数（月間）",

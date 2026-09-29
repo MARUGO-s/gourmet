@@ -42,11 +42,13 @@ Deno.serve(async req => {
         snapshots.push(...rows);
         if (rows.length<1000) break;
       }
-      const [reviews, logs] = await Promise.all([
-        must(client.from("reviews").select("id,source,rating,text,author,sentiment,review_date").in("source",targets).order("review_date",{ascending:false}).limit(20)),
-        must(client.from("sync_log").select("at").in("source",targets).in("status",["ok","partial"]).order("at",{ascending:false}).limit(1)),
-      ]);
-      const dashboard=computeDashboard(snapshots,reviews.map((r:any)=>({...r,rating:Number(r.rating),date:r.review_date})),logs[0]?.at??null,targets,false);
+      const reviews:any[]=[];
+      for(let offset=0;;offset+=1000) {
+        const rows=await must(client.from('reviews').select('id,source,rating,text,author,sentiment,review_date,external_id,title,visit_month,details').in('source',targets).order('id').range(offset,offset+999));
+        reviews.push(...rows); if(rows.length<1000) break;
+      }
+      const logs=await must(client.from('sync_log').select('at').in('source',targets).in('status',['ok','partial']).order('at',{ascending:false}).limit(1));
+      const dashboard=computeDashboard(snapshots,reviews.map((r:any)=>({...r,rating:r.rating==null?null:Number(r.rating),date:r.review_date})),logs[0]?.at??null,targets,false);
       const details=targets.includes("tabelog")?await loadDetails(client,"tabelog",dashboard.series[0]?.date):null;
       return json(req,{...dashboard,details});
     }

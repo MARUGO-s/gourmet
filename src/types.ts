@@ -20,11 +20,20 @@ export type Snapshot = {
 export type Review = {
   id: string;
   source: string;
-  rating: number;
+  rating: number | null;
   text: string;
   author: string;
   sentiment: "positive" | "neutral" | "negative";
-  date: string;
+  date: string | null;
+  external_id?: string | null;
+  title?: string;
+  visit_month?: string | null;
+  details?: {
+    textComplete?: boolean;
+    scores?: { label: string; value: number | null; breakdown: string | null }[];
+    usedPrice?: string | null;
+    ownerReply?: { text: string; date: string; status: string } | null;
+  };
 };
 
 export type Kpi = { value: number | null; delta: number | null; asOf?: string | null };
@@ -75,6 +84,8 @@ export type Details =
         devices: Record<DeviceKey, { total: number | null; pages: { name: string; pv: number }[] | null }>;
       } | null;
       monthly: MonthlyMetrics[];
+      ownerReviews?: { groups: number; entries: number; fullText: number; excerpts: number; scoreOnly?: number } | null;
+      pageHistory?: { first: string; last: string; devices: Record<DeviceKey, { name: string; pv: number }[]> } | null;
       deviceDaily: Record<string, Record<DeviceKey, number | null>>;
     };
 
@@ -107,6 +118,6 @@ export type SyncJob = {
     step?: string;
     message?: string;
     warning?: string;
-    summary?: { rating: number | null; reviews: number | null; dailyDays: number; monthlyMonths: number; latestPvDate: string | null };
+    summary?: { rating: number | null; reviews: number | null; dailyDays: number; monthlyMonths: number; latestPvDate: string | null; ownerReviewEntries?: number; ownerReviewGroups?: number | null };
   }[];
 };

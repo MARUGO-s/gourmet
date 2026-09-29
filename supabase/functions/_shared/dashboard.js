@@ -80,8 +80,7 @@ export function computeDashboard(snapshots, reviews, lastSync, targets, demo) {
     series,
     reviews: reviews
       .filter((r) => targets.includes(r.source))
-      .sort((a, b) => (a.date < b.date ? 1 : -1))
-      .slice(0, 20),
+      .sort((a, b) => (String(a.date ?? a.visit_month ?? '') < String(b.date ?? b.visit_month ?? '') ? 1 : -1)),
     lastSync,
     demo,
   };
@@ -109,8 +108,9 @@ export async function loadDetails(client, source, fromDate) {
     ranking: byKind("area_ranking")[0]?.data ?? null,
     topPages: byKind("top_pages")[0]?.data ?? null,
     monthly: byKind("monthly_metrics")
-      .slice(0, 13)
       .map((row) => ({ month: row.period, ...row.data })),
+    ownerReviews: byKind('owner_reviews')[0]?.data ?? null,
+    pageHistory: byKind('page_history')[0]?.data ?? null,
     deviceDaily: Object.fromEntries(daily.data.map((row) => [row.period, row.data])),
   };
 }
