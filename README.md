@@ -106,6 +106,13 @@ INGEST_TOKEN=... node scripts/agent-queue.mjs --enqueue-due [--limit 20] [--dry-
 - 同じ店舗×サイトの依頼が依頼中・取得中なら新たに依頼せず、次回予定だけ進めます（`open_request`）。依頼の件数制限（1時間30件・未完了20件）に達したら予定を戻して終了し、次の確認で再度依頼します（`rate_limited`）。次回予定は`next_due_at`が変わっていない場合だけ更新するため、複数のエージェントが同時に呼んでも二重に依頼しません（`concurrent`）。
 - 次回予定の計算は`supabase/functions/_shared/fetch-schedules.js`（Node/Edge/ブラウザ共通、テストあり）。○時間ごとは前回の予定時刻から数え、毎日・毎週はその時刻より後の最初の日本時間の時刻です。
 
+### AI分析（migration 014）
+
+- 「AI分析」画面で店舗（全店舗／各店舗）と期間を選び、PV・予約・口コミについて日本語で質問できます（会話はブラウザのタブを閉じるまで`sessionStorage`に保存）。「レポート作成」は、サマリー・KPIの推移・サイト別の比較・口コミの傾向・未返信の口コミ・改善提案をまとめて`ai_reports`に保存し、一覧から開き直し・印刷（PDF）・Markdown/HTMLのダウンロード・削除ができます。
+- `ai-analyst`（Edge Function）は本人のJWTを検証し、本人のデータだけを本人のJWT（RLS・SELECTのみ）で読みます。OpenAIのChat Completionsに渡すのは集計値と短縮した口コミの抜粋だけで、モデルは決められた集計関数（`list_stores`・`get_kpis`・`get_pv_trend`・`get_monthly_metrics`・`get_review_stats`・`get_reviews`・`compare_stores`、引数は検証）だけを呼べます。SQLや表名はモデルから受け取りません。レポートの数値の表はサーバーの集計で作り、文章だけをAIが書きます。
+- APIキー（`OPENAI_API_KEY`）はSupabaseの秘密情報だけにあり、応答・エラー文・ログに出しません。回数制限: 質問60回／時、レポート10件／時（利用者ごと）。
+- API（`ai-analyst`、JWT必須）: `GET /status`（`{"configured","model","limits"}`）、`POST /ask`（`{"question","storeId"?,"from"?,"to"?,"history"?}`→`{"answer","model","calls","period","store"}`）、`GET /reports`、`GET /reports/:id`、`POST /reports`（`{"storeId"?,"from"?,"to"?,"title"?,"focus"?}`→201`{"report"}`）、`DELETE /reports/:id`。期間の既定は直近90日（前日まで）、最大2年。
+
 ### 店舗の選択と全店舗の比較（migration 013）
 
 - ログイン後、店舗が未選択なら「店舗の選択」画面（上に「全店舗」、下に店舗のカード）を表示します。選択はブラウザの`localStorage`（`gourmet.selectedStore.<ユーザーID>`）に保存し、画面上部の切り替え（「選び直す」で選択画面へ）と左の「表示中の店舗」で確認・変更できます。**表示の絞り込みだけで、店長ごとの権限ではありません**（データは従来どおり利用者ごとにRLSで分離）。
@@ -326,6 +333,21 @@ INGEST_TOKEN=... node scripts/agent-ingest.mjs payload.json
 2. 直後に`review-api`を配置する（`supabase functions deploy review-api --project-ref ycsqfajidusuibqljjwr --no-verify-jwt`）。`agent-api`・取り込み契約は変わりません。
 3. 初期データ（任意・再実行可）: SQLエディタまたは`psql`で`supabase/seed/013_seed_stores.sql`を1回実行する。データを持つ既存の利用者ごとに24店舗（表示順1〜24）を作り、`BISTRO CAVACAVA`に一休`112789`・食べログ`13245351`を設定します。食べログの既定の店舗コード`''`（店舗コードなしの資格情報・旧データ）は、`''`のデータがあり、`13245351`以外の食べログの店舗コードが無い利用者だけ`BISTRO CAVACAVA`に設定します。同名の店舗・設定済みの店舗IDは変更しません。最後の`select`で利用者ごとの店舗数と`BISTRO CAVACAVA`の設定を確認する。
 4. PRをmainへマージし、GitHub Pagesでログイン後に店舗の選択画面が出ること、「全店舗」で比較表が出ることを確認する。
+
+### AI分析（migration 014・ai-analyst）の配置
+
+1. `014_ai_reports.sql`だけを適用する（`supabase db query --linked -f supabase/migrations/014_ai_reports.sql`、または`migration list`と`db push --dry-run`で014だけと確認できた場合に限り`db push`）。新しい表`ai_reports`（保存レポート）と`ai_usage`（1時間あたりの回数制限）を作るだけで、既存の表・行は変更しません。
+2. OpenAIのAPIキーは**Supabaseの秘密情報（Edge Functionの環境変数）だけ**に置きます。ブラウザ・Git・GitHub Secrets・ログには置きません。値がコマンドラインや画面に出ないよう、権限600の一時ファイル経由で設定して削除します:
+   ```sh
+   umask 077; f=$(mktemp)
+   read -rs -p "OpenAI API key: " k; printf 'OPENAI_API_KEY=%s\n' "$k" > "$f"; unset k; echo
+   supabase secrets set --project-ref ycsqfajidusuibqljjwr --env-file "$f"
+   rm -P "$f" 2>/dev/null || shred -u "$f" 2>/dev/null || rm -f "$f"
+   supabase secrets list --project-ref ycsqfajidusuibqljjwr   # 名前とハッシュだけが表示される
+   ```
+   任意: `OPENAI_MODEL`（既定`gpt-5-mini`）、`OPENAI_REASONING_EFFORT`（gpt-5系・o系のみ。既定`low`）。
+3. 関数を配置する: `supabase functions deploy ai-analyst --project-ref ycsqfajidusuibqljjwr --no-verify-jwt`（認証は関数内で`auth.getUser()`、review-apiと同じ）。
+4. PRをmainへマージし、GitHub Pagesの「AI分析」で質問・レポート作成ができることを確認する（キー未設定なら画面に「未設定」と表示されます）。
 
 ## 配置・運用
 

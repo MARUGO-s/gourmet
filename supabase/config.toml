@@ -19,3 +19,5 @@ verify_jwt = false
 verify_jwt = false
 [functions.agent-api]
 verify_jwt = false
+[functions.ai-analyst]
+verify_jwt = false
