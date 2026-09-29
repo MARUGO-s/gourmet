@@ -67,6 +67,8 @@ export type DashboardData = {
   demo: boolean;
   details: Details | null;
   ikyu?: IkyuDetails | null;
+  // 表示中の店舗（'all' / 店舗ID / 'unassigned'）
+  store?: string;
 };
 
 export type IkyuPv = {
@@ -160,3 +162,6 @@ export type AgentRequest = {
 
 // 自動取得の設定（fetch_schedules）。型は共通モジュールの宣言を使う
 export type { PublicSchedule as FetchSchedule, ScheduleInput, ScheduleMode } from "../supabase/functions/_shared/fetch-schedules.js";
+
+// 店舗マスタ（stores / store_sites）と全店舗の比較。型は共通モジュールの宣言を使う
+export type { PublicStore as Store, PublicStoreSite as StoreSite, Overview, OverviewRow, OverviewSite, OverviewTotals, StoreKeys } from "../supabase/functions/_shared/stores.js";

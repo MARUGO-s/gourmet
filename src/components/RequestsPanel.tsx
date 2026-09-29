@@ -1,5 +1,7 @@
 import { useState } from "react";
-import type { AgentRequest, AgentRequestAction, CredentialRow, SourceMeta } from "../types";
+import type { AgentRequest, AgentRequestAction, CredentialRow, SourceMeta, Store, StoreKeys } from "../types";
+import { filterByStore, storeLabelFor } from "../../supabase/functions/_shared/stores.js";
+import StorePicker, { commitPick, emptyPick } from "./StorePicker";
 import { ACTION_LABELS, AGENT_POLL_MINUTES, INGEST_NOTE, formatTime, openRequestFor, requestLabel, statusTone } from "../lib/agent-requests";
 
 type Props = {
@@ -10,6 +12,11 @@ type Props = {
   busyKey: string | null;
   onRequest: (source: string, storeId: string, action?: AgentRequestAction, params?: { fromMonth?: string; note?: string }) => void;
   onRefresh: () => void;
+  // 店舗マスタ・表示中の店舗の店舗コード（null=全店舗）・依頼フォームの既定の店舗
+  stores: Store[];
+  scopeKeys: StoreKeys | null;
+  defaultStoreId: string;
+  onStoresChanged: () => void;
 };
 
 const ACTIONS = Object.keys(ACTION_LABELS) as AgentRequestAction[];
@@ -27,15 +34,17 @@ function resultSummary(r: AgentRequest) {
 }
 
 // 店舗×サイトごとの取得依頼と、依頼の履歴（依頼中 / 取得中 / 完了 / 失敗）
-export default function RequestsPanel({ sources, credentials, requests, loading, busyKey, onRequest, onRefresh }: Props) {
+export default function RequestsPanel({ sources, credentials: allCredentials, requests: allRequests, loading, busyKey, onRequest, onRefresh, stores, scopeKeys, defaultStoreId, onStoresChanged }: Props) {
+  // 表示中の店舗に割り当てた店舗コードのアカウント・依頼だけ（全店舗では全件）
+  const credentials = filterByStore(allCredentials, scopeKeys);
+  const requests = filterByStore(allRequests, scopeKeys, (r) => r.storeId);
+  const allSites = stores.flatMap((s) => s.sites);
+  const [formError, setFormError] = useState<string | null>(null);
   const names = new Map(sources.map((s) => [s.id, s.name]));
   const [actions, setActions] = useState<Record<string, AgentRequestAction>>({});
   const [fromMonth, setFromMonth] = useState<Record<string, string>>({});
-  const [custom, setCustom] = useState({ source: sources[0]?.id ?? "tabelog", storeId: "", action: "sync_now" as AgentRequestAction, fromMonth: "" });
-  const storeLabel = (source: string, storeId: string) => {
-    const c = credentials.find((x) => x.source === source && x.storeKey === storeId);
-    return c?.label || (storeId ? `店舗 ${storeId}` : "既定の店舗");
-  };
+  const [custom, setCustom] = useState({ source: sources[0]?.id ?? "tabelog", pick: emptyPick(defaultStoreId), action: "sync_now" as AgentRequestAction, fromMonth: "" });
+  const storeLabel = (source: string, storeId: string) => storeLabelFor(stores, allSites, source, storeId);
   const submit = (source: string, storeId: string, action: AgentRequestAction, month?: string) =>
     onRequest(source, storeId, action, action === "backfill" ? { fromMonth: month } : undefined);
 
@@ -62,7 +71,7 @@ export default function RequestsPanel({ sources, credentials, requests, loading,
                 return (
                   <tr key={c.id} className="border-b border-line last:border-0">
                     <td className="px-2 py-2 font-bold">{names.get(c.source) ?? c.source}</td>
-                    <td className="px-2 py-2">{storeLabel(c.source, c.storeKey)}{c.storeKey ? <span className="ml-1 text-[10px] text-faint">{c.storeKey}</span> : null}</td>
+                    <td className="px-2 py-2">{storeLabel(c.source, c.storeKey)}<span className="ml-1 text-[10px] text-faint">{c.storeKey || "既定"}</span>{c.label ? <span className="ml-1 text-[10px] text-faint">（{c.label}）</span> : null}</td>
                     <td className="px-2 py-2 text-subtle">{formatTime(sources.find((s) => s.id === c.source)?.lastUpdatedAt)}</td>
                     <td className="px-2 py-2">
                       <select value={action} onChange={(e) => setActions({ ...actions, [key]: e.target.value as AgentRequestAction })} className="rounded border border-line bg-card px-2 py-1 text-[11px]">
@@ -87,19 +96,24 @@ export default function RequestsPanel({ sources, credentials, requests, loading,
                   </tr>
                 );
               })}
-              {!credentials.length ? <tr><td colSpan={5} className="px-2 py-4 text-center text-faint">店舗のアカウントが未登録です。下の欄から店舗コードを指定して依頼できます。</td></tr> : null}
+              {!credentials.length ? <tr><td colSpan={5} className="px-2 py-4 text-center text-faint">{scopeKeys ? "この店舗のアカウントが未登録です。" : "店舗のアカウントが未登録です。"}下の欄から店舗を選んで依頼できます。</td></tr> : null}
             </tbody>
           </table>
         </div>
-        <form className="mt-4 flex flex-wrap items-end gap-2 border-t border-line pt-4 text-[11px]" onSubmit={(e) => { e.preventDefault(); submit(custom.source, custom.storeId.trim(), custom.action, custom.fromMonth); }}>
+        <form className="mt-4 flex flex-wrap items-end gap-2 border-t border-line pt-4 text-[11px]" onSubmit={(e) => {
+          e.preventDefault();
+          setFormError(null);
+          // 店舗IDが未設定なら、その店舗の割り当てに保存してから依頼する
+          commitPick(stores, custom.source, custom.pick)
+            .then(({ key, created }) => { if (created) onStoresChanged(); submit(custom.source, key, custom.action, custom.fromMonth); })
+            .catch((err) => setFormError(err instanceof Error ? err.message : "依頼できませんでした"));
+        }}>
           <label className="flex flex-col gap-1 font-bold text-subtle">サイト
-            <select value={custom.source} onChange={(e) => setCustom({ ...custom, source: e.target.value })} className="rounded border border-line bg-card px-2 py-1.5 font-normal text-ink">
+            <select value={custom.source} onChange={(e) => setCustom({ ...custom, source: e.target.value, pick: emptyPick(custom.pick.storeId) })} className="rounded border border-line bg-card px-2 py-1.5 font-normal text-ink">
               {sources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </label>
-          <label className="flex flex-col gap-1 font-bold text-subtle">{custom.source === "ikyu" ? "店舗ID（6桁）" : "店舗コード（任意）"}
-            <input value={custom.storeId} onChange={(e) => setCustom({ ...custom, storeId: e.target.value })} maxLength={40} className="w-40 rounded border border-line px-2 py-1.5 font-normal text-ink" />
-          </label>
+          <StorePicker compact stores={stores} source={custom.source} sourceName={names.get(custom.source) ?? custom.source} value={custom.pick} onChange={(pick) => setCustom({ ...custom, pick })} />
           <label className="flex flex-col gap-1 font-bold text-subtle">依頼内容
             <select value={custom.action} onChange={(e) => setCustom({ ...custom, action: e.target.value as AgentRequestAction })} className="rounded border border-line bg-card px-2 py-1.5 font-normal text-ink">
               {ACTIONS.map((a) => <option key={a} value={a}>{ACTION_LABELS[a]}</option>)}
@@ -110,7 +124,8 @@ export default function RequestsPanel({ sources, credentials, requests, loading,
               <input type="month" max={thisMonth()} value={custom.fromMonth} onChange={(e) => setCustom({ ...custom, fromMonth: e.target.value })} className="rounded border border-line px-2 py-1.5 font-normal text-ink" />
             </label>
           ) : null}
-          <button type="submit" disabled={busyKey === `${custom.source}/${custom.storeId.trim()}`} className="rounded-md border border-brand px-3 py-2 font-bold text-brand disabled:opacity-50">この内容で依頼</button>
+          <button type="submit" disabled={!custom.pick.storeId || busyKey?.startsWith(`${custom.source}/`)} className="rounded-md border border-brand px-3 py-2 font-bold text-brand disabled:opacity-50">この内容で依頼</button>
+          {formError ? <span className="w-full font-bold text-danger">⚠ {formError}</span> : null}
         </form>
       </section>
 

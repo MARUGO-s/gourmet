@@ -1,4 +1,5 @@
-import type { AgentRequest, CredentialRow, SourceMeta } from "../types";
+import type { AgentRequest, CredentialRow, SourceMeta, Store } from "../types";
+import { storeLabelFor } from "../../supabase/functions/_shared/stores.js";
 import { AGENT_POLL_MINUTES, INGEST_NOTE, formatTime, openRequestFor, requestLabel, statusTone } from "../lib/agent-requests";
 
 type Props = {
@@ -11,12 +12,14 @@ type Props = {
   onRequest: (source: string, storeId: string) => void;
   onRequests: () => void;
   onAccounts: () => void;
+  // 店舗マスタ（店舗名の表示用）。credentials は表示中の店舗で絞り込み済み
+  stores: Store[];
 };
 
-const storeName = (c: CredentialRow) => c.label || (c.storeKey ? `店舗 ${c.storeKey}` : "既定の店舗");
-
 // ダッシュボード上部: 取り込み元（Grok Bot）と最終更新、店舗ごとの「今すぐ取得を依頼」
-export default function IngestPanel({ filter, signedIn, sources, credentials, requests, busyKey, onRequest, onRequests, onAccounts }: Props) {
+export default function IngestPanel({ filter, signedIn, sources, credentials, requests, busyKey, onRequest, onRequests, onAccounts, stores }: Props) {
+  const allSites = stores.flatMap((s) => s.sites);
+  const storeName = (c: CredentialRow) => `${storeLabelFor(stores, allSites, c.source, c.storeKey)}${c.label ? `（${c.label}）` : ""}`;
   const shown = filter === "all" ? sources : sources.filter((s) => s.id === filter);
   return (
     <section className="rounded-md border border-line bg-card p-5" aria-label="データの取り込み">
@@ -73,7 +76,7 @@ export default function IngestPanel({ filter, signedIn, sources, credentials, re
                     })}
                   </ul>
                 ) : (
-                  <p className="mt-2 text-[11px] text-faint">店舗のアカウントが未登録です（「取得依頼」から店舗コードを指定して依頼することもできます）</p>
+                  <p className="mt-2 text-[11px] text-faint">店舗のアカウントが未登録です（「取得依頼」から店舗を選んで依頼することもできます）</p>
                 )
               ) : null}
             </div>

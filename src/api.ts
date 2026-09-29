@@ -7,6 +7,9 @@ import type {
   AgentRequestAction,
   FetchSchedule,
   ScheduleInput,
+  Store,
+  StoreSite,
+  Overview,
 } from "./types";
 
 // ログイン中のセッションがあれば Supabase JWT を API リクエストに転送する。
@@ -38,9 +41,10 @@ async function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function getDashboard(source: "all" | string) {
+// store: 'all'（全店舗）/ 店舗ID / 'unassigned'。未ログイン（デモ）では無視される
+export async function getDashboard(source: "all" | string, store = "all") {
   const headers = await authHeaders();
-  return apiFetch(`/api/dashboard?source=${encodeURIComponent(source)}`, { headers }).then(
+  return apiFetch(`/api/dashboard?source=${encodeURIComponent(source)}&store=${encodeURIComponent(store)}`, { headers }).then(
     (r) => json<DashboardData>(r),
   );
 }
@@ -112,4 +116,31 @@ export async function saveSchedule(input: ScheduleInput) {
 export async function deleteSchedule(id: string) {
   const headers = await authHeaders();
   return apiFetch(`/api/schedules/${encodeURIComponent(id)}`, { method: "DELETE", headers }).then((r) => json<{ ok: boolean }>(r));
+}
+
+// 店舗マスタ（店舗ごとに各サイトの店舗IDをまとめる）。表示の絞り込み用で、権限ではない
+const postJson = async <T>(path: string, value: unknown) => {
+  const headers = await authHeaders();
+  return apiFetch(path, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(value) }).then((r) => json<T>(r));
+};
+const del = async (path: string) => {
+  const headers = await authHeaders();
+  return apiFetch(path, { method: "DELETE", headers }).then((r) => json<{ ok: boolean }>(r));
+};
+
+export async function getStores() {
+  const headers = await authHeaders();
+  return apiFetch("/api/stores", { headers }).then((r) => json<{ stores: Store[] }>(r));
+}
+export const createStore = (input: { name: string; sortOrder?: number }) => postJson<{ store: Store }>("/api/stores", input);
+export const updateStore = (id: string, input: { name?: string; sortOrder?: number }) => postJson<{ store: Store }>(`/api/stores/${encodeURIComponent(id)}`, input);
+export const reorderStores = (ids: string[]) => postJson<{ stores: Store[] }>("/api/stores/reorder", { ids });
+export const deleteStore = (id: string) => del(`/api/stores/${encodeURIComponent(id)}`);
+export const addStoreSite = (storeId: string, input: { source: string; siteStoreKey: string }) =>
+  postJson<{ site: StoreSite }>(`/api/stores/${encodeURIComponent(storeId)}/sites`, input);
+export const deleteStoreSite = (storeId: string, siteId: string) => del(`/api/stores/${encodeURIComponent(storeId)}/sites/${encodeURIComponent(siteId)}`);
+
+export async function getOverview(month?: string) {
+  const headers = await authHeaders();
+  return apiFetch(`/api/overview${month ? `?month=${encodeURIComponent(month)}` : ""}`, { headers }).then((r) => json<{ overview: Overview }>(r));
 }

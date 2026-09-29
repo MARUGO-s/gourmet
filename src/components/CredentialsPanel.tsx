@@ -1,18 +1,26 @@
 import { useCallback, useEffect, useState } from "react";
 import { deleteCredential, getCredentials, saveCredential } from "../api";
-import type { CredentialRow, SourceMeta } from "../types";
+import type { CredentialRow, SourceMeta, Store, StoreKeys } from "../types";
+import { filterByStore, storeLabelFor } from "../../supabase/functions/_shared/stores.js";
+import StorePicker, { commitPick, emptyPick, resolvePick } from "./StorePicker";
 
 type Props = {
   sources: SourceMeta[];
   onChanged: () => void;
+  // 店舗マスタ・表示中の店舗の店舗コード（null=全店舗）・新規登録の既定の店舗
+  stores: Store[];
+  scopeKeys: StoreKeys | null;
+  defaultStoreId: string;
+  onStoresChanged: () => void;
 };
 
-export default function CredentialsPanel({ sources, onChanged }: Props) {
-  const [rows, setRows] = useState<CredentialRow[]>([]);
+export default function CredentialsPanel({ sources, onChanged, stores, scopeKeys, defaultStoreId, onStoresChanged }: Props) {
+  const [allRows, setRows] = useState<CredentialRow[]>([]);
+  const rows = filterByStore(allRows, scopeKeys);
+  const allSites = stores.flatMap((s) => s.sites);
   const [source, setSource] = useState<string>(sources[0]?.id ?? "");
   const [label, setLabel] = useState("");
-  const [storeId, setStoreId] = useState("");
-  const [storeKey, setStoreKey] = useState("");
+  const [pick, setPick] = useState(emptyPick(defaultStoreId));
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -39,17 +47,21 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
   const onSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
-      if (!source || !username || !password || (source === "ikyu" && !/^\d{6}$/.test(storeId))) {
-        setNotice(source === "ikyu" ? "店舗ID（6桁）・オペレータID・パスワードを入力してください" : "サイト / ID / パスワード を入力してください");
+      const resolved = resolvePick(stores, source, pick);
+      if (resolved.error) { setNotice(resolved.error); return; }
+      if (!source || !username || !password) {
+        setNotice(source === "ikyu" ? "オペレータID・パスワードを入力してください" : "サイト / ID / パスワード を入力してください");
         return;
       }
       setSaving(true);
       setNotice(null);
       try {
-        await saveCredential({ source, label, username, password, ...(source === "ikyu" ? { storeId } : { storeKey }) });
+        // 店舗IDが未設定なら、先に店舗の割り当てに保存する（別の店舗に割り当て済みならここで止まる）
+        const { key, created } = await commitPick(stores, source, pick);
+        if (created) onStoresChanged();
+        await saveCredential({ source, label, username, password, ...(source === "ikyu" ? { storeId: key } : { storeKey: key }) });
         setLabel("");
-        setStoreId("");
-        setStoreKey("");
+        setPick(emptyPick(pick.storeId));
         setUsername("");
         setPassword("");
         setShowPassword(false);
@@ -62,7 +74,7 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
         setSaving(false);
       }
     },
-    [source, label, storeId, storeKey, username, password, refresh, onChanged],
+    [source, label, pick, stores, username, password, refresh, onChanged, onStoresChanged],
   );
 
   const onDelete = useCallback(
@@ -113,7 +125,8 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
                       </span>
                     </td>
                     <td className="px-5 py-2.5 text-[11px] font-semibold">
-                      {r.source === "ikyu" ? (r.storeKey ? `店舗ID ${r.storeKey}` : "店舗ID未設定（登録し直してください）") : r.storeKey || "既定"}
+                      {r.source === "ikyu" && !r.storeKey ? "店舗ID未設定（登録し直してください）" : storeLabelFor(stores, allSites, r.source, r.storeKey)}
+                      <span className="ml-1 text-[10px] font-medium text-faint">{r.source === "ikyu" ? r.storeKey : r.storeKey || "既定"}</span>
                     </td>
                     <td className="px-5 py-2.5 text-[11px] font-medium text-subtle">{r.label || "—"}</td>
                     <td className="px-5 py-2.5 text-[11px] font-bold whitespace-nowrap text-ok" title="ID・パスワードは暗号化して保存され、画面には表示されません">
@@ -139,7 +152,7 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
               {rows.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-5 py-6 text-center text-[12px] font-semibold text-faint">
-                    登録されたアカウントはありません
+                    {scopeKeys ? "この店舗に登録されたアカウントはありません" : "登録されたアカウントはありません"}
                   </td>
                 </tr>
               ) : null}
@@ -157,7 +170,7 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
             <span className="text-[11px] font-bold text-subtle">サイト</span>
             <select
               value={source}
-              onChange={(e) => { setSource(e.target.value); setStoreId(""); setStoreKey(""); setShowPassword(false); }}
+              onChange={(e) => { setSource(e.target.value); setPick(emptyPick(pick.storeId)); setShowPassword(false); }}
               className="rounded-md border border-line bg-card px-3 py-2 text-[12px] font-semibold focus:border-brand focus:outline-none"
             >
               {sources.map((s) => (
@@ -183,35 +196,15 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
             <input
               value={label}
               onChange={(e) => setLabel(e.target.value)}
-              placeholder="例: 丸五 東京ドーム店"
+              placeholder="例: ディナー用"
               className="rounded-md border border-line bg-card px-3 py-2 text-[12px] font-semibold placeholder:text-faint placeholder:font-normal focus:border-brand focus:outline-none"
             />
           </label>
-          {source !== "ikyu" ? (
-            <label className="flex flex-col gap-1.5">
-              <span className="text-[11px] font-bold text-subtle">店舗コード（任意・複数店舗を登録する場合）</span>
-              <input
-                value={storeKey}
-                onChange={(e) => setStoreKey(e.target.value.replace(/[^0-9A-Za-z_-]/g, "").slice(0, 40))}
-                autoComplete="off"
-                placeholder="例: 13245351（未入力なら既定の1件）"
-                className="rounded-md border border-line bg-card px-3 py-2 text-[12px] font-semibold placeholder:text-faint placeholder:font-normal focus:border-brand focus:outline-none"
-              />
-            </label>
-          ) : null}
-          {source === "ikyu" ? (
-            <label className="flex flex-col gap-1.5">
-              <span className="text-[11px] font-bold text-subtle">店舗ID</span>
-              <input
-                value={storeId}
-                onChange={(e) => setStoreId(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                inputMode="numeric"
-                autoComplete="off"
-                placeholder="店舗ID（6桁数字）を入力"
-                className="rounded-md border border-line bg-card px-3 py-2 text-[12px] font-semibold placeholder:text-faint placeholder:font-normal focus:border-brand focus:outline-none"
-              />
-            </label>
-          ) : null}
+          {stores.length ? (
+            <StorePicker stores={stores} source={source} sourceName={srcMap.get(source)?.name ?? source} value={pick} onChange={setPick} />
+          ) : (
+            <p className="rounded bg-warn-soft px-3 py-2 text-[11px] font-semibold text-warn">先に「店舗管理」で店舗を登録してください。</p>
+          )}
           <label className="flex flex-col gap-1.5">
             <span className="text-[11px] font-bold text-subtle">{source === "ikyu" ? "オペレータID" : "ログインID"}</span>
             <input
@@ -242,7 +235,7 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
           ) : null}
           <button
             type="submit"
-            disabled={saving}
+            disabled={saving || !stores.length}
             className="rounded-md bg-brand px-3.5 py-2.5 text-[12px] font-bold text-white transition hover:opacity-90 disabled:opacity-50"
           >
             {saving ? "保存中…" : "保存する"}
