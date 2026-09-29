@@ -11,6 +11,7 @@ import { buildIkyuDemo } from "../_shared/seed.js";
 import { loadSourceReviews, mergeReviews, loadIngestedDetails, overlayDetails, loadLastUpdated } from "../_shared/source-ingest.js";
 import { validateRequestInput, publicRequest } from "../_shared/agent-requests.js";
 import { japanDate } from "../_shared/sync-data.js";
+import { validateScheduleInput, nextDueOnSave, publicSchedule } from "../_shared/fetch-schedules.js";
 
 const demo = buildSeed();
 // ログインID・暗号文はブラウザへ返さない（登録済み・更新日時のみ）
@@ -109,6 +110,26 @@ Deno.serve(async req => {
       if(error?.code==="P0429") return json(req,{error:error.message},429);
       if(error) throw error;
       return json(req,{request:publicRequest(data)},201);
+    }
+    // 自動取得の設定（店舗×サイト）。閲覧は本人のJWT（RLS）、保存は検証後に本人の user_id に限定して service_role で行う（credentials と同じ）。
+    // 予定時刻を過ぎた設定を取得依頼にするのは agent-api /schedules/enqueue-due（Grok Bot）だけ。
+    if (path === "/schedules" && req.method === "GET") {
+      const rows=await must(client.from("fetch_schedules").select("*").order("source").order("store_id"));
+      return json(req,{schedules:rows.map((r:any)=>publicSchedule(r))});
+    }
+    if (path === "/schedules" && req.method === "POST") {
+      let row;
+      try { row=validateScheduleInput(await body(req)); }
+      catch (error) { return json(req,{error:(error as Error).message},400); }
+      const existing=await must(admin.from("fetch_schedules").select("last_enqueued_at").eq("user_id",user.id).eq("source",row.source).eq("store_id",row.store_id).limit(1));
+      const now=new Date();
+      const saved=await must(admin.from("fetch_schedules").upsert({...row,user_id:user.id,next_due_at:nextDueOnSave(row,now,existing[0]?.last_enqueued_at??null),
+        updated_at:now.toISOString(),updated_by:user.id},{onConflict:"user_id,source,store_id"}).select("*").single());
+      return json(req,{schedule:publicSchedule(saved)});
+    }
+    if (/^\/schedules\/[0-9a-f-]{36}$/.test(path) && req.method === "DELETE") {
+      await must(admin.from("fetch_schedules").delete().eq("user_id",user.id).eq("id",path.split("/").at(-1)));
+      return json(req,{ok:true});
     }
     return json(req,{error:"ページが見つかりません"},404);
   } catch {

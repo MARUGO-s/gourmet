@@ -84,6 +84,7 @@ Grok Bot（約5分ごと）→ agent-api /requests/claim（claimed）→ /creden
 | `/requests/claim` | `{"agent","source"?,"limit"?:1〜20}` | `{"requests":[{...依頼,"claimId"}]}`。`FOR UPDATE SKIP LOCKED`で原子的に取得中へ |
 | `/requests/complete` | `{"id","claimId","result"?:{...}}` | `{"request":{...}}`（同じ報告の再送は成功扱い） |
 | `/requests/fail` | `{"id","claimId","error":"理由","result"?}` | 同上。`claimId`不一致・期限切れは409 |
+| `/schedules/enqueue-due` | `{"limit"?:1〜50（既定20）,"dryRun"?:false}` | `{"now","dryRun","enqueued":[{"scheduleId","source","storeId","requestId","dueAt","nextDueAt"}],"skipped":[{"scheduleId","source","storeId","reason":"open_request\|rate_limited\|concurrent\|invalid","nextDueAt"?}]}` |
 
 依頼の形: `{"id","source","storeId","action":"sync_now|fetch_metrics|fetch_reviews|backfill","params":{"fromMonth"?,"toMonth"?,"note"?},"status":"queued|claimed|done|failed","requestedAt","claimedAt","finishedAt","claimedBy","attempts","result","error"}`。`backfill`は`fromMonth`〜`toMonth`（最大120か月）の過去分。取得中のまま30分を過ぎると再び`queued`になり（3回で`failed`）、24時間拾われない依頼は`failed`になります。
 
@@ -92,7 +93,15 @@ INGEST_TOKEN=... node scripts/agent-queue.mjs --list
 INGEST_TOKEN=... node scripts/agent-queue.mjs --claim --limit 1 --agent grok-bot          # claimId を控える
 INGEST_TOKEN=... node scripts/agent-queue.mjs --complete <id> --claim-id <claimId> --result '{"days":30,"reviews":12}'
 INGEST_TOKEN=... node scripts/agent-queue.mjs --fail <id> --claim-id <claimId> --error "追加認証が必要でした"
+INGEST_TOKEN=... node scripts/agent-queue.mjs --enqueue-due [--limit 20] [--dry-run]      # 自動取得の設定を依頼に変える（--claim の前）
 ```
+
+### 自動取得の設定（店舗×サイト、migration 012）
+
+- 画面「自動取得の設定」で、店舗×サイトごとに周期（オフ／○時間ごと／毎日○時／毎週○曜○時、日本時間）を保存します。保存は`review-api` `POST /schedules`（JWT検証後、本人の`user_id`に限定）、表は`fetch_schedules`（ブラウザは本人の行のSELECTのみ）。一休・食べログ以外（ホットペッパー／トレタ／Google）は「準備中」と表示しますが、保存はできます。
+- Grok Botは稼働時間（日本時間 9:00〜22:59）の各確認で、`--claim`の前に`--enqueue-due`を呼びます。`next_due_at`を過ぎた有効な設定ごとに`agent_requests`（`action:"sync_now"`、`params:{"trigger":"schedule","scheduleId","dueAt"}`）を登録し、`last_enqueued_at`・`last_request_id`と次の`next_due_at`を保存します。稼働時間外の予定は、次の稼働開始時に1回だけ依頼されます（溜まった回数分は依頼しません）。
+- 同じ店舗×サイトの依頼が依頼中・取得中なら新たに依頼せず、次回予定だけ進めます（`open_request`）。依頼の件数制限（1時間30件・未完了20件）に達したら予定を戻して終了し、次の確認で再度依頼します（`rate_limited`）。次回予定は`next_due_at`が変わっていない場合だけ更新するため、複数のエージェントが同時に呼んでも二重に依頼しません（`concurrent`）。
+- 次回予定の計算は`supabase/functions/_shared/fetch-schedules.js`（Node/Edge/ブラウザ共通、テストあり）。○時間ごとは前回の予定時刻から数え、毎日・毎週はその時刻より後の最初の日本時間の時刻です。
 
 ### 資格情報（店舗×サイト）
 
@@ -276,6 +285,13 @@ INGEST_TOKEN=... node scripts/agent-ingest.mjs payload.json
 7. アプリの「アカウント管理」で店舗×サイトを登録し（食べログは店舗コード付き、店舗ID未設定の一休の行は登録し直す）、Grok Botに`INGEST_TOKEN`・`AGENT_API_URL`と手順（`agent-queue.mjs --claim`→`agent-credentials.mjs`→取得→変換→`agent-ingest.mjs`→`--complete`/`--fail`、約5分間隔）を設定する。
 8. 初回は実画面の保存HTMLで`--dry-run`し、合計値が管理画面と一致することを確認してから送信する。任意で`scripts/verify-cloud.mjs`を実行する。
 
+### 自動取得の設定（migration 012）の配置
+
+1. `supabase migration list --linked`と`supabase db push --linked --dry-run`で、未適用が`012_fetch_schedules.sql`だけであることを確認してから適用する（履歴表が無い場合はSQLエディタ等で012だけを実行）。既存の表・行は変更しません。
+2. 直後に`review-api`と`agent-api`を配置する（上記の`supabase functions deploy`、`--no-verify-jwt`）。
+3. PRをmainへマージし、GitHub Pagesの画面に「自動取得の設定」が出ることを確認する。
+4. Grok Botの5分ごとの手順の先頭に`node scripts/agent-queue.mjs --enqueue-due`を追加する（最初は`--dry-run`で内容を確認）。
+
 ## 配置・運用
 
 PRを作成してテスト成功後にmainへマージすると、GitHub Pagesへ配置されます。Edge Functionsは別途明示的に配置してください（上記コマンド）。
@@ -293,6 +309,8 @@ DB変更はこのプロジェクトを確認して対象SQLだけ適用します
 2026-09-29: 一休.comレストランを外部取り込み方式で追加（migration 010、`agent-api`）。資格情報を店舗×サイト単位に変更し、ブラウザからログインIDも読めないようにした。
 
 2026-09-29: すべてのサイトを外部エージェント（Grok Bot）による取り込みへ移行（migration 011）。#11のアプリ内一休公開ページ同期も廃止し、読み取り規則は`scripts/ikyu/public.js`へ移動（取り込みは`stores[].public`）。アプリ内の取得（GitHub Actions `sync-worker.yml`・Playwright ワーカー・`review-worker` の払い出し）を廃止し、アプリ → Grok Bot の取得依頼キュー（`agent_requests`）を追加。食べログの読み取りは `scripts/tabelog/` へ移動。旧 `snapshots` / `reviews` / `source_reports` / `sync_jobs` の履歴は残し、そのまま表示します。
+
+2026-09-29: 店舗×サイトごとの自動取得の設定を追加（migration 012 `fetch_schedules`、`review-api /schedules`、`agent-api /schedules/enqueue-due`、`agent-queue.mjs --enqueue-due`）。
 
 ## 参考
 

@@ -9,6 +9,7 @@
 //   POST /agent-api/requests/claim         依頼を原子的に取得開始（FOR UPDATE SKIP LOCKED）
 //   POST /agent-api/requests/complete      取得完了を報告
 //   POST /agent-api/requests/fail          取得失敗を報告
+//   POST /agent-api/schedules/enqueue-due  自動取得の設定（fetch_schedules）のうち予定時刻を過ぎたものを取得依頼にする
 import { service, body } from "../_shared/http.ts";
 import { decrypt } from "../_shared/crypto.ts";
 import { must } from "../_shared/sync-data.js";
@@ -17,6 +18,7 @@ import { unpackIkyuUsername } from "../_shared/ikyu-login.js";
 import { normalizeIkyuIngest } from "../_shared/ikyu-data.js";
 import { normalizeSourceIngest } from "../_shared/source-ingest.js";
 import { publicRequest, validateFinish } from "../_shared/agent-requests.js";
+import { enqueueDueSchedules, supabaseScheduleStore, ENQUEUE_LIMIT } from "../_shared/fetch-schedules.js";
 
 const reply = (value: unknown, status = 200) => new Response(JSON.stringify(value), {
   status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
@@ -79,6 +81,12 @@ Deno.serve(async (req) => {
       const { data, error } = await admin.rpc("finish_agent_request", { p_user: userId, p_id: finish.id, p_claim: finish.claimId, p_status: outcome, p_result: finish.result, p_error: finish.error });
       if (error) return error.message.includes("Invalid claim") ? reply({ error: "取得中の依頼が見つかりません（claimId不一致・期限切れ・他の状態で終了済み）" }, 409) : reply({ error: "処理を完了できませんでした" }, 500);
       return reply({ request: publicRequest(data) });
+    }
+    if (path === "/schedules/enqueue-due") {
+      const limit = input?.limit ?? ENQUEUE_LIMIT, dryRun = input?.dryRun ?? false;
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50 || typeof dryRun !== "boolean") return reply({ error: "limit（1〜50）/ dryRun が不正です" }, 400);
+      const result = await enqueueDueSchedules(supabaseScheduleStore(admin, userId), { now: new Date(), limit, dryRun });
+      return reply(result);
     }
     if (path === "/credentials/versions") {
       const rows = await must(admin.from("credentials").select("source,store_key,label,credentials_version,updated_at").eq("user_id", userId).order("source").order("store_key"));

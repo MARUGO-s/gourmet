@@ -4,6 +4,7 @@
 //   node scripts/agent-queue.mjs --claim [--source tabelog] [--limit 1] [--agent grok-bot]
 //   node scripts/agent-queue.mjs --complete <id> --claim-id <claimId> [--result '{"days":30}' | --result-file r.json]
 //   node scripts/agent-queue.mjs --fail <id> --claim-id <claimId> --error "失敗の理由"
+//   node scripts/agent-queue.mjs --enqueue-due [--limit 20] [--dry-run]   自動取得の設定のうち予定時刻を過ぎたものを取得依頼にする（--claim の前に実行）
 // 共通: INGEST_TOKEN（環境変数）または --token-file、--endpoint / AGENT_API_URL。出力はJSON（秘密情報なし）。
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -11,9 +12,14 @@ import { parseArgs, readToken, callAgentApi, DEFAULT_ENDPOINT } from "./agent-co
 
 export function queueCommand(args) {
   const one = (v) => (Array.isArray(v) ? v.at(-1) : v);
-  const modes = ["list", "claim", "complete", "fail"].filter((m) => args[m] !== undefined);
-  if (modes.length !== 1) throw new Error("--list / --claim / --complete / --fail のいずれか1つを指定してください");
+  const modes = ["list", "claim", "complete", "fail", "enqueue-due"].filter((m) => args[m] !== undefined);
+  if (modes.length !== 1) throw new Error("--list / --claim / --complete / --fail / --enqueue-due のいずれか1つを指定してください");
   const mode = modes[0], source = typeof args.source === "string" ? args.source : undefined;
+  if (mode === "enqueue-due") {
+    const limit = args.limit === undefined ? undefined : Number(one(args.limit));
+    if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1 || limit > 50)) throw new Error("--limit は1〜50です");
+    return { path: "/schedules/enqueue-due", body: { ...(limit !== undefined ? { limit } : {}), ...(args["dry-run"] !== undefined ? { dryRun: true } : {}) } };
+  }
   if (mode === "list") return { path: "/requests/pending", body: source ? { source } : {} };
   if (mode === "claim") {
     const limit = args.limit === undefined ? 1 : Number(one(args.limit));

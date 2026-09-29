@@ -5,6 +5,8 @@ import type {
   SourceMeta,
   AgentRequest,
   AgentRequestAction,
+  FetchSchedule,
+  ScheduleInput,
 } from "./types";
 
 // ログイン中のセッションがあれば Supabase JWT を API リクエストに転送する。
@@ -90,4 +92,24 @@ export async function createRequest(input: { source: string; storeId: string; ac
     headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(input),
   }).then((r) => json<{ request: AgentRequest }>(r));
+}
+
+// 自動取得の設定（店舗×サイト）。予定時刻を過ぎた設定はGrok Botが取得依頼にする
+export async function getSchedules() {
+  const headers = await authHeaders();
+  return apiFetch("/api/schedules", { headers }).then((r) => json<{ schedules: FetchSchedule[] }>(r));
+}
+
+export async function saveSchedule(input: ScheduleInput) {
+  const headers = await authHeaders();
+  return apiFetch("/api/schedules", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(input),
+  }).then((r) => json<{ schedule: FetchSchedule }>(r));
+}
+
+export async function deleteSchedule(id: string) {
+  const headers = await authHeaders();
+  return apiFetch(`/api/schedules/${encodeURIComponent(id)}`, { method: "DELETE", headers }).then((r) => json<{ ok: boolean }>(r));
 }
