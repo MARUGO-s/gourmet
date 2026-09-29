@@ -2,6 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import { deleteCredential, getCredentials, saveCredential } from "../api";
 import type { CredentialRow, SourceMeta } from "../types";
 
+function ikyuAccount(username: string) {
+  const [storeId, operatorId, extra] = username.split("\u001e");
+  if (extra !== undefined || !/^\d{6}$/.test(storeId ?? "") || !operatorId) return null;
+  return { storeId, operatorId };
+}
+
 type Props = {
   sources: SourceMeta[];
   onChanged: () => void;
@@ -11,8 +17,10 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
   const [rows, setRows] = useState<CredentialRow[]>([]);
   const [source, setSource] = useState<string>(sources[0]?.id ?? "");
   const [label, setLabel] = useState("");
+  const [storeId, setStoreId] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -36,17 +44,19 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
   const onSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
-      if (!source || !username || !password) {
-        setNotice("サイト / ID / パスワード を入力してください");
+      if (!source || !username || !password || (source === "ikyu" && !/^\d{6}$/.test(storeId))) {
+        setNotice(source === "ikyu" ? "店舗ID（6桁）・オペレータID・パスワードを入力してください" : "サイト / ID / パスワード を入力してください");
         return;
       }
       setSaving(true);
       setNotice(null);
       try {
-        await saveCredential({ source, label, username, password });
+        await saveCredential({ source, label, username, password, ...(source === "ikyu" ? { storeId } : {}) });
         setLabel("");
+        setStoreId("");
         setUsername("");
         setPassword("");
+        setShowPassword(false);
         setNotice("保存しました");
         refresh();
         onChanged();
@@ -56,7 +66,7 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
         setSaving(false);
       }
     },
-    [source, label, username, password, refresh, onChanged],
+    [source, label, storeId, username, password, refresh, onChanged],
   );
 
   const onDelete = useCallback(
@@ -95,6 +105,7 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
             <tbody>
               {rows.map((r) => {
                 const s = srcMap.get(r.source);
+                const ikyu = r.source === "ikyu" ? ikyuAccount(r.username) : null;
                 return (
                   <tr key={r.id} className="border-b border-line last:border-b-0 hover:bg-surface">
                     <td className="px-5 py-2.5 whitespace-nowrap">
@@ -107,7 +118,9 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
                       </span>
                     </td>
                     <td className="px-5 py-2.5 text-[11px] font-medium text-subtle">{r.label || "—"}</td>
-                    <td className="px-5 py-2.5 text-[11px] font-semibold">{r.username}</td>
+                    <td className="px-5 py-2.5 text-[11px] font-semibold">
+                      {ikyu ? `店舗 ${ikyu.storeId} / ${ikyu.operatorId}` : r.username}
+                    </td>
                     <td className="px-5 py-2.5 text-[11px] font-semibold whitespace-nowrap text-faint">
                       {new Date(r.updatedAt).toLocaleString("ja-JP", {
                         dateStyle: "short",
@@ -146,7 +159,7 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
             <span className="text-[11px] font-bold text-subtle">サイト</span>
             <select
               value={source}
-              onChange={(e) => setSource(e.target.value)}
+              onChange={(e) => { setSource(e.target.value); setStoreId(""); setShowPassword(false); }}
               className="rounded-md border border-line bg-card px-3 py-2 text-[12px] font-semibold focus:border-brand focus:outline-none"
             >
               {sources.map((s) => (
@@ -161,6 +174,10 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
               食べログの店舗管理画面にログインする専用ID・パスワードを登録してください。
               一般会員用のメールアドレスや価格.com IDとは異なります。
             </p>
+          ) : source === "ikyu" ? (
+            <p className="rounded bg-brand-soft px-3 py-2 text-[11px] leading-relaxed text-brand">
+              一休.comレストラン管理画面と同じ3項目です。店舗IDは6桁の数字です。自動取得の接続はこれからです。
+            </p>
           ) : <p className="rounded bg-surface px-3 py-2 text-[11px] leading-relaxed text-subtle">このサイトの自動取得は接続準備中です。現在、自動取得できるのは食べログです。</p>}
           <label className="flex flex-col gap-1.5">
             <span className="text-[11px] font-bold text-subtle">ラベル（任意）</span>
@@ -171,24 +188,43 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
               className="rounded-md border border-line bg-card px-3 py-2 text-[12px] font-semibold placeholder:text-faint placeholder:font-normal focus:border-brand focus:outline-none"
             />
           </label>
+          {source === "ikyu" ? (
+            <label className="flex flex-col gap-1.5">
+              <span className="text-[11px] font-bold text-subtle">店舗ID</span>
+              <input
+                value={storeId}
+                onChange={(e) => setStoreId(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                inputMode="numeric"
+                autoComplete="off"
+                placeholder="店舗ID（6桁数字）を入力"
+                className="rounded-md border border-line bg-card px-3 py-2 text-[12px] font-semibold placeholder:text-faint placeholder:font-normal focus:border-brand focus:outline-none"
+              />
+            </label>
+          ) : null}
           <label className="flex flex-col gap-1.5">
-            <span className="text-[11px] font-bold text-subtle">ログインID</span>
+            <span className="text-[11px] font-bold text-subtle">{source === "ikyu" ? "オペレータID" : "ログインID"}</span>
             <input
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               autoComplete="off"
-              className="rounded-md border border-line bg-card px-3 py-2 text-[12px] font-semibold focus:border-brand focus:outline-none"
+              placeholder={source === "ikyu" ? "オペレータIDを入力" : undefined}
+              className="rounded-md border border-line bg-card px-3 py-2 text-[12px] font-semibold placeholder:text-faint placeholder:font-normal focus:border-brand focus:outline-none"
             />
           </label>
           <label className="flex flex-col gap-1.5">
             <span className="text-[11px] font-bold text-subtle">パスワード</span>
             <input
-              type="password"
+              type={source === "ikyu" && showPassword ? "text" : "password"}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="new-password"
               className="rounded-md border border-line bg-card px-3 py-2 text-[12px] font-semibold focus:border-brand focus:outline-none"
             />
+            {source === "ikyu" ? (
+              <button type="button" onClick={() => setShowPassword((v) => !v)} className="self-end text-[11px] font-bold text-brand underline">
+                {showPassword ? "パスワードを隠す" : "パスワードを表示"}
+              </button>
+            ) : null}
           </label>
           {notice ? (
             <p className="rounded bg-surface px-3 py-2 text-[11px] font-semibold text-subtle">{notice}</p>

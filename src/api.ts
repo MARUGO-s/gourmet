@@ -57,6 +57,7 @@ export async function saveCredential(input: {
   label: string;
   username: string;
   password: string;
+  storeId?: string;
 }) {
   const headers = await authHeaders();
   return apiFetch("/api/credentials", {
