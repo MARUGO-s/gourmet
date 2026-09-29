@@ -71,9 +71,14 @@ Deno.serve(async req => {
     }
     if (path === "/sync" && req.method === "POST") {
       const { source }=await body(req);
-      if(source!=="all" && source!=="tabelog") return json(req,{error:"現在の自動取得は食べログのみ対応しています。他サイトは接続準備中です"},422);
-      const {data,error}=await admin.rpc("enqueue_sync",{p_user:user.id});
-      if(error) return json(req,{error:error.message.includes("同期は")?error.message:"食べログのアカウントを登録してから再度お試しください"},error.message.includes("同期は")?429:400);
+      if(source!=="all" && source!=="tabelog" && source!=="ikyu") return json(req,{error:"現在の自動取得は食べログと一休.comレストランのみ対応しています"},422);
+      const target=source==="ikyu"?"ikyu":"tabelog";
+      const {data,error}=await admin.rpc("enqueue_sync",{p_user:user.id,p_source:target});
+      if(error) {
+        const limited=error.message.includes("同期は");
+        const registered=error.message.includes("アカウントを登録");
+        return json(req,{error:limited||registered?error.message:(target==="ikyu"?"一休.comレストランのアカウントを登録してから再度お試しください":"食べログのアカウントを登録してから再度お試しください")},limited?429:400);
+      }
       const reserved=await must(admin.rpc("reserve_sync_dispatch",{p_job:data.id,p_user:user.id}));
       if(reserved) {
         const dispatched=await dispatchWorker(Deno.env.get("GOURMET_DISPATCH_TOKEN"));

@@ -3,6 +3,7 @@ export type SourceCred = { id: string; name: string; hasCredential: boolean };
 export type HeaderSync =
   | { enabled: false; reason: string }
   | { enabled: true; mode: "tabelog" }
+  | { enabled: true; mode: "ikyu" }
   | { enabled: true; mode: "unconnected"; name: string; hasCredential: boolean };
 
 const CONNECTED = new Set(["all", "tabelog"]);
@@ -14,6 +15,12 @@ export function headerSync(signedIn: boolean, filter: string, sources: SourceCre
     return ready
       ? { enabled: true, mode: "tabelog" }
       : { enabled: false, reason: "食べログのアカウントを登録してください" };
+  }
+  if (filter === "ikyu") {
+    const ready = sources.some((s) => s.id === "ikyu" && s.hasCredential);
+    return ready
+      ? { enabled: true, mode: "ikyu" }
+      : { enabled: false, reason: "一休.comレストランのアカウントを登録してください" };
   }
   const site = sources.find((s) => s.id === filter);
   return {

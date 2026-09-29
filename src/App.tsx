@@ -133,7 +133,7 @@ export default function App() {
       if (!header.hasCredential) setView("accounts");
       return;
     }
-    void onSync();
+    void onSync(header.mode === "ikyu" ? "ikyu" : undefined);
   }, [header, onSync]);
 
   return (
@@ -165,7 +165,7 @@ export default function App() {
 
         <main className="flex flex-1 flex-col gap-5 px-6 py-6">
           <SyncPanel job={job} signedIn={!!userId} sources={sources} syncState={syncState} filter={filter}
-            onAccounts={() => setView("accounts")} onSync={() => void onSync("tabelog")} />
+            onAccounts={() => setView("accounts")} onSync={() => void onSync(filter === "ikyu" ? "ikyu" : "tabelog")} />
           {view === "dashboard" ? (
             <>
               <nav className="flex flex-wrap items-center gap-1.5">

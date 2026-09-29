@@ -50,6 +50,24 @@ export function validateTabelogResult(result) {
   }
 }
 
+export function validateIkyuResult(result) {
+  const { rating, reviews } = result.data ?? {};
+  if ((rating != null && (!Number.isFinite(rating) || rating < 0 || rating > 5))
+    || (reviews != null && !count(reviews))) throw new Error("評価または口コミ数を正しく取得できませんでした");
+  if (rating == null || reviews == null || result.data?.pv != null || result.data?.reservations != null || !result.warning) {
+    throw new Error("一休.comレストランの公開評価・口コミ数だけを保存します");
+  }
+  if ((result.reviews?.length ?? 0) > 200) throw new Error("取得対象の上限を超えています");
+  if ((result.reviews?.length ?? 0) !== reviews) throw new Error("口コミ件数と本文の数が一致しません");
+  const ids = new Set();
+  for (const review of result.reviews ?? []) {
+    if (!/^I[1-9]\d{5}:[0-9a-f]{8,64}$/.test(review.externalId ?? "") || ids.has(review.externalId)) throw new Error("口コミの識別情報が不正です");
+    ids.add(review.externalId);
+    if (!validDate(review.date) || !Number.isFinite(review.rating) || review.rating < 0 || review.rating > 5) throw new Error("口コミの日付または点数が不正です");
+    if (typeof review.text !== "string" || !review.text || review.text.length > 50000 || review.details?.textComplete !== true) throw new Error("口コミ本文の形式が不正です");
+  }
+}
+
 export function snapshotUpdates(userId, source, result, today = japanDate()) {
   const rows = new Map();
   const add = (date, values) => rows.set(date, { ...rows.get(date), user_id: userId, source, date, ...values });
