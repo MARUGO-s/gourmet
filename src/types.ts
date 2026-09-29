@@ -165,3 +165,10 @@ export type { PublicSchedule as FetchSchedule, ScheduleInput, ScheduleMode } fro
 
 // 店舗マスタ（stores / store_sites）と全店舗の比較。型は共通モジュールの宣言を使う
 export type { PublicStore as Store, PublicStoreSite as StoreSite, Overview, OverviewRow, OverviewSite, OverviewTotals, StoreKeys } from "../supabase/functions/_shared/stores.js";
+
+// AI分析（ai-analyst）
+export type AiChatMessage = { role: "user" | "assistant"; content: string; at: string; storeName?: string; period?: { from: string; to: string }; calls?: { name: string; args: Record<string, unknown> }[]; error?: boolean };
+export type AiStatus = { configured: boolean; model: string; limits: { askPerHour: number; reportsPerHour: number } };
+export type AiAskResult = { answer: string; model: string; calls: { name: string; args: Record<string, unknown> }[]; period: { from: string; to: string }; store: string };
+export type AiReportSummary = { id: string; title: string; storeId: string; storeName: string; from: string; to: string; model: string; createdAt: string };
+export type AiReport = AiReportSummary & { markdown: string; content: Record<string, unknown> };

@@ -1,4 +1,4 @@
-type ViewId = "overview" | "dashboard" | "requests" | "schedules" | "accounts" | "stores";
+type ViewId = "overview" | "dashboard" | "ai" | "requests" | "schedules" | "accounts" | "stores";
 type Props = {
   // null = 店舗の選択画面
   view: ViewId | null;
@@ -48,6 +48,15 @@ function NavIcon({ name }: { name: string }) {
       </svg>
     );
   }
+  if (name === "ai") {
+    return (
+      <svg {...common}>
+        <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8L12 3z" />
+        <path d="M18.5 14.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9.9-2.1z" />
+        <path d="M5 16.5l.6 1.4 1.4.6-1.4.6L5 20.5l-.6-1.4-1.4-.6 1.4-.6.6-1.4z" />
+      </svg>
+    );
+  }
   if (name === "requests") {
     return (
       <svg {...common}>
@@ -78,6 +87,7 @@ function NavIcon({ name }: { name: string }) {
 const ITEMS: { id: ViewId; label: string; signedIn?: boolean }[] = [
   { id: "overview", label: "全店舗の比較", signedIn: true },
   { id: "dashboard", label: "ダッシュボード" },
+  { id: "ai", label: "AI分析", signedIn: true },
   { id: "requests", label: "取得依頼" },
   { id: "schedules", label: "自動取得の設定" },
   { id: "accounts", label: "アカウント管理" },
@@ -86,7 +96,7 @@ const ITEMS: { id: ViewId; label: string; signedIn?: boolean }[] = [
 
 export default function Sidebar({ view, onView, signedIn, storeName }: Props) {
   return (
-    <aside className="hidden w-[232px] shrink-0 flex-col border-r border-line bg-card md:flex">
+    <aside className="no-print hidden w-[232px] shrink-0 flex-col border-r border-line bg-card md:flex">
       <div className="px-5 pt-6 pb-5">
         <div className="flex items-center gap-2.5">
           <div className="flex h-9 w-9 items-center justify-center rounded-md bg-brand">

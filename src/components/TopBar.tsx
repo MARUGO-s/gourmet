@@ -19,7 +19,7 @@ export default function TopBar({ title, subtitle, lastSync, demo, signedIn, open
     ? new Date(lastSync).toLocaleString("ja-JP", { dateStyle: "short", timeStyle: "short" })
     : "—";
   return (
-    <header className="flex flex-wrap items-center gap-3 border-b border-line bg-card px-6 py-4">
+    <header className="no-print flex flex-wrap items-center gap-3 border-b border-line bg-card px-6 py-4">
       <div className="min-w-0 flex-1">
         <h1 className="truncate text-[15px] leading-tight font-bold tracking-tight">{title}</h1>
         <p className="mt-0.5 text-[11px] font-medium text-faint">

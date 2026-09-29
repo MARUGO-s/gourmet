@@ -21,11 +21,13 @@ import RequestsPanel from "./components/RequestsPanel";
 import SchedulesPanel from "./components/SchedulesPanel";
 // 一休の詳細分析は選択時だけ読み込む（初期バンドルを小さく保つ）
 const IkyuDetails = lazy(() => import("./components/IkyuDetails"));
+// AI分析も選択時だけ読み込む
+const AiAnalystPage = lazy(() => import("./components/AiAnalystPage"));
 
-export type View = "overview" | "dashboard" | "requests" | "schedules" | "accounts" | "stores";
+export type View = "overview" | "dashboard" | "ai" | "requests" | "schedules" | "accounts" | "stores";
 const VIEW_TITLES: Record<View, [string, string | null]> = {
   overview: ["全店舗の比較", "店舗×サイトの月別PV・前月比・予約・評価・口コミ・未返信"], stores: ["店舗管理", "店舗の追加・並び替えと、各サイトの店舗ID"],
-  dashboard: ["ダッシュボード", null], requests: ["取得依頼", "Grok Botへの取得依頼と履歴"], schedules: ["自動取得の設定", "店舗×サイトごとの自動取得の周期（日本時間）"], accounts: ["アカウント管理", "口コミサイトのアカウント（店舗×サイト）"],
+  dashboard: ["ダッシュボード", null], ai: ["AI分析", "AIによる質問への回答と分析レポート（OpenAI）"], requests: ["取得依頼", "Grok Botへの取得依頼と履歴"], schedules: ["自動取得の設定", "店舗×サイトごとの自動取得の周期（日本時間）"], accounts: ["アカウント管理", "口コミサイトのアカウント（店舗×サイト）"],
 };
 
 export default function App() {
@@ -99,7 +101,7 @@ export default function App() {
     setScope(next);
     if (userId) saveSelection(userId, next);
     // 「全店舗」は全店舗の比較を開く。店舗へ切り替えたときは表示中の画面（取得依頼など）をそのまま絞り込む
-    setView((v) => (next === ALL_STORES ? "overview" : v === "overview" || v === "stores" ? "dashboard" : v));
+    setView((v) => (next === ALL_STORES && v !== "ai" ? "overview" : v === "overview" || v === "stores" ? "dashboard" : v));
   }, [userId]);
   const reselect = useCallback(() => {
     setScope(null);
@@ -181,7 +183,7 @@ export default function App() {
   const choosing = !!userId && !scope && view !== "stores";
   const [baseTitle, subtitle] = choosing ? ["店舗の選択", "表示する店舗を選んでください"] as const : VIEW_TITLES[view];
   const scopeName = !userId ? null : scope === ALL_STORES ? "全店舗" : currentStore?.name ?? null;
-  const title = scopeName && !choosing && view !== "overview" && view !== "stores" ? `${scopeName} · ${baseTitle}` : baseTitle;
+  const title = scopeName && !choosing && view !== "overview" && view !== "stores" && view !== "ai" ? `${scopeName} · ${baseTitle}` : baseTitle;
   const openCount = scopedRequests.filter((r) => r.status === "queued" || r.status === "claimed").length;
   const onView = (v: View) => {
     if (v === "overview") { selectScope(ALL_STORES); return; }
@@ -206,7 +208,7 @@ export default function App() {
 
         {notice ? (
           <div
-            className={`flex items-center gap-2 border-b px-6 py-2.5 text-[11px] font-bold ${
+            className={`no-print flex items-center gap-2 border-b px-6 py-2.5 text-[11px] font-bold ${
               notice.error
                 ? "border-line bg-danger-soft text-danger"
                 : "border-line bg-ok-soft text-ok"
@@ -221,6 +223,12 @@ export default function App() {
             <StoreSelect stores={stores} sources={sources} loading={!storesLoaded} error={storesError} onSelect={selectScope} onManage={() => setView("stores")} onRetry={refreshStores} />
           ) : view === "overview" ? (
             userId ? <OverviewPage key={`${userId}/${storesKey}`} sources={sources} onSelectStore={selectScope} onManage={() => setView("stores")} /> : signInFirst
+          ) : view === "ai" ? (
+            userId ? (
+              <Suspense fallback={<div className="rounded-md border border-line bg-card px-6 py-8 text-center text-[12px] font-semibold text-faint">読み込み中…</div>}>
+                <AiAnalystPage key={userId} userId={userId} stores={stores} scope={scope ?? ALL_STORES} />
+              </Suspense>
+            ) : signInFirst
           ) : view === "stores" ? (
             userId ? <StoreManager stores={stores} sources={sources} onChanged={refreshStores} /> : signInFirst
           ) : view === "dashboard" ? (

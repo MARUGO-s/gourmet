@@ -31,3 +31,39 @@ body {
 ::selection {
   background: #eff4ff;
 }
+
+/* AI分析: Markdown（markdownToHtml の出力）の表示 */
+.md { overflow-wrap: anywhere; }
+.md > * + * { margin-top: 0.6em; }
+.md h1 { font-size: 18px; font-weight: 700; border-bottom: 2px solid var(--color-brand); padding-bottom: 4px; }
+.md h2 { font-size: 15px; font-weight: 700; margin-top: 1.2em; border-left: 4px solid var(--color-brand); padding-left: 8px; }
+.md h3 { font-size: 13px; font-weight: 700; margin-top: 1em; }
+.md h4, .md h5, .md h6 { font-size: 12px; font-weight: 700; }
+.md ul { list-style: disc; padding-left: 1.4em; }
+.md ol { list-style: decimal; padding-left: 1.6em; }
+.md li + li { margin-top: 0.2em; }
+.md a { color: var(--color-brand); text-decoration: underline; }
+.md code { background: var(--color-surface); border: 1px solid var(--color-line); border-radius: 3px; padding: 0 3px; font-size: 0.92em; }
+.md pre { background: var(--color-surface); border: 1px solid var(--color-line); border-radius: 4px; padding: 8px 10px; overflow-x: auto; }
+.md pre code { border: 0; padding: 0; }
+.md blockquote { border-left: 3px solid var(--color-line); padding-left: 10px; color: var(--color-subtle); }
+.md hr { border: 0; border-top: 1px solid var(--color-line); margin: 1.2em 0; }
+.md .md-table { overflow-x: auto; }
+.md table { border-collapse: collapse; width: 100%; font-size: 11px; background: #fff; }
+.md th, .md td { border: 1px solid var(--color-line); padding: 4px 8px; }
+.md th { background: var(--color-surface); font-weight: 700; }
+.md-report { font-size: 13px; line-height: 1.75; }
+
+/* 印刷・PDF（window.print）: 画面の操作部分を隠し、レポート（開いている場合）だけを印刷する */
+@media print {
+  @page { margin: 14mm; }
+  body { background: #fff; }
+  .no-print { display: none !important; }
+  main { padding: 0 !important; }
+  body:has(.ai-report) main > section > :not(.ai-report):not(:has(.ai-report)) { display: none !important; }
+  .ai-report { border: 0 !important; }
+  .md-report { padding: 0 !important; }
+  .md h2 { break-after: avoid; }
+  .md table, .md tr, .md li { break-inside: avoid; }
+  .md .md-table { overflow: visible; }
+}

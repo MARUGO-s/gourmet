@@ -10,6 +10,10 @@ import type {
   Store,
   StoreSite,
   Overview,
+  AiStatus,
+  AiAskResult,
+  AiReport,
+  AiReportSummary,
 } from "./types";
 
 // ログイン中のセッションがあれば Supabase JWT を API リクエストに転送する。
@@ -144,3 +148,23 @@ export async function getOverview(month?: string) {
   const headers = await authHeaders();
   return apiFetch(`/api/overview${month ? `?month=${encodeURIComponent(month)}` : ""}`, { headers }).then((r) => json<{ overview: Overview }>(r));
 }
+
+// AI分析（ai-analyst）。OpenAIのAPIキーはサーバー（Edge Functionの秘密情報）だけにあり、ブラウザは本人のJWTでこの関数だけを呼ぶ。
+// 回答・レポートの作成は時間がかかるため、タイムアウトを長くする。
+const aiFetch = async <T>(path: string, options: RequestInit = {}, timeoutMs = 30_000) => {
+  const headers = await authHeaders();
+  const res = await fetch(`${supabaseUrl}/functions/v1/ai-analyst${path}`, {
+    ...options, headers: { ...(options.body ? { "Content-Type": "application/json" } : {}), ...headers }, signal: AbortSignal.timeout(timeoutMs),
+  }).catch((e: unknown) => {
+    throw new ApiError(e instanceof DOMException && e.name === "TimeoutError" ? "AIの応答が時間内に返りませんでした。期間を短くしてお試しください" : "通信に失敗しました", 0);
+  });
+  return json<T>(res);
+};
+export const getAiStatus = () => aiFetch<AiStatus>("/status");
+export const askAi = (input: { question: string; storeId: string; from: string; to: string; history: { role: "user" | "assistant"; content: string }[] }) =>
+  aiFetch<AiAskResult>("/ask", { method: "POST", body: JSON.stringify(input) }, 150_000);
+export const getAiReports = () => aiFetch<{ reports: AiReportSummary[] }>("/reports");
+export const getAiReport = (id: string) => aiFetch<{ report: AiReport }>(`/reports/${encodeURIComponent(id)}`);
+export const createAiReport = (input: { storeId: string; from: string; to: string; title?: string; focus?: string }) =>
+  aiFetch<{ report: AiReport }>("/reports", { method: "POST", body: JSON.stringify(input) }, 160_000);
+export const deleteAiReport = (id: string) => aiFetch<{ ok: boolean }>(`/reports/${encodeURIComponent(id)}`, { method: "DELETE" });
