@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mergeOwnerReviews, ownerGoto, selectAllMonths,readOwnerDailyTable} from '../tabelog-owner.js';
+import {mergeOwnerReviews, ownerGoto, selectAllMonths,readOwnerDailyTable,readOwnerPublicUrl} from '../tabelog-owner.js';
 import {collectTabelogMetrics} from '../tabelog-result.js';
 import {validateTabelogResult, snapshotUpdates} from '../sync-data.js';
 import {computeDashboard} from '../../supabase/functions/_shared/dashboard.js';
@@ -13,12 +13,47 @@ test('full text wins over its excerpt, while repeat visits and excerpt-only revi
   assert.equal(rows.items[2].date,null);
   assert.throws(()=>mergeOwnerReviews({total:2,items:[review('B1','11'),review('B1','11')]},{total:0,items:[]}),/件数/);
 });
-test('owner review collection never requests public metrics or fabricates an official aggregate',async()=>{
+test('owner posts stay intact while the public page supplies the official aggregate',async()=>{
   const owner=mergeOwnerReviews({total:1,items:[review('B1','11')]},{total:0,items:[]});
-  const result=await collectTabelogMetrics({ownerReviews:async()=>owner,publicMetrics:()=>assert.fail('Public request'),dailyMetrics:async()=>({daily:[]}),monthlyMetrics:async()=>({months:[]}),detailReports:async()=>({})});
-  assert.equal(result.status,'partial');assert.deepEqual(result.data,{rating:null,reviews:null});assert.equal(result.reviews.length,1);
-  assert.equal(snapshotUpdates('u','tabelog',result).length,0);
+  let calls=0;
+  const result=await collectTabelogMetrics({
+    ownerReviews:async()=>owner,
+    publicMetrics:async()=>{calls++;return {rating:3.26,reviews:49,name:'店',reviewItems:[{text:'公開抜粋',rating:1,author:'x'}]};},
+    dailyMetrics:async()=>({daily:[{date:'2026-09-28',pv:0}]}),
+    monthlyMetrics:async()=>({months:[{month:'2026-08',reservations:0}]}),
+    detailReports:async()=>({ranking:{rows:[]},topPages:{pages:[]}}),
+  });
+  assert.equal(calls,1);
+  assert.equal(result.status,'ok');
+  assert.deepEqual(result.data,{rating:3.26,reviews:49});
+  assert.equal(result.reviews.length,1);
+  assert.equal(result.reviews[0].text,'同じ本文');
   assert.equal(result.reports.ownerReviews.groups,1);
+  const saved=snapshotUpdates('u','tabelog',result,'2026-09-29');
+  assert.equal(saved.find(row=>row.date==='2026-09-29').rating,3.26);
+  assert.equal(saved.find(row=>row.date==='2026-09-29').reviews,49);
+});
+test('a failed public page does not discard owner reviews or invent an aggregate',async()=>{
+  const owner=mergeOwnerReviews({total:1,items:[review('B1','11')]},{total:0,items:[]});
+  const result=await collectTabelogMetrics({ownerReviews:async()=>owner,publicMetrics:async()=>({rating:null,reviews:null,issue:'公開ページがHTTP 403を返しました',reviewItems:[]}),dailyMetrics:async()=>({daily:[]}),monthlyMetrics:async()=>({months:[]}),detailReports:async()=>({})});
+  assert.equal(result.status,'partial');
+  assert.deepEqual(result.data,{rating:null,reviews:null});
+  assert.equal(result.reviews[0].externalId,'B1:11');
+  assert.match(result.warning,/HTTP 403/);
+  assert.equal(snapshotUpdates('u','tabelog',result).length,0);
+});
+test('the owner navigation link identifies only this store',()=>{
+  const original=globalThis.document;
+  const anchor=(text,href)=>({textContent:text,href});
+  globalThis.document={querySelectorAll:()=>[
+    anchor('パザパ','https://tabelog.com/tokyo/A1309/A130903/13000975/'),
+    anchor('自店舗ページ表示','https://tabelog.com/tokyo/A1309/A130903/13245351/?lid=owner_rst-top-jitempo_pc'),
+  ]};
+  try { assert.equal(readOwnerPublicUrl(),'https://tabelog.com/tokyo/A1309/A130903/13245351/'); }
+  finally { globalThis.document=original; }
+  globalThis.document={querySelectorAll:()=>[anchor('外部','https://example.com/tokyo/A1309/A130903/13245351/')]};
+  try { assert.equal(readOwnerPublicUrl(),null); }
+  finally { globalThis.document=original; }
 });
 test('review identities, real dates and ratings are checked before saving',()=>{
   const result={status:'partial',warning:'店舗総合点未取得',data:{rating:null,reviews:null},daily:[],monthly:[],reviews:[review('B1','11')]};

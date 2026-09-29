@@ -1,4 +1,14 @@
-// Only authenticated owner-console pages. No public-page requests or fallback.
+// Own-store link in the owner navigation. Ranking tables also link to other restaurants.
+export function readOwnerPublicUrl() {
+  const link = [...document.querySelectorAll('a')].find((a) => a.textContent.trim() === '自店舗ページ表示');
+  if (!link?.href) return null;
+  const url = new URL(link.href);
+  url.search = '';
+  url.hash = '';
+  if (url.protocol !== 'https:' || url.hostname !== 'tabelog.com' || !/^\/[^?#]+\/\d{8}\/$/.test(url.pathname)) return null;
+  return url.href;
+}
+
 export function readOwnerReviews() {
   const txt = (el, selector) => el.querySelector(selector)?.textContent?.trim() ?? '';
   const body = (el, selector) => { const node = el.querySelector(selector); return (node?.innerText ?? node?.textContent ?? '').trim(); };

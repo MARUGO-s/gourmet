@@ -8,7 +8,8 @@ import { getSource } from "./sources.js";
 import { decrypt } from "./crypto.js";
 import { japanDate } from "./sync-data.js";
 import { collectTabelogMetrics } from "./tabelog-result.js";
-import { collectOwnerReviews, collectOwnerDaily, collectPageHistory, selectAllMonths } from "./tabelog-owner.js";
+import { collectTabelogPublicData } from "./tabelog-public.js";
+import { collectOwnerReviews, collectOwnerDaily, collectPageHistory, readOwnerPublicUrl, selectAllMonths } from "./tabelog-owner.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DUMP_DIR = path.join(__dirname, "..", "data", "dump");
@@ -304,10 +305,19 @@ async function extractTabelogReports(page, fallbackName) {
   return { topPages, ranking: buildRanking(summary, full, fallbackName) };
 }
 
-// Every requested metric is read from the authenticated owner console.
+async function collectStorePublicMetrics(page) {
+  const href = await page.evaluate(readOwnerPublicUrl);
+  if (!href) return { rating: null, reviews: null, reviewItems: [], issue: "管理画面の自店舗ページリンクを確認できないため、公開の総合点と口コミ総数は未取得です" };
+  const data = await collectTabelogPublicData(page.context(), href);
+  // Public structured snippets are not the owner review corpus.
+  return { ...data, reviewItems: [] };
+}
+
+// Owner console for posts and history. The store's own public page supplies the official aggregate only.
 async function extractTabelog(page, onProgress) {
   return collectTabelogMetrics({
     ownerReviews: () => collectOwnerReviews(page, assertAuthenticated),
+    publicMetrics: () => collectStorePublicMetrics(page),
     dailyMetrics: () => collectOwnerDaily(page, assertAuthenticated, onProgress, japanDate()),
     monthlyMetrics: () => extractTabelogConversion(page),
     detailReports: (name) => extractTabelogReports(page, name),
