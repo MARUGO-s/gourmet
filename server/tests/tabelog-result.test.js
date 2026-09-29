@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { collectTabelogMetrics } from '../tabelog-result.js';
+import { collectTabelogMetrics } from '../../scripts/tabelog/result.js';
 
 const collectors = () => ({
   publicMetrics:async()=>({rating:3.26,reviews:0,reviewItems:[]}),

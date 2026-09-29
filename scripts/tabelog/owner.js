@@ -1,3 +1,5 @@
+// 食べログ: 店舗管理画面の読み取り（エージェント側。アプリの実行環境・Edge Functions では使わない）。
+// read* は document を読む自己完結関数。ログイン処理は含まない（Grok Bot がログイン済みのブラウザで使う）。
 // Own-store link in the owner navigation. Ranking tables also link to other restaurants.
 export function readOwnerPublicUrl() {
   const link = [...document.querySelectorAll('a')].find((a) => a.textContent.trim() === '自店舗ページ表示');

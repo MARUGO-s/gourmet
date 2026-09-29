@@ -1,8 +1,7 @@
-// Public restaurant page only. Owner PV and reservations stay unset:
-// the store admin login requires a Cloudflare check this collector does not bypass.
+// エージェント側（Grok Bot）専用: 一休.comレストランの公開ページ（保存HTML）から評価・口コミ数・口コミを読む。
+// アプリ（Edge Functions・ブラウザ）からは使わない。ネットワークには接続しない（PR #11 の読み取り規則を移設）。
 
 const STORE_ID = /^[1-9][0-9]{5}$/;
-const USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 function decode(value) {
   return value
@@ -66,27 +65,15 @@ export function parseIkyuPublic(storeId, storeHtml, reviewsHtml) {
   };
 }
 
-export async function collectIkyuPublic(storeId, fetchImpl = globalThis.fetch) {
-  if (!STORE_ID.test(storeId)) throw new Error("店舗IDは6桁の数字です");
-  const headers = { "Accept-Language": "ja,en;q=0.8", "User-Agent": USER_AGENT };
-  const load = async (url) => {
-    const response = await fetchImpl(url, { headers, redirect: "follow", signal: AbortSignal.timeout(20_000) });
-    const html = await response.text();
-    return { status: response.status, html, url: response.url || url };
-  };
-  const store = await load(`https://restaurant.ikyu.com/${storeId}`);
-  if (store.status !== 200 || !store.url.includes(`/${storeId}`)) {
-    const error = new Error(store.status === 403
-      ? "一休.comレストランの公開ページが取得用サーバーから拒否されました。保存済みの値は変更していません"
-      : "一休.comレストランの公開ページを開けませんでした");
-    error.step = "public_page";
-    throw error;
+// 公開ページ（店舗トップ＋口コミ一覧の各ページ）→ 取り込みJSONの stores[].public
+// 例: { rating: 4.38, reviewCount: 2, reviews: [{ externalId: "I112789:305ca…", author, rating, text, date }] }
+export function buildIkyuPublic(storeId, storeHtml, reviewPages = []) {
+  const top = parseIkyuPublic(storeId, storeHtml, "");
+  const items = new Map();
+  for (const html of reviewPages) {
+    for (const item of parseIkyuPublic(storeId, "", html).items) {
+      if (!items.has(item.externalId)) items.set(item.externalId, { externalId: item.externalId, author: item.author, rating: item.rating, text: item.text, date: item.date });
+    }
   }
-  const reviewsPage = await load(`https://restaurant.ikyu.com/${storeId}/reviews`);
-  if (reviewsPage.status !== 200) {
-    const error = new Error("一休.comレストランの口コミページを開けませんでした");
-    error.step = "public_page";
-    throw error;
-  }
-  return parseIkyuPublic(storeId, store.html, reviewsPage.html);
+  return { rating: top.rating, reviewCount: top.reviews, reviews: [...items.values()] };
 }

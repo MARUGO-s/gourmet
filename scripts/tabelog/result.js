@@ -1,4 +1,5 @@
-import { validateTabelogResult } from './sync-data.js';
+// 食べログ: 各レポートの読み取り結果をまとめる（エージェント側）。
+import { validateTabelogResult } from './validate.js';
 
 // Each authorized page is collected once. A denied public page never causes
 // endpoint switching, access-control bypass, or loss of valid owner-console data.

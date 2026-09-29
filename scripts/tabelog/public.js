@@ -1,3 +1,4 @@
+// 食べログ: 公開店舗ページの総合点・口コミ数の読み取り（エージェント側）。
 // Self-contained so Playwright can evaluate it in the page. Never read body text,
 // cookies, or authenticated HTML into logs. Only the restaurant's own header/LD.
 export function readTabelogPublicDocument() {

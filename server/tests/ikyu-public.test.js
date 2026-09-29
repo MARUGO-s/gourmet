@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseIkyuPublic } from "../ikyu-public.js";
-import { validateIkyuResult } from "../sync-data.js";
+import { buildIkyuPublic, parseIkyuPublic } from "../../scripts/ikyu/public.js";
+import { buildIkyuPayload } from "../../scripts/ikyu/parse.js";
+import { dropPublicDuplicates, normalizeIkyuIngest } from "../../supabase/functions/_shared/ikyu-data.js";
 
 const storeHtml = `
 <div itemProp="aggregateRating">
@@ -36,17 +37,31 @@ test("public ikyu page yields the store score and review posts", () => {
     "I112789:792bcd565f4ea4bbe59f",
   ]);
   assert.equal(parsed.items[1].date, "2026-08-02");
-  const result = {
-    status: "partial",
-    warning: "公開ページの評価と口コミを保存しました。PVと予約数は未取得です。",
-    data: { rating: parsed.rating, reviews: parsed.reviews, pv: null, reservations: null },
-    reviews: parsed.items,
-    daily: [],
-    monthly: [],
-  };
-  assert.doesNotThrow(() => validateIkyuResult(result));
+  // 取り込みJSON（stores[].public）にしても agent-api と同じ検証を通る
+  const pub = buildIkyuPublic("112789", storeHtml, [reviewsHtml, reviewsHtml]);
+  assert.equal(pub.reviews.length, 2);
+  const checked = normalizeIkyuIngest(buildIkyuPayload({ runId: "ikyu-public-1", stores: [{ storeId: "112789", public: pub }] }), "2026-09-29");
+  assert.equal(checked.stores[0].public.rating, 4.38);
+  assert.equal(checked.stores[0].public.review_count, 2);
+  assert.equal(checked.stores[0].public.reviews[0].external_id, "I112789:305ca13a07989a902773");
 });
 
 test("a short store id is rejected", () => {
   assert.throws(() => parseIkyuPublic("12345", storeHtml, reviewsHtml), /6桁/);
+});
+
+test("public reviews must belong to the store and stay in range", () => {
+  const payload = (pub) => buildIkyuPayload({ runId: "r1", stores: [{ storeId: "112789", public: pub }] });
+  const review = { externalId: "I112789:305ca13a07989a902773", author: "a", rating: 4.5, text: "美味しい", date: "2026-08-01" };
+  assert.throws(() => normalizeIkyuIngest(payload({ reviews: [{ ...review, externalId: "I999999:305ca13a07989a902773" }] }), "2026-09-29"), /externalId/);
+  assert.throws(() => normalizeIkyuIngest(payload({ rating: 5.1 }), "2026-09-29"), /0〜5/);
+  assert.throws(() => normalizeIkyuIngest(payload({ reviews: [review, review] }), "2026-09-29"), /重複/);
+  assert.throws(() => normalizeIkyuIngest(payload({}), "2026-09-29"), /保存できるデータがありません/);
+  assert.equal(normalizeIkyuIngest(payload({ rating: 4.2 }), "2026-09-29").stores[0].public.reviews.length, 0);
+});
+
+test("public Ikyu reviews that match an owner-console review are shown once", () => {
+  const legacy = [{ source: "ikyu", text: "美味しい 料理" }, { source: "ikyu", text: "別の口コミ" }, { source: "tabelog", text: "美味しい料理" }];
+  const kept = dropPublicDuplicates(legacy, [{ text: "美味しい料理" }]);
+  assert.deepEqual(kept.map((r) => r.text), ["別の口コミ", "美味しい料理"]);
 });
