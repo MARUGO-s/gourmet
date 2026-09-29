@@ -32,7 +32,7 @@ Deno.serve(async req=>{
     if(job.status!=="running") return json(req,{ok:true}); // Idempotent result retries.
     if(new Date(job.lease_until).getTime()<Date.now()) return json(req,{error:"Expired lease"},409);
     if(input.action==="progress") {
-      const allowed=new Set(["browser","login","authentication","public_metrics","daily_pv","monthly","reports"]);
+      const allowed=new Set(["browser","login","authentication","public_metrics","owner_reviews","daily_pv","monthly","reports"]);
       if(!allowed.has(input.step)) return json(req,{error:"Invalid step"},400);
       await must(admin.from("sync_jobs").update({step:input.step,message:String(input.message??"").slice(0,200)}).eq("id",job.id).eq("status","running").eq("lease_id",input.lease));
       return json(req,{ok:true});
@@ -43,15 +43,17 @@ Deno.serve(async req=>{
     let snapshots:any[]=[],reviews:any[]=[],reports:any[]=[];
     if(result?.status==="ok" || result?.status==="partial") {
       validateTabelogResult(result);
-      if(result.daily.length>2000 || result.monthly.length>120 || (result.reviews?.length??0)>100) throw new Error("Oversized result");
       snapshots=snapshotUpdates(job.user_id,"tabelog",result);
-      reviews=(result.reviews??[]).map((r:any)=>({text:String(r.text??"").slice(0,10000),author:String(r.author??"匿名").slice(0,300),rating:Number.isFinite(r.rating)&&r.rating>=0&&r.rating<=5?r.rating:0}));
+      reviews=(result.reviews??[]).map((r:any)=>({text:String(r.text??''),author:String(r.author??'匿名').slice(0,300),rating:r.rating??null,
+        external_id:r.externalId??null,title:String(r.title??'').slice(0,1000),review_date:r.date??null,visit_month:r.visitMonth??null,details:r.details??{}}));
       const add=(kind:string,period:string,data:unknown)=>reports.push({kind,period,data});
       for(const d of result.daily) if(d.pc!=null||d.sp!=null||d.app!=null) add("device_daily",d.date,{pc:d.pc,sp:d.sp,app:d.app});
       for(const {month,...metrics} of result.monthly) add("monthly_metrics",month,metrics);
       if(result.reports?.ranking) add("area_ranking",result.reports.ranking.updatedAt??japanDate(),result.reports.ranking);
       if(result.reports?.topPages) add("top_pages",result.reports.topPages.month,result.reports.topPages);
-      publicResult={source:"tabelog",status:result.status,warning:typeof result.warning==="string"?result.warning.slice(0,1000):undefined,summary:{rating:result.data.rating??null,reviews:result.data.reviews??null,dailyDays:result.daily.length,monthlyMonths:result.monthly.length,latestPvDate:result.daily.map((d:any)=>d.date).sort().at(-1)??null}};
+      if(result.reports?.ownerReviews) add('owner_reviews',japanDate(),result.reports.ownerReviews);
+      if(result.reports?.pageHistory) add('page_history',`${result.reports.pageHistory.first}-${result.reports.pageHistory.last}`,result.reports.pageHistory);
+      publicResult={source:"tabelog",status:result.status,warning:typeof result.warning==="string"?result.warning.slice(0,1000):undefined,summary:{rating:result.data.rating??null,reviews:result.data.reviews??null,dailyDays:result.daily.length,monthlyMonths:result.monthly.length,latestPvDate:result.daily.map((d:any)=>d.date).sort().at(-1)??null,ownerReviewEntries:reviews.length,ownerReviewGroups:result.reports?.ownerReviews?.groups??null}};
     }
     await must(admin.rpc("finish_sync",{p_job:input.id,p_lease:input.lease,p_result:publicResult,p_snapshots:snapshots,p_reviews:reviews,p_reports:reports}));
     return json(req,{ok:true});

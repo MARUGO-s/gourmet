@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url";
 import { getSource } from "./sources.js";
 import { decrypt } from "./crypto.js";
 import { japanDate } from "./sync-data.js";
-import { collectTabelogPublicData } from "./tabelog-public.js";
 import { collectTabelogMetrics } from "./tabelog-result.js";
+import { collectOwnerReviews, collectOwnerDaily, collectPageHistory, selectAllMonths } from "./tabelog-owner.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DUMP_DIR = path.join(__dirname, "..", "data", "dump");
@@ -142,8 +142,7 @@ export function readConversionTable() {
       const entry = { month: tr.cells[0].textContent.trim() };
       for (const [key, col] of Object.entries(cols)) entry[key] = num(tr, col);
       return entry;
-    })
-    .filter((m) => m.reservations != null);
+    });
   return { months, headers };
 }
 
@@ -153,9 +152,13 @@ async function extractTabelogConversion(page) {
     timeout: 30000,
   });
   await assertAuthenticated(page);
+  const range=await selectAllMonths(page, assertAuthenticated);
   await page.locator("#data-cvr-alldevice").waitFor({ state: "attached", timeout: 15000 });
   await dumpChartPage(page, "report-conversion-tabelog");
-  return page.evaluate(readConversionTable);
+  const result=await page.evaluate(readConversionTable);
+  const ordinal=m=>Number(m.slice(0,4))*12+Number(m.slice(-2));
+  if(result.months?.length!==ordinal(range.last)-ordinal(range.first)+1 || new Set(result.months.map(m=>m.month)).size!==result.months.length)throw new Error('月別レポートの全期間を取得できませんでした');
+  return result;
 }
 
 // セレクタ調整用: ページHTMLと全グラフの系列データを data/dump/ に保存する
@@ -217,15 +220,14 @@ export function buildRanking(summary, full, fallbackName) {
   const shopName = summary?.shopName ?? full?.shopName ?? fallbackName ?? null;
   const norm = (s) => String(s ?? "").normalize("NFKC").replace(/\s+/g, "").toLowerCase();
   const self = shopName ? (base.entries.find((e) => norm(e.name) === norm(shopName)) ?? null) : null;
-  // 全件ページは上位100件＋自店の行。表示するのは上位と自店の前後だけなので、その範囲だけ保存する
-  const keep = (entry) => entry.rank <= 10 || (self != null && Math.abs(entry.rank - self.rank) <= 2);
+  // 管理画面に掲載されている全行を保存する。
   return {
     area: summary?.area ?? full?.area ?? null,
     updatedAt: summary?.updatedAt ?? full?.updatedAt ?? null,
     shopName,
     total: base.entries.length,
     self,
-    entries: base.entries.filter(keep),
+    entries: base.entries,
   };
 }
 
@@ -297,34 +299,15 @@ async function extractTabelogReports(page, fallbackName) {
   return { topPages, ranking: buildRanking(summary, full, fallbackName) };
 }
 
-// 店舗管理画面トップ（ログイン直後のページ）から呼ぶこと。公開ページへのリンクをトップから探すため。
+// Every requested metric is read from the authenticated owner console.
 async function extractTabelog(page, onProgress) {
   return collectTabelogMetrics({
-    publicMetrics: () => extractTabelogPublicData(page),
-    dailyMetrics: () => extractTabelogDailyPv(page),
+    ownerReviews: () => collectOwnerReviews(page, assertAuthenticated),
+    dailyMetrics: () => collectOwnerDaily(page, assertAuthenticated, onProgress, japanDate()),
     monthlyMetrics: () => extractTabelogConversion(page),
     detailReports: (name) => extractTabelogReports(page, name),
+    pageHistory: () => collectPageHistory(page, assertAuthenticated),
   }, onProgress);
-}
-
-// ---------- 食べログ: 公開店舗ページ（JSON-LD）から評価・口コミ数・口コミ本文を抽出 ----------
-async function extractTabelogPublicData(page) {
-  const publicUrl = await page
-    .locator('a[href^="https://tabelog.com/"]')
-    .evaluateAll((links) => {
-      const urls = links.map((link) => link.href);
-      return (
-        urls.find(
-          (url) =>
-            !url.includes("owner.tabelog.com") &&
-            /tabelog\.com\/[^?#]+\/\d{8}\/?(?:[?#].*)?$/.test(url),
-        ) ?? null
-      );
-    })
-    .catch(() => null);
-  if (!publicUrl) return { url: null, rating: null, reviews: null, reviewItems: [] };
-
-  return collectTabelogPublicData(page.context(), publicUrl);
 }
 
 async function assertAuthenticated(page) {
@@ -336,7 +319,7 @@ async function assertAuthenticated(page) {
 }
 
 // 長時間停止したブラウザは必ず閉じる。タイムアウト後の結果は保存側へ渡さない。
-export async function syncOne(sourceId, cred, { onProgress = () => {}, timeoutMs = 180_000 } = {}) {
+export async function syncOne(sourceId, cred, { onProgress = () => {}, timeoutMs = 480_000 } = {}) {
   let browser;
   let timedOut = false;
   let timer;
@@ -393,6 +376,8 @@ async function runSyncOne(sourceId, cred, { onProgress, registerBrowser }) {
     });
     context.setDefaultTimeout(15000);
     context.setDefaultNavigationTimeout(30000);
+    // The requested data is text/tables. Do not download review photographs.
+    await context.route('**/*', route => ['image','media','font'].includes(route.request().resourceType()) ? route.abort() : route.continue());
     const page = await context.newPage();
 
     // 段階1: ログインページ読み込み

@@ -45,8 +45,6 @@ function Ranking({ ranking }: { ranking: Available["ranking"] }) {
     );
   }
   const { self } = ranking;
-  const top = ranking.entries.filter((e) => e.rank <= 5);
-  const around = self && self.rank > 5 ? ranking.entries.filter((e) => Math.abs(e.rank - self.rank) <= 1) : [];
   const row = (e: RankingEntry) => {
     const mine = self?.rank === e.rank;
     return (
@@ -66,7 +64,7 @@ function Ranking({ ranking }: { ranking: Available["ranking"] }) {
   const badge = [ranking.area, ranking.updatedAt ? `更新 ${ranking.updatedAt}` : null].filter(Boolean).join(" · ");
   return (
     <Panel title="エリア内アクセスランキング" badge={badge}>
-      <div className="overflow-x-auto">
+      <div className="max-h-[400px] overflow-auto">
         <table className="w-full text-left">
           <thead>
             <tr className="border-b border-line">
@@ -77,13 +75,7 @@ function Ranking({ ranking }: { ranking: Available["ranking"] }) {
             </tr>
           </thead>
           <tbody>
-            {top.map(row)}
-            {around.length ? (
-              <tr className="border-b border-line">
-                <td colSpan={4} className="px-4 py-1 text-center text-[11px] font-bold text-faint">…</td>
-              </tr>
-            ) : null}
-            {around.map(row)}
+            {ranking.entries.map(row)}
           </tbody>
         </table>
       </div>
@@ -93,7 +85,7 @@ function Ranking({ ranking }: { ranking: Available["ranking"] }) {
         </p>
       ) : (
         <p className="border-t border-line px-5 py-2.5 text-[11px] font-semibold text-faint">
-          自店の順位はまだ取得できていません（上位店のみ表示）
+          自店の順位はまだ取得できていません
         </p>
       )}
     </Panel>
@@ -156,8 +148,8 @@ function Monthly({ monthly }: { monthly: Available["monthly"] }) {
   const share = (part: number | null, total: number | null) =>
     part != null && total ? `${Math.round((part / total) * 100)}%` : "";
   return (
-    <Panel title="月別レポート（アクセス数・来店指標）" badge={`直近${monthly.length}か月`}>
-      <div className="overflow-x-auto">
+    <Panel title="月別レポート（アクセス数・来店指標）" badge={`${monthly.length}か月分`}>
+      <div className="max-h-[480px] overflow-auto">
         <table className="w-full min-w-[640px] text-left">
           <thead>
             <tr className="border-b border-line">
@@ -170,6 +162,7 @@ function Monthly({ monthly }: { monthly: Available["monthly"] }) {
               ))}
               <Th right>ネット予約組数</Th>
               <Th right>電話 通話成立数</Th>
+              <Th right>地図印刷PV</Th>
             </tr>
           </thead>
           <tbody>
@@ -185,6 +178,7 @@ function Monthly({ monthly }: { monthly: Available["monthly"] }) {
                 ))}
                 <td className="px-4 py-2 text-right text-[12px] font-bold text-ok">{num(m.reservations)}</td>
                 <td className="px-4 py-2 text-right text-[12px] font-bold">{num(m.calls)}</td>
+                <td className="px-4 py-2 text-right text-[12px] font-bold">{num(m.mapPrints)}</td>
               </tr>
             ))}
           </tbody>
@@ -212,6 +206,15 @@ export default function TabelogDetails({ details }: { details: Details }) {
         <TopPages topPages={details.topPages} />
       </div>
       <Monthly monthly={details.monthly} />
+      {details.ownerReviews ? <Panel title="管理画面の口コミ取得結果">
+        <p className="p-5 text-[12px] leading-relaxed">掲載 {details.ownerReviews.groups}件 ／ 再訪問分を含む {details.ownerReviews.entries}投稿（全文 {details.ownerReviews.fullText}投稿・抜粋 {details.ownerReviews.excerpts}投稿・点数のみ {details.ownerReviews.scoreOnly ?? 0}投稿）。個別点数・本文・店舗返信は下の口コミ一覧から確認できます。</p>
+      </Panel> : null}
+      {details.pageHistory ? <Panel title="全期間のページ別アクセス" badge={`${monthLabel(details.pageHistory.first.slice(0,4)+'-'+details.pageHistory.first.slice(4))}〜${monthLabel(details.pageHistory.last.slice(0,4)+'-'+details.pageHistory.last.slice(4))}`}>
+        <div className="grid gap-5 p-5 md:grid-cols-3">{DEVICES.map(key => <div key={key}>
+          <h3 className="mb-2 text-[12px] font-bold">{DEVICE_LABEL[key]}</h3>
+          {details.pageHistory!.devices[key].map(p => <p key={p.name} className="flex justify-between gap-3 py-1 text-[11px]"><span>{p.name}</span><span className="font-bold">{num(p.pv)} PV</span></p>)}
+        </div>)}</div>
+      </Panel> : null}
     </>
   );
 }

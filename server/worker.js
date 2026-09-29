@@ -19,7 +19,7 @@ async function request(payload, retries=2) {
 }
 
 // Bounded runner. Credentials and authenticated HTML never go to logs/artifacts.
-for(let count=0;count<4;count++) {
+for(let count=0;count<1;count++) {
   // A lost claim response must not silently claim a second job.
   const {job}=await request({action:"claim"},0);
   if(!job) { console.log("No queued sync jobs."); break; }

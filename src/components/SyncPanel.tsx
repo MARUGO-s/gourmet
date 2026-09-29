@@ -21,10 +21,10 @@ export default function SyncPanel({ job, signedIn, sources, syncState, onAccount
         <div>
           <h2 className="text-[13px] font-bold">食べログ自動取得</h2>
           <p className="mt-1 text-[12px] leading-relaxed text-subtle">
-            評価・口コミ数・日別PV・月別予約組数を項目別に取得し、保存した数値まで確認します。
+            管理画面の口コミ・個別評価・店舗返信・日別PV・月別予約組数を取得し、保存結果まで確認します。
           </p>
           <p className="mt-1 text-[11px] leading-relaxed text-faint">
-            取得できた項目だけを保存します。公開ページが制限されている場合、評価・口コミ数は未取得として知らせ、管理画面のPV・予約数を保存します。未取得を0にはせず、過去の値があれば取得日付きで表示します。
+            管理画面で選べる過去の期間も取得します。店舗総合点・公開口コミ総数は管理画面に掲載されていないため「未取得」です。口コミの個別点数や掲載件数は口コミ一覧に表示します。
           </p>
         </div>
         {signedIn && registered ? (
@@ -63,6 +63,7 @@ export default function SyncPanel({ job, signedIn, sources, syncState, onAccount
                   評価 {result.summary.rating?.toFixed(2) ?? "未取得"} ／ 口コミ {result.summary.reviews == null ? "未取得" : `${result.summary.reviews.toLocaleString()}件`}
                   ／ 日別PV {result.summary.dailyDays}日分 ／ 月別予約 {result.summary.monthlyMonths}か月分
                   {result.summary.latestPvDate ? `（PV最終日 ${result.summary.latestPvDate}）` : ""}
+                  {result.summary.ownerReviewEntries != null ? ` ／ 管理画面の口コミ ${result.summary.ownerReviewGroups ?? "—"}件・${result.summary.ownerReviewEntries}投稿` : ""}
                 </p>
               ) : null}
               {result.warning ? <p className="mt-1 font-medium text-warn">注意：{result.warning}</p> : null}
