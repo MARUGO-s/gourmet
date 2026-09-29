@@ -77,8 +77,12 @@ function columnMap(headers) {
     const key = group ? `${group}${device}` : ({ Sp: "sp", Pc: "pc", "": "pv" })[device];
     if (cols[key] == null) cols[key] = c;
   });
-  const needed = ["guideSp", "guidePc", "planSp", "planPc"];
-  if (needed.some((k) => cols[k] == null)) throw new Error("一休のPV表の列（店舗ガイド・プラン詳細のスマホ/PC）を確認できません");
+  // 実画面（2026-09確認）は「主要ページ別（店舗ガイド/プラン詳細/その他）」と「サイト別（スマホ/PC/合計）」が別の列グループ。
+  // 旧想定のページ別×端末別の列にも対応する。
+  const hasGroup = (g) => cols[g] != null || (cols[`${g}Sp`] != null && cols[`${g}Pc`] != null);
+  if (!hasGroup("guide") || !hasGroup("plan")) throw new Error("一休のPV表の列（店舗ガイド・プラン詳細）を確認できません");
+  const split = ["guideSp", "guidePc", "planSp", "planPc"].every((k) => cols[k] != null);
+  if (!split && cols.pv == null && (cols.sp == null || cols.pc == null)) throw new Error("一休のPV表の列（合計またはスマホ/PC）を確認できません");
   return cols;
 }
 
@@ -98,6 +102,7 @@ function completeRow(values, where) {
     if (row[key] != null && computed != null && row[key] !== computed) throw new Error(`一休のPV（${where}）の総合計と内訳が一致しません`);
     if (row[key] == null) row[key] = computed;
   }
+  if (row.sp != null && row.pc != null && row.pv != null && row.sp + row.pc !== row.pv) throw new Error(`一休のPV（${where}）のスマホ・PCと合計が一致しません`);
   for (const k of PV_KEYS) if (row[k] === undefined) row[k] = null;
   return row;
 }
@@ -168,11 +173,14 @@ const FIELD_PATTERNS = [
   ["publishedAt", /公開日|掲載日/],
   ["handleName", /ハンドル|ニックネーム/],
   ["reviewer", /投稿者|予約者|お名前|氏名/],
-  ["publication", /公開状況|公開状態|掲載状況|公開設定|公開・非公開/],
+  ["replyPublish", /返信公開/],
+  ["replyStaff", /返信担当/],
+  ["publication", /公開状況|公開状態|掲載状況|公開設定|公開・非公開|サイトに掲載/],
   ["processing", /処理状況|対応状況|返信状況|ステータス|^処理$/],
   ["replyDate", /返信日/],
-  ["reply", /返信/],
+  ["reply", /返信コメント|返信内容|^返信$/],
   ["overall", /^総合/],
+  ["ratings", /^評価$/],
   ["title", /タイトル|件名/],
   ["text", /コメント|感想|本文|クチコミ内容|口コミ内容|^内容$|^クチコミ$|^口コミ$/],
 ];
@@ -244,7 +252,18 @@ function reviewBlocks(root) {
     while (block.parent && block.parent.tag !== "#root" && count(block.parent) <= 1) block = block.parent;
     blocks.add(block);
   }
-  return [...blocks];
+  // 実画面（2026-09確認）は口コミ本体・返信欄・ステータス欄が兄弟の表に分かれているため、次の口コミまでの兄弟要素を同じ口コミとして扱う
+  const list = [...blocks];
+  const set = new Set(list);
+  return list.map((block) => {
+    const parts = [block];
+    const sib = block.parent?.children.filter((c) => typeof c !== "string") ?? [];
+    for (let i = sib.indexOf(block) + 1; i < sib.length; i++) {
+      if (set.has(sib[i]) || count(sib[i]) > 0) break;
+      parts.push(sib[i]);
+    }
+    return parts;
+  });
 }
 
 export function parseIkyuReviews(html, storeId) {
@@ -252,11 +271,22 @@ export function parseIkyuReviews(html, storeId) {
   const root = parseHtml(html);
   assertIkyuPage(root);
   const items = [];
-  for (const block of reviewBlocks(root)) {
+  for (const parts of reviewBlocks(root)) {
+    const block = parts[0];
     const fields = {}, scores = [];
-    for (const { label, node } of pairs(block)) {
+    const addScore = (label, value) => { if (!scores.some((s) => s.label === label)) scores.push({ label, value, breakdown: null }); };
+    for (const { label, node } of parts.flatMap((p) => pairs(p))) {
       const key = labelKey(label);
       if (!key) continue;
+      if (key === "ratings") {
+        // 「総合評価 (4.5) 料理・味 (5.0) …」を1つのセルにまとめた形式（星アイコンの私用領域文字は除く）
+        for (const m of valueText(node).normalize("NFKC").replace(/[\uE000-\uF8FF]/g, "").matchAll(/([^\s()（）]+?)\s*[(（]\s*(\d+(?:\.\d+)?)\s*[)）]/g)) {
+          const value = parseRating(m[2]);
+          if (/^総合/.test(m[1]) && fields.overall === undefined) fields.overall = value;
+          addScore(m[1], value);
+        }
+        continue;
+      }
       if (key === "category" || key === "overall") {
         const value = parseRating(valueText(node));
         if (key === "overall" && fields.overall === undefined) fields.overall = value;
@@ -266,6 +296,8 @@ export function parseIkyuReviews(html, storeId) {
       if (fields[key] === undefined) fields[key] = valueText(node);
     }
     // 同じセルに「予約番号：123」と書かれている場合
+    const submitNo = block.find((n) => n.tag === "input" && /^reserve_?no$/i.test(String(n.attrs.name ?? "")) && n.attrs.value)?.attrs.value;
+    if (submitNo) fields.reservationNo = submitNo;
     if (fields.reservationNo === undefined) fields.reservationNo = block.clean.match(/予約(?:番号|No\.?)\s*[：:]?\s*([0-9A-Za-z-]{4,40})/i)?.[1];
     const reservationNo = String(fields.reservationNo ?? "").normalize("NFKC").match(/[0-9A-Za-z][0-9A-Za-z-]{2,39}/)?.[0];
     if (!reservationNo) {
@@ -274,10 +306,13 @@ export function parseIkyuReviews(html, storeId) {
       throw new Error("一休の口コミの予約番号を確認できません");
     }
     if (fields.overall === undefined && fields.text === undefined && fields.postedAt === undefined) continue;
-    const reply = fields.reply && !/^(未返信|未入力|なし|-+)$/.test(fields.reply) ? fields.reply : null;
-    const processing = fields.processing?.replace(/\s+/g, " ").trim() || null;
+    const blank = (v) => !v || /^(未返信|未入力|なし|[-‐－ー―—]+)$/.test(v.normalize("NFKC").trim());
+    const reply = blank(fields.reply) ? null : fields.reply;
+    if (blank(fields.replyDate)) fields.replyDate = undefined;
+    const statusText = parts.slice(1).map((p) => p.inline).join(" ").normalize("NFKC").match(/ステータス\s*[:：]\s*([^\s]+)/)?.[1];
+    const processing = (fields.processing ?? statusText)?.replace(/\s+/g, " ").trim() || null;
     const visitDate = parseJapaneseDate(fields.visitAt);
-    const replied = !!reply || /返信済|対応済|処理済|完了/.test(processing ?? "");
+    const replied = !!reply || (/返信済|対応済|処理済|完了/.test(processing ?? "") && !/未処理|未返信/.test(processing ?? ""));
     items.push({
       externalId: `ikyu:${storeId}:${reservationNo}`,
       reservationNo,

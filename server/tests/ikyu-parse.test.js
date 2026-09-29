@@ -99,3 +99,33 @@ test("helpers: ratings, Japanese dates and a tolerant HTML tree", () => {
   assert.equal(outer.rows().length, 2);
   assert.deepEqual(outer.rows()[1].cells().map((c) => c.inline), ["x", "c"]);
 });
+
+// 2026-09に実画面で確認した構造（主要ページ別とサイト別が別グループ、口コミ本体/返信/ステータスが兄弟の表、評価は1セル、星は私用領域文字）。値は合成。
+test("real-layout (2026-09) PV and review markup are parsed", () => {
+  const pv = `<table class="main"><tr><th rowspan="2">日付</th><th colspan="3">アクセス数<br>（主要ページ別）</th><th colspan="3">アクセス数<br>（サイト別）</th><th colspan="2">予約状況<br>(当日に入った予約)</th></tr>
+<tr><td>店舗ガイド</td><td>プラン詳細</td><td>その他</td><td>スマホ</td><td>PC</td><td>合計</td><td>プラン数</td><td>合計金額</td></tr>
+<tr><td>2026/09/01（火）</td><td>1</td><td>0</td><td>0</td><td>1</td><td>0</td><td><b>1</b></td><td>1件</td><td>0円</td></tr>
+<tr><td>2026/09/02（水）</td><td>5</td><td>1</td><td>0</td><td>2</td><td>4</td><td><b>6</b></td><td></td><td></td></tr></table>`;
+  const parsed = parseIkyuPageview(pv, "2026-09");
+  assert.deepEqual(parsed.days.map((d) => [d.guide, d.plan, d.other, d.sp, d.pc, d.pv, d.reservations]), [[1, 0, 0, 1, 0, 1, 1], [5, 1, 0, 2, 4, 6, null]]);
+  const bad = pv.replace("<b>6</b>", "<b>7</b>");
+  assert.throws(() => parseIkyuPageview(bad, "2026-09"));
+  const review = (no) => `<div><table class="bg"><tr><td><table class="main"><tr><th>予約番号</th><td><form method="post" action="./rsOwnRsrvDtl.asp"><input type="submit" name="reserveNo" value="${no}"></form>(一休.comレストラン)</td><th>来店日時</th><td>2024/01/23 18:30</td><th>来店者名</th><td>合成 太郎</td></tr>
+<tr><th>サイトに掲載</th><td>クチコミ掲載中</td><th>投稿日時</th><td>2024/01/23 23:01:46</td><th>ハンドルネーム</th><td>synthetic</td></tr>
+<tr><th>評価</th><td colspan="5">総合評価&nbsp;\uE60F(4.5)&nbsp;<br>料理・味&nbsp;\uE60D(5.0)&nbsp; コストパフォーマンス&nbsp;(4.0)</td></tr>
+<tr><th>利用の感想</th><td colspan="5">合成の感想です。</td></tr></table></td></tr></table>
+<table class="bg"><tr><td><table class="main"><tr><th>返信公開の希望</th><td>－</td><th>返信日時</th><td>－</td><th>返信担当者</th><td>－</td></tr>
+<tr><th>返信コメント</th><td colspan="5"><b><font color="ff0000">未返信</font></b></td></tr></table></td></tr></table>
+<table><tr><td>ステータス：<b>未処理（未返信）</b></td></tr></table>`;
+  const r = parseIkyuReviews(`${review("IR0000000001")}${review("IR0000000002")}</div>`, "112789");
+  assert.equal(r.items.length, 2);
+  const [a] = r.items;
+  assert.equal(a.reservationNo, "IR0000000001");
+  assert.equal(a.rating, 4.5);
+  assert.deepEqual(a.scores.map((s) => [s.label, s.value]), [["総合評価", 4.5], ["料理・味", 5], ["コストパフォーマンス", 4]]);
+  assert.equal(a.publication, "クチコミ掲載中");
+  assert.equal(a.reply, null);
+  assert.equal(a.needsReply, true);
+  assert.equal(a.processing, "未処理(未返信)");
+  assert.ok(!JSON.stringify(a).includes("合成 太郎"), "来店者名は保存しない");
+});
