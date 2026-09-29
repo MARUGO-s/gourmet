@@ -1,6 +1,11 @@
+type ViewId = "overview" | "dashboard" | "requests" | "schedules" | "accounts" | "stores";
 type Props = {
-  view: "dashboard" | "requests" | "schedules" | "accounts";
-  onView: (v: "dashboard" | "requests" | "schedules" | "accounts") => void;
+  // null = 店舗の選択画面
+  view: ViewId | null;
+  onView: (v: ViewId) => void;
+  signedIn: boolean;
+  // 表示中の店舗（'全店舗' / 店舗名）
+  storeName: string | null;
 };
 
 function NavIcon({ name }: { name: string }) {
@@ -14,6 +19,25 @@ function NavIcon({ name }: { name: string }) {
     strokeLinecap: "round" as const,
     strokeLinejoin: "round" as const,
   };
+  if (name === "overview") {
+    return (
+      <svg {...common}>
+        <path d="M3 21h18" />
+        <rect x="4" y="11" width="4" height="8" rx="1" />
+        <rect x="10" y="6" width="4" height="13" rx="1" />
+        <rect x="16" y="9" width="4" height="10" rx="1" />
+      </svg>
+    );
+  }
+  if (name === "stores") {
+    return (
+      <svg {...common}>
+        <path d="M4 9.5 5.5 4h13L20 9.5" />
+        <path d="M4 9.5c0 1.4 1.2 2.5 2.7 2.5s2.6-1.1 2.6-2.5c0 1.4 1.2 2.5 2.7 2.5s2.7-1.1 2.7-2.5c0 1.4 1.1 2.5 2.6 2.5S20 10.9 20 9.5" />
+        <path d="M5.5 12v8h13v-8M10 20v-4.5h4V20" />
+      </svg>
+    );
+  }
   if (name === "dashboard") {
     return (
       <svg {...common}>
@@ -51,14 +75,16 @@ function NavIcon({ name }: { name: string }) {
   );
 }
 
-const ITEMS: { id: Props["view"]; label: string }[] = [
+const ITEMS: { id: ViewId; label: string; signedIn?: boolean }[] = [
+  { id: "overview", label: "全店舗の比較", signedIn: true },
   { id: "dashboard", label: "ダッシュボード" },
   { id: "requests", label: "取得依頼" },
   { id: "schedules", label: "自動取得の設定" },
   { id: "accounts", label: "アカウント管理" },
+  { id: "stores", label: "店舗管理", signedIn: true },
 ];
 
-export default function Sidebar({ view, onView }: Props) {
+export default function Sidebar({ view, onView, signedIn, storeName }: Props) {
   return (
     <aside className="hidden w-[232px] shrink-0 flex-col border-r border-line bg-card md:flex">
       <div className="px-5 pt-6 pb-5">
@@ -82,8 +108,14 @@ export default function Sidebar({ view, onView }: Props) {
         </div>
       </div>
 
+      {signedIn ? (
+        <div className="border-t border-line px-5 py-3">
+          <div className="text-[10px] font-bold tracking-wide text-faint">表示中の店舗</div>
+          <div className="mt-0.5 truncate text-[13px] font-bold text-brand" title={storeName ?? ""}>{storeName ?? "未選択"}</div>
+        </div>
+      ) : null}
       <nav className="flex flex-col gap-1 border-t border-line px-3 py-4">
-        {ITEMS.map((it) => {
+        {ITEMS.filter((it) => signedIn || !it.signedIn).map((it) => {
           const active = view === it.id;
           return (
             <button

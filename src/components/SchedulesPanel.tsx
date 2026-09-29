@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { deleteSchedule, getSchedules, saveSchedule } from "../api";
-import type { CredentialRow, FetchSchedule, ScheduleMode, SourceMeta } from "../types";
+import type { CredentialRow, FetchSchedule, ScheduleMode, SourceMeta, Store, StoreKeys } from "../types";
+import { filterByStore, storeLabelFor } from "../../supabase/functions/_shared/stores.js";
+import StorePicker, { commitPick, emptyPick } from "./StorePicker";
 import {
   AGENT_WINDOW_NOTE, INTERVAL_CHOICES, MODE_LABELS, SCHEDULE_MODES, SCHEDULE_SOURCES, SUPPORTED_SCHEDULE_SOURCES, WEEKDAY_LABELS,
   describeSchedule, timeOutsideAgentWindow,
 } from "../../supabase/functions/_shared/fetch-schedules.js";
 
-type Props = { sources: SourceMeta[]; credentials: CredentialRow[] };
+type Props = {
+  sources: SourceMeta[]; credentials: CredentialRow[];
+  // 店舗マスタ・表示中の店舗の店舗コード（null=全店舗）・追加時の既定の店舗
+  stores: Store[]; scopeKeys: StoreKeys | null; defaultStoreId: string; onStoresChanged: () => void;
+};
 type Draft = { mode: ScheduleMode; intervalHours: number; timeOfDay: string; weekday: number; enabled: boolean };
 type Row = { key: string; source: string; storeId: string; label: string; schedule: FetchSchedule | null };
 
@@ -26,13 +32,14 @@ const formatJst = (iso: string | null | undefined) => iso ? jst.format(new Date(
 const inputClass = "rounded border border-line bg-card px-2 py-1 text-[11px]";
 
 // 店舗×サイトごとの自動取得の周期。保存した周期で、Grok Botが予定時刻を過ぎた設定を取得依頼にする。
-export default function SchedulesPanel({ sources, credentials }: Props) {
+export default function SchedulesPanel({ sources, credentials, stores, scopeKeys, defaultStoreId, onStoresChanged }: Props) {
   const [schedules, setSchedules] = useState<FetchSchedule[]>([]);
   const [loading, setLoading] = useState(true);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
-  const [custom, setCustom] = useState({ source: SCHEDULE_SOURCES[0], storeId: "" });
+  const [custom, setCustom] = useState({ source: SCHEDULE_SOURCES[0], pick: emptyPick(defaultStoreId) });
+  const allSites = useMemo(() => stores.flatMap((s) => s.sites), [stores]);
   const [extra, setExtra] = useState<{ source: string; storeId: string }[]>([]);
   const srcMap = new Map(sources.map((s) => [s.id, s]));
 
@@ -57,8 +64,11 @@ export default function SchedulesPanel({ sources, credentials }: Props) {
     extra.forEach((x) => add(x.source, x.storeId));
     schedules.forEach((s) => { add(s.source, s.storeId); map.get(keyOf(s.source, s.storeId))!.schedule = s; });
     const order = (r: Row) => SCHEDULE_SOURCES.indexOf(r.source);
-    return [...map.values()].sort((a, b) => order(a) - order(b) || a.storeId.localeCompare(b.storeId));
-  }, [credentials, schedules, extra]);
+    // 表示中の店舗に割り当てた店舗コードだけ（全店舗では全件）。店舗名は店舗マスタの名前
+    return filterByStore([...map.values()], scopeKeys, (r) => r.storeId)
+      .map((r) => ({ ...r, label: storeLabelFor(stores, allSites, r.source, r.storeId) }))
+      .sort((a, b) => order(a) - order(b) || a.label.localeCompare(b.label, "ja") || a.storeId.localeCompare(b.storeId));
+  }, [credentials, schedules, extra, scopeKeys, stores, allSites]);
 
   const setDraft = (key: string, base: Draft, patch: Partial<Draft>) => setDrafts((d) => ({ ...d, [key]: { ...(d[key] ?? base), ...patch } }));
 
@@ -95,16 +105,18 @@ export default function SchedulesPanel({ sources, credentials }: Props) {
     }
   };
 
-  const onAdd = (e: React.FormEvent) => {
+  const onAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    const storeId = custom.storeId.trim();
-    if (custom.source === "ikyu" ? !/^\d{6}$/.test(storeId) : !/^[0-9A-Za-z_-]{0,40}$/.test(storeId)) {
-      setNotice({ text: custom.source === "ikyu" ? "一休は店舗ID（6桁）を入力してください" : "店舗コードは英数字・_・-の40文字以内です", error: true });
-      return;
+    try {
+      // 店舗IDが未設定なら、その店舗の割り当てに保存してから行を追加する
+      const { key, created } = await commitPick(stores, custom.source, custom.pick);
+      if (created) onStoresChanged();
+      setExtra((x) => [...x, { source: custom.source, storeId: key }]);
+      setCustom({ ...custom, pick: emptyPick(custom.pick.storeId) });
+      setNotice(null);
+    } catch (err) {
+      setNotice({ text: err instanceof Error ? err.message : "店舗を追加できませんでした", error: true });
     }
-    setExtra((x) => [...x, { source: custom.source, storeId }]);
-    setCustom({ ...custom, storeId: "" });
-    setNotice(null);
   };
 
   return (
@@ -149,8 +161,8 @@ export default function SchedulesPanel({ sources, credentials }: Props) {
                       {!supported ? <span className="ml-1.5 rounded bg-surface px-1.5 py-0.5 text-[9px] font-bold text-faint" title="Grok Botの読み取りが未対応のため、保存しても取得は失敗する場合があります">準備中</span> : null}
                     </td>
                     <td className="px-4 py-2.5 text-[11px] font-semibold">
-                      {row.label || (row.source === "ikyu" ? `店舗ID ${row.storeId}` : row.storeId || "既定の店舗")}
-                      {row.label && row.storeId ? <span className="ml-1 text-[10px] text-faint">{row.storeId}</span> : null}
+                      {row.label}
+                      <span className="ml-1 text-[10px] text-faint">{row.storeId || "既定"}</span>
                     </td>
                     <td className="px-4 py-2.5">
                       <div className="flex flex-wrap items-center gap-1.5">
@@ -207,14 +219,12 @@ export default function SchedulesPanel({ sources, credentials }: Props) {
         </div>
         <form className="flex flex-wrap items-end gap-2 border-t border-line px-5 py-4 text-[11px]" onSubmit={onAdd}>
           <label className="flex flex-col gap-1 font-bold text-subtle">サイト
-            <select value={custom.source} onChange={(e) => setCustom({ source: e.target.value, storeId: "" })} className="rounded border border-line bg-card px-2 py-1.5 font-normal text-ink">
+            <select value={custom.source} onChange={(e) => setCustom({ source: e.target.value, pick: emptyPick(custom.pick.storeId) })} className="rounded border border-line bg-card px-2 py-1.5 font-normal text-ink">
               {SCHEDULE_SOURCES.map((id) => <option key={id} value={id}>{srcMap.get(id)?.name ?? id}{SUPPORTED_SCHEDULE_SOURCES.includes(id) ? "" : "（準備中）"}</option>)}
             </select>
           </label>
-          <label className="flex flex-col gap-1 font-bold text-subtle">{custom.source === "ikyu" ? "店舗ID（6桁）" : "店舗コード（任意）"}
-            <input value={custom.storeId} onChange={(e) => setCustom({ ...custom, storeId: e.target.value })} maxLength={40} className="w-40 rounded border border-line px-2 py-1.5 font-normal text-ink" />
-          </label>
-          <button type="submit" className="rounded-md border border-brand px-3 py-2 font-bold text-brand">店舗を追加</button>
+          <StorePicker compact stores={stores} source={custom.source} sourceName={srcMap.get(custom.source)?.name ?? custom.source} value={custom.pick} onChange={(pick) => setCustom({ ...custom, pick })} />
+          <button type="submit" disabled={!custom.pick.storeId} className="rounded-md border border-brand px-3 py-2 font-bold text-brand disabled:opacity-50">この店舗を追加</button>
           <span className="text-[10px] text-faint">アカウント未登録の店舗も設定できます（取得にはアカウント管理での登録が必要です）</span>
         </form>
       </section>

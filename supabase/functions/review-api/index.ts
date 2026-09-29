@@ -12,6 +12,9 @@ import { loadSourceReviews, mergeReviews, loadIngestedDetails, overlayDetails, l
 import { validateRequestInput, publicRequest } from "../_shared/agent-requests.js";
 import { japanDate } from "../_shared/sync-data.js";
 import { validateScheduleInput, nextDueOnSave, publicSchedule } from "../_shared/fetch-schedules.js";
+import { ALL_STORES, UNASSIGNED, MAX_STORES, buildOverview, filterReviews, isMonth, isStoreId, publicSite, publicStores, scopeKeys, storeSnapshots,
+  validateReorder, validateSiteInput, validateStoreInput } from "../_shared/stores.js";
+import { loadOverviewInputs, loadStoreDailyInputs, loadStoreMaster } from "../_shared/store-data.js";
 
 const demo = buildSeed();
 // ログインID・暗号文はブラウザへ返さない（登録済み・更新日時のみ）
@@ -19,6 +22,11 @@ const credentialColumns = "id,source,label,store_key,credentials_version,updated
 const ikyuDemo = buildIkyuDemo();
 // 一休の前年比には前年同月の日別値が必要なため、前年同月1日以降を読む
 const ikyuFromDate = () => { const d = new Date(Date.now() + 9 * 3600_000); return `${d.getUTCFullYear() - 1}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`; };
+// 店舗に食べログが割り当てられていない（旧データも含まない）ときの詳細の土台
+const emptyDetails = () => ({ ranking:null, topPages:null, monthly:[], ownerReviews:null, pageHistory:null, deviceDaily:{} });
+const storePath = /^\/stores\/([0-9a-f-]{36})$/;
+const sitePath = /^\/stores\/([0-9a-f-]{36})\/sites$/;
+const siteItemPath = /^\/stores\/([0-9a-f-]{36})\/sites\/([0-9a-f-]{36})$/;
 const requestColumns = "id,source,store_id,action,params,status,requested_at,claimed_at,finished_at,claimed_by,attempts,result,error";
 
 Deno.serve(async req => {
@@ -46,6 +54,9 @@ Deno.serve(async req => {
     if (path === "/dashboard" && req.method === "GET") {
       const source = new URL(req.url).searchParams.get("source") || "all";
       if (source !== "all" && !getSource(source)) return json(req,{error:"不明なサイトです"},400);
+      // 店舗の選択（'all'＝全店舗、店舗ID、'unassigned'＝どの店舗にも割り当てていない店舗コード）。表示の絞り込みのみ。
+      const scope = new URL(req.url).searchParams.get("store") || ALL_STORES;
+      if (scope !== ALL_STORES && scope !== UNASSIGNED && !isStoreId(scope)) return json(req,{error:"店舗の指定が不正です"},400);
       const targets = source === "all" ? SOURCE_IDS : [source];
       if (!user) return json(req,{...computeDashboard(demo.snapshots,demo.reviews,null,targets,true),details:null,ikyu:source==="ikyu"?ikyuDemo:null});
       // Paginate historic snapshots: PostgREST otherwise truncates at 1,000 rows.
@@ -69,11 +80,37 @@ Deno.serve(async req => {
         merged=[...dropPublicDuplicates(merged,owner),...owner];
       }
       const logs=await must(client.from('sync_log').select('at').in('source',targets).in('status',['ok','partial']).order('at',{ascending:false}).limit(1));
+      if (scope !== ALL_STORES) {
+        // 店舗単位: 店舗コードのある取り込み行から集計し、旧データ（店舗コードなし）は既定の店舗コード '' として扱う（stores.js）
+        const master=await loadStoreMaster(client);
+        if (isStoreId(scope) && !master.stores.some((s:any)=>s.id===scope)) return json(req,{error:"店舗が見つかりません。店舗を選び直してください"},404);
+        const inputs=await loadStoreDailyInputs(client,targets);
+        const observed=[...inputs.daily,...inputs.monthly].map((r:any)=>({source:r.source,key:r.key}))
+          .concat(snapshots.filter((s:any)=>s.source!=="ikyu").map((s:any)=>({source:s.source,key:""})))
+          .concat(merged.map((r:any)=>({source:r.source,key:String(r.details?.storeId ?? "")})));
+        const keys=scopeKeys(scope,master.sites,observed)!;
+        const rows=storeSnapshots({targets,keys,daily:inputs.daily,monthly:inputs.monthly,legacy:snapshots.filter((s:any)=>s.source!=="ikyu")});
+        const dashboard=computeDashboard(rows,filterReviews(merged,keys),logs[0]?.at??null,targets,false);
+        const tabelogKeys:Set<string>|undefined=keys.tabelog;
+        let details:any=null;
+        if (targets.includes("tabelog") && tabelogKeys?.size) {
+          details=tabelogKeys.has("")?await loadDetails(client,"tabelog",dashboard.series[0]?.date):emptyDetails();
+          if(!details.unavailable) details=await loadIngestedDetails(client,"tabelog",dashboard.series[0]?.date)
+            .then((x:any)=>overlayDetails(details,{daily:x.daily.filter((r:any)=>tabelogKeys.has(r.store_key)),monthly:x.monthly.filter((r:any)=>tabelogKeys.has(r.store_key)),reports:x.reports.filter((r:any)=>tabelogKeys.has(r.store_key))}))
+            .catch(()=>details);
+        }
+        let ikyu:any=source==="ikyu"?await loadIkyuDetails(client,ikyuFromDate()):null;
+        if (ikyu && !ikyu.unavailable) {
+          const ids:Set<string>=keys.ikyu ?? new Set();
+          ikyu={...ikyu,stores:ikyu.stores.filter((s:any)=>ids.has(s.storeId)),months:ikyu.months.filter((m:any)=>ids.has(m.storeId)),daily:ikyu.daily.filter((d:any)=>ids.has(d.storeId))};
+        }
+        return json(req,{...dashboard,details,ikyu,store:scope});
+      }
       const dashboard=computeDashboard(snapshots,merged,logs[0]?.at??null,targets,false);
       let details:any=targets.includes("tabelog")?await loadDetails(client,"tabelog",dashboard.series[0]?.date):null;
       if(details && !details.unavailable) details=await loadIngestedDetails(client,"tabelog",dashboard.series[0]?.date).then((x)=>overlayDetails(details,x)).catch(()=>details);
       const ikyu=source==="ikyu"?await loadIkyuDetails(client,ikyuFromDate()):null;
-      return json(req,{...dashboard,details,ikyu});
+      return json(req,{...dashboard,details,ikyu,store:ALL_STORES});
     }
     if (!user) return json(req,{error:"ログインが必要です"},401);
     if (path === "/credentials" && req.method === "GET") {
@@ -130,6 +167,77 @@ Deno.serve(async req => {
     if (/^\/schedules\/[0-9a-f-]{36}$/.test(path) && req.method === "DELETE") {
       await must(admin.from("fetch_schedules").delete().eq("user_id",user.id).eq("id",path.split("/").at(-1)));
       return json(req,{ok:true});
+    }
+    // 店舗マスタ（店舗ごとに各サイトの店舗IDをまとめる）。閲覧は本人のJWT（RLS）、保存は検証後に本人の user_id に限定して service_role。
+    if (path === "/stores" && req.method === "GET") {
+      const { stores, sites } = await loadStoreMaster(client);
+      return json(req,{stores:publicStores(stores,sites)});
+    }
+    if (path === "/stores" && req.method === "POST") {
+      let row;
+      try { row=validateStoreInput(await body(req)); }
+      catch (error) { return json(req,{error:(error as Error).message},400); }
+      const existing=await must(admin.from("stores").select("sort_order").eq("user_id",user.id).order("sort_order",{ascending:false}).limit(MAX_STORES));
+      if (existing.length>=MAX_STORES) return json(req,{error:`店舗は${MAX_STORES}件までです`},409);
+      const {data,error}=await admin.from("stores").insert({user_id:user.id,name:row.name,sort_order:row.sort_order ?? ((existing[0]?.sort_order ?? 0)+1)}).select("id,name,sort_order,updated_at").single();
+      if (error?.code==="23505") return json(req,{error:"同じ名前の店舗があります"},409);
+      if (error) throw error;
+      return json(req,{store:publicStores([data],[])[0]},201);
+    }
+    if (path === "/stores/reorder" && req.method === "POST") {
+      const existing=await must(admin.from("stores").select("id").eq("user_id",user.id));
+      let order;
+      try { order=validateReorder(await body(req),existing.map((s:any)=>s.id)); }
+      catch (error) { return json(req,{error:(error as Error).message},400); }
+      const now=new Date().toISOString();
+      for (const o of order) await must(admin.from("stores").update({sort_order:o.sort_order,updated_at:now}).eq("user_id",user.id).eq("id",o.id));
+      const { stores, sites } = await loadStoreMaster(client);
+      return json(req,{stores:publicStores(stores,sites)});
+    }
+    if (storePath.test(path) && req.method === "POST") {
+      let row;
+      try { row=validateStoreInput(await body(req),{partial:true}); }
+      catch (error) { return json(req,{error:(error as Error).message},400); }
+      const {data,error}=await admin.from("stores").update({...row,updated_at:new Date().toISOString()}).eq("user_id",user.id).eq("id",path.split("/")[2]).select("id,name,sort_order,updated_at");
+      if (error?.code==="23505") return json(req,{error:"同じ名前の店舗があります"},409);
+      if (error) throw error;
+      if (!data?.length) return json(req,{error:"店舗が見つかりません"},404);
+      const sites=await must(client.from("store_sites").select("id,store_id,source,site_store_key").eq("store_id",data[0].id));
+      return json(req,{store:publicStores(data,sites)[0]});
+    }
+    // 店舗の削除: 店舗とサイトの割り当てだけを削除（資格情報・取得依頼・自動取得の設定・取り込みデータは残り、「未割り当て」に表示される）
+    if (storePath.test(path) && req.method === "DELETE") {
+      await must(admin.from("stores").delete().eq("user_id",user.id).eq("id",path.split("/")[2]));
+      return json(req,{ok:true});
+    }
+    if (sitePath.test(path) && req.method === "POST") {
+      const storeId=path.split("/")[2];
+      let row;
+      try { row=validateSiteInput(await body(req)); }
+      catch (error) { return json(req,{error:(error as Error).message},400); }
+      const owned=await must(admin.from("stores").select("id").eq("user_id",user.id).eq("id",storeId).limit(1));
+      if (!owned.length) return json(req,{error:"店舗が見つかりません"},404);
+      const {data,error}=await admin.from("store_sites").insert({user_id:user.id,store_id:storeId,source:row.source,site_store_key:row.site_store_key}).select("id,store_id,source,site_store_key").single();
+      if (error?.code==="23505") {
+        const other=await must(admin.from("store_sites").select("id,store_id,source,site_store_key").eq("user_id",user.id).eq("source",row.source).eq("site_store_key",row.site_store_key).limit(1));
+        if (other[0]?.store_id===storeId) return json(req,{site:publicSite(other[0])});
+        const owner=other[0]?await must(admin.from("stores").select("name").eq("user_id",user.id).eq("id",other[0].store_id).limit(1)):[];
+        return json(req,{error:`この店舗IDは「${owner[0]?.name ?? "別の店舗"}」に割り当て済みです`},409);
+      }
+      if (error) throw error;
+      return json(req,{site:publicSite(data)},201);
+    }
+    if (siteItemPath.test(path) && req.method === "DELETE") {
+      const [, , storeId, , siteId]=path.split("/");
+      await must(admin.from("store_sites").delete().eq("user_id",user.id).eq("store_id",storeId).eq("id",siteId));
+      return json(req,{ok:true});
+    }
+    // 全店舗の比較（店舗×サイトの月別PV・前月比・予約・評価・口コミ数・未返信・最終更新）。未割り当ての店舗コードは「未割り当て」にまとめる。
+    if (path === "/overview" && req.method === "GET") {
+      const month=new URL(req.url).searchParams.get("month");
+      if (month && !isMonth(month)) return json(req,{error:"月の指定が不正です（YYYY-MM）"},400);
+      const [{ stores, sites }, inputs]=await Promise.all([loadStoreMaster(client),loadOverviewInputs(client,{requestedMonth:month})]);
+      return json(req,{overview:buildOverview({stores,sites,...inputs,month})});
     }
     return json(req,{error:"ページが見つかりません"},404);
   } catch {

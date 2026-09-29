@@ -12,9 +12,10 @@
 ## 利用手順
 
 1. 右上「ログイン」→「新規登録」でgourmet専用アカウントを作成します。届いた確認メールのリンクを開いてください。
-2. 「アカウント管理」で店舗×サイトごとにログイン情報を登録します（食べログは**店舗管理用ID/パスワード**と店舗コード、一休は店舗ID・オペレータID・パスワード）。Grok Botが専用APIで受け取って使います。
-3. ダッシュボード上部または「取得依頼」で店舗ごとに「今すぐ取得を依頼」を押します。Grok Botは約5分ごとに依頼を確認します。表示は「依頼中」（確認待ち）→「取得中」（Grok Botが取得開始）→「完了」/「失敗」（理由を表示）。完了するとダッシュボードを読み直します。
-4. 同じ店舗・サイト・内容の未完了の依頼は1件だけです。1時間30件・未完了20件まで。24時間拾われない依頼、30分以内に完了報告の無い取得が3回続いた依頼は「失敗」になります。
+2. ログイン後に表示する店舗を選びます（「全店舗」は全店舗の比較）。店舗と各サイトの店舗IDは「店舗管理」で登録します。
+3. 「アカウント管理」で店舗×サイトごとにログイン情報を登録します（食べログは**店舗管理用ID/パスワード**と店舗コード、一休は店舗ID・オペレータID・パスワード）。Grok Botが専用APIで受け取って使います。
+4. ダッシュボード上部または「取得依頼」で店舗ごとに「今すぐ取得を依頼」を押します。Grok Botは約5分ごとに依頼を確認します。表示は「依頼中」（確認待ち）→「取得中」（Grok Botが取得開始）→「完了」/「失敗」（理由を表示）。完了するとダッシュボードを読み直します。
+5. 同じ店舗・サイト・内容の未完了の依頼は1件だけです。1時間30件・未完了20件まで。24時間拾われない依頼、30分以内に完了報告の無い取得が3回続いた依頼は「失敗」になります。
 
 ### 表示するデータ（食べログ）
 
@@ -47,11 +48,13 @@ npm run build
 - 取り込み（全サイト共通）: `source_stores`, `source_daily_metrics`, `source_monthly_metrics`, `source_reviews`, `agent_reports`, `agent_ingest_runs`
 - 一休: `ikyu_stores`, `ikyu_daily_pageviews`, `ikyu_monthly_pageviews`, `ikyu_reviews`, `ikyu_ingest_runs`
 - 取得依頼: `agent_requests`
+- 自動取得の設定: `fetch_schedules`
+- 店舗マスタ: `stores`（店舗名・表示順）, `store_sites`（店舗ごとの各サイトの店舗ID）
 - 旧データ（読み取りのみ・更新しない）: `reviews`, `source_reports`, `sync_jobs`
 
 RLSで利用者ごとに分離。ブラウザは自身の行のSELECTのみ（`agent_requests`だけは本人の依頼のINSERTも可）。ログインID・パスワードの暗号文・依頼の`claim_id`は読めません。書き込みは認証済みAPIとservice_role専用の関数に限定。評価列は`numeric(4,2)`、すべてのサイトの評価表示を小数点第2位に統一。
 
-- `review-api`: JWTを`auth.getUser()`で検証。公開はデモとサイト一覧のみ。資格情報の登録（暗号化）、ダッシュボード、取得依頼の登録・一覧（本人のJWTでRLSを適用）。`/sync`は廃止（410）。
+- `review-api`: JWTを`auth.getUser()`で検証。公開はデモとサイト一覧のみ。資格情報の登録（暗号化）、ダッシュボード（店舗単位の絞り込み）、取得依頼の登録・一覧（本人のJWTでRLSを適用）、自動取得の設定、店舗マスタ、全店舗の比較。`/sync`は廃止（410）。
 - `agent-api`: 外部エージェント専用。`X-Ingest-Token`（`INGEST_TOKEN`）で認証し、`INGEST_USER_ID`の利用者にだけ読み書きする。
 - `review-worker`: 廃止。常に410を返し、資格情報を払い出しません。
 - Supabaseの秘密設定: `ENCRYPTION_KEY`、`INGEST_TOKEN`、`INGEST_USER_ID`。旧取得用の`GOURMET_WORKER_TOKEN`・`GOURMET_DISPATCH_TOKEN`は不要になりました（本番化の手順で削除・失効）。
@@ -102,6 +105,31 @@ INGEST_TOKEN=... node scripts/agent-queue.mjs --enqueue-due [--limit 20] [--dry-
 - Grok Botは稼働時間（日本時間 9:00〜22:59）の各確認で、`--claim`の前に`--enqueue-due`を呼びます。`next_due_at`を過ぎた有効な設定ごとに`agent_requests`（`action:"sync_now"`、`params:{"trigger":"schedule","scheduleId","dueAt"}`）を登録し、`last_enqueued_at`・`last_request_id`と次の`next_due_at`を保存します。稼働時間外の予定は、次の稼働開始時に1回だけ依頼されます（溜まった回数分は依頼しません）。
 - 同じ店舗×サイトの依頼が依頼中・取得中なら新たに依頼せず、次回予定だけ進めます（`open_request`）。依頼の件数制限（1時間30件・未完了20件）に達したら予定を戻して終了し、次の確認で再度依頼します（`rate_limited`）。次回予定は`next_due_at`が変わっていない場合だけ更新するため、複数のエージェントが同時に呼んでも二重に依頼しません（`concurrent`）。
 - 次回予定の計算は`supabase/functions/_shared/fetch-schedules.js`（Node/Edge/ブラウザ共通、テストあり）。○時間ごとは前回の予定時刻から数え、毎日・毎週はその時刻より後の最初の日本時間の時刻です。
+
+### 店舗の選択と全店舗の比較（migration 013）
+
+- ログイン後、店舗が未選択なら「店舗の選択」画面（上に「全店舗」、下に店舗のカード）を表示します。選択はブラウザの`localStorage`（`gourmet.selectedStore.<ユーザーID>`）に保存し、画面上部の切り替え（「選び直す」で選択画面へ）と左の「表示中の店舗」で確認・変更できます。**表示の絞り込みだけで、店長ごとの権限ではありません**（データは従来どおり利用者ごとにRLSで分離）。
+- 店舗を選ぶと、ダッシュボード・口コミ・取得依頼・自動取得の設定・アカウント管理は、その店舗に設定した各サイトの店舗IDのデータだけを表示します。新しいアカウント・依頼・自動取得の設定の「店舗」は店舗マスタの選択肢で、既定は表示中の店舗です。サイトの店舗ID（一休の6桁の店舗ID、食べログの店舗コード など）は店舗の設定を使い、未設定ならその場で入力すると店舗に保存します（別の店舗に設定済みのIDは保存できません）。
+- 「全店舗」は「全店舗の比較」を開きます。店舗ごと（「サイト別」ではサイトごと）に、対象月のPV・前月PV・前月比（差と%）・予約・評価・口コミ数・未返信・最終更新を表示し、列見出しで並び替え、最下行に合計を表示します。店舗名を押すとその店舗へ切り替えます。対象月の既定は、当月より前でPVのある最新の月です。
+- 「店舗管理」で店舗の追加・名前の変更・並び替え・削除と、店舗ごとの各サイトの店舗IDを設定します。店舗を削除しても、アカウント・依頼・設定・取り込みデータは削除されず「未割り当て」に表示されます。
+- 集計規則（`supabase/functions/_shared/stores.js`、Node/Edge/ブラウザ共通・テストあり）:
+  - 取り込みデータ（`source_*`・`ikyu_*`）は店舗IDごとの行から集計します。旧データ（アプリ内取得の時代の`snapshots`・`reviews`・`source_reports`、店舗IDなし）は既定の店舗コード`''`のデータとして扱い、`snapshots`はそのサイト×日（予約は月）に店舗IDのある行が無い場合だけ使います（取り込み後の`snapshots`は全店舗合計のため）。
+  - 同じ店舗・同じサイトに`''`と他のコード（例: 食べログ`''`と`13245351`）がある場合、`''`は別名として扱い、他のコードに値がある期間は`''`の値を使いません（二重計上しない）。`''`以外の複数コードは合計（評価は平均）します。
+  - どの店舗にも設定されていない店舗ID（データ・アカウントのあるもの）は「未割り当て」にまとめて表示し、合計に含めます。
+  - 評価は各サイトの店舗の最新値（一休は公開ページの評価）、口コミ数はサイトの掲載数、未返信は要返信の口コミ（`needs_reply`）の件数。取り込みの無いサイトは旧`snapshots`の最新の評価・口コミ数を`''`の値とします。店舗単位のダッシュボードでは、一休の評価は店舗の最新値のみ（前週比なし）です。
+- API（`review-api`、JWT必須。閲覧は本人のJWT（RLS）、保存は検証後に本人の`user_id`に限定してservice_role）:
+
+| メソッド・パス | 入力 | 出力 |
+|---|---|---|
+| `GET /stores` | — | `{"stores":[{"id","name","sortOrder","updatedAt","sites":[{"id","storeId","source","siteStoreKey"}]}]}`（表示順） |
+| `POST /stores` | `{"name","sortOrder"?}` | 201 `{"store"}`。同名は409、200店舗まで |
+| `POST /stores/:id` | `{"name"?,"sortOrder"?}` | `{"store"}`（404/409） |
+| `POST /stores/reorder` | `{"ids":[全店舗のid]}` | `{"stores"}`（表示順を1〜nに） |
+| `DELETE /stores/:id` | — | `{"ok":true}`（店舗と割り当てだけ削除） |
+| `POST /stores/:id/sites` | `{"source","siteStoreKey"}`（一休は6桁、他は英数字・`_`・`-`の40文字以内、`''`=既定） | 201 `{"site"}`。同じ店舗に設定済みなら200、別の店舗に設定済みなら409 |
+| `DELETE /stores/:id/sites/:siteId` | — | `{"ok":true}` |
+| `GET /overview?month=YYYY-MM` | 任意の対象月 | `{"overview":{"month","prevMonth","sources":[...],"stores":[{"id","name","sortOrder","sites":{"<source>":{"keys":[{"key","name"}],"pv","prevPv","pvChange","pvChangePct","reservations","prevReservations","rating","reviewCount","unreplied","lastUpdatedAt"}},"totals":{...同じ項目,"ratingSites"}}],"unassigned":{同じ形,"id":"unassigned","name":"未割り当て"}\|null,"totals":{...,"sites":{"<source>":{...}}}}}` |
+| `GET /dashboard?source=&store=` | `store`=`all`（既定）/店舗ID/`unassigned` | 従来の形＋`"store"`。店舗IDが無ければ404 |
 
 ### 資格情報（店舗×サイト）
 
@@ -292,6 +320,13 @@ INGEST_TOKEN=... node scripts/agent-ingest.mjs payload.json
 3. PRをmainへマージし、GitHub Pagesの画面に「自動取得の設定」が出ることを確認する。
 4. Grok Botの5分ごとの手順の先頭に`node scripts/agent-queue.mjs --enqueue-due`を追加する（最初は`--dry-run`で内容を確認）。
 
+### 店舗の選択（migration 013）の配置
+
+1. `supabase migration list --linked`と`supabase db push --linked --dry-run`で、未適用が`013_stores.sql`だけであることを確認してから適用する（履歴表が無い場合はSQLエディタ等で013だけを実行）。既存の表・行は変更せず、店舗も作成しません。
+2. 直後に`review-api`を配置する（`supabase functions deploy review-api --project-ref ycsqfajidusuibqljjwr --no-verify-jwt`）。`agent-api`・取り込み契約は変わりません。
+3. 初期データ（任意・再実行可）: SQLエディタまたは`psql`で`supabase/seed/013_seed_stores.sql`を1回実行する。データを持つ既存の利用者ごとに24店舗（表示順1〜24）を作り、`BISTRO CAVACAVA`に一休`112789`・食べログ`13245351`を設定します。食べログの既定の店舗コード`''`（店舗コードなしの資格情報・旧データ）は、`''`のデータがあり、`13245351`以外の食べログの店舗コードが無い利用者だけ`BISTRO CAVACAVA`に設定します。同名の店舗・設定済みの店舗IDは変更しません。最後の`select`で利用者ごとの店舗数と`BISTRO CAVACAVA`の設定を確認する。
+4. PRをmainへマージし、GitHub Pagesでログイン後に店舗の選択画面が出ること、「全店舗」で比較表が出ることを確認する。
+
 ## 配置・運用
 
 PRを作成してテスト成功後にmainへマージすると、GitHub Pagesへ配置されます。Edge Functionsは別途明示的に配置してください（上記コマンド）。
@@ -311,6 +346,8 @@ DB変更はこのプロジェクトを確認して対象SQLだけ適用します
 2026-09-29: すべてのサイトを外部エージェント（Grok Bot）による取り込みへ移行（migration 011）。#11のアプリ内一休公開ページ同期も廃止し、読み取り規則は`scripts/ikyu/public.js`へ移動（取り込みは`stores[].public`）。アプリ内の取得（GitHub Actions `sync-worker.yml`・Playwright ワーカー・`review-worker` の払い出し）を廃止し、アプリ → Grok Bot の取得依頼キュー（`agent_requests`）を追加。食べログの読み取りは `scripts/tabelog/` へ移動。旧 `snapshots` / `reviews` / `source_reports` / `sync_jobs` の履歴は残し、そのまま表示します。
 
 2026-09-29: 店舗×サイトごとの自動取得の設定を追加（migration 012 `fetch_schedules`、`review-api /schedules`、`agent-api /schedules/enqueue-due`、`agent-queue.mjs --enqueue-due`）。
+
+2026-09-29: 店舗マスタと店舗の選択・全店舗の比較を追加（migration 013 `stores`・`store_sites`、初期データ`supabase/seed/013_seed_stores.sql`、`review-api /stores`・`/overview`・`/dashboard?store=`）。
 
 ## 参考
 

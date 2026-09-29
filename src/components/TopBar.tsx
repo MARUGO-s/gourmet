@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import AuthButton from "./AuthButton";
 
 type Props = {
@@ -8,10 +9,12 @@ type Props = {
   signedIn: boolean;
   openRequests: number;
   onRequests: () => void;
+  // 店舗の切り替え（ログイン中で店舗を選択済みのとき）
+  switcher?: ReactNode;
 };
 
 // すべてのサイトは Grok Bot が取り込む。アプリからは取得せず、「取得を依頼」で依頼だけを登録する。
-export default function TopBar({ title, subtitle, lastSync, demo, signedIn, openRequests, onRequests }: Props) {
+export default function TopBar({ title, subtitle, lastSync, demo, signedIn, openRequests, onRequests, switcher }: Props) {
   const lastSyncLabel = lastSync
     ? new Date(lastSync).toLocaleString("ja-JP", { dateStyle: "short", timeStyle: "short" })
     : "—";
@@ -23,6 +26,7 @@ export default function TopBar({ title, subtitle, lastSync, demo, signedIn, open
           {subtitle} · データはGrok Botが取り込み · 最終取り込み {lastSyncLabel}
         </p>
       </div>
+      {switcher}
       {demo ? (
         <span className="rounded bg-warn-soft px-2 py-1 text-[10px] font-bold text-warn">
           デモデータ

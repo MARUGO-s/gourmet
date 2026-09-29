@@ -1,6 +1,12 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { createRequest, getCredentials, getDashboard, getRequests, getSources } from "./api";
-import type { AgentRequest, AgentRequestAction, CredentialRow, DashboardData, SourceMeta } from "./types";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ApiError, createRequest, getCredentials, getDashboard, getRequests, getSources, getStores } from "./api";
+import type { AgentRequest, AgentRequestAction, CredentialRow, DashboardData, SourceMeta, Store } from "./types";
+import { ALL_STORES, filterByStore, keysForStore } from "../supabase/functions/_shared/stores.js";
+import { loadSelection, saveSelection } from "./lib/store-selection";
+import StoreSelect from "./components/StoreSelect";
+import StoreSwitcher from "./components/StoreSwitcher";
+import StoreManager from "./components/StoreManager";
+import OverviewPage from "./components/OverviewPage";
 import { supabase } from "./lib/supabase";
 import { hasOpenRequests } from "./lib/agent-requests";
 import Sidebar from "./components/Sidebar";
@@ -16,8 +22,9 @@ import SchedulesPanel from "./components/SchedulesPanel";
 // 一休の詳細分析は選択時だけ読み込む（初期バンドルを小さく保つ）
 const IkyuDetails = lazy(() => import("./components/IkyuDetails"));
 
-type View = "dashboard" | "requests" | "schedules" | "accounts";
+export type View = "overview" | "dashboard" | "requests" | "schedules" | "accounts" | "stores";
 const VIEW_TITLES: Record<View, [string, string | null]> = {
+  overview: ["全店舗の比較", "店舗×サイトの月別PV・前月比・予約・評価・口コミ・未返信"], stores: ["店舗管理", "店舗の追加・並び替えと、各サイトの店舗ID"],
   dashboard: ["ダッシュボード", null], requests: ["取得依頼", "Grok Botへの取得依頼と履歴"], schedules: ["自動取得の設定", "店舗×サイトごとの自動取得の周期（日本時間）"], accounts: ["アカウント管理", "口コミサイトのアカウント（店舗×サイト）"],
 };
 
@@ -37,6 +44,15 @@ export default function App() {
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const openIds = useRef<Set<string>>(new Set());
+  // 店舗の選択（表示の絞り込みのみ）。null = 未選択（ログイン後は店舗の選択画面を表示）
+  const [stores, setStores] = useState<Store[]>([]);
+  const [storesLoaded, setStoresLoaded] = useState(false);
+  const [storesError, setStoresError] = useState<string | null>(null);
+  const [storesKey, setStoresKey] = useState(0);
+  const [scope, setScope] = useState<string | null>(null);
+  const refreshStores = useCallback(() => setStoresKey((k) => k + 1), []);
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
 
   const refreshAll = useCallback(() => setRefreshKey((k) => k + 1), []);
 
@@ -54,7 +70,46 @@ export default function App() {
     setRequests([]);
     setNotice(null);
     openIds.current = new Set();
+    setStores([]);
+    setStoresLoaded(false);
+    setScope(null);
   }, [userId]);
+
+  useEffect(() => {
+    if (!userId) return;
+    let alive = true;
+    setStoresError(null);
+    getStores()
+      .then(({ stores: rows }) => {
+        if (!alive) return;
+        setStores(rows);
+        // 保存済みの選択を復元（削除された店舗なら選択画面へ）。「全店舗」を復元したときは全店舗の比較を開く
+        const cur = scopeRef.current;
+        if (cur === ALL_STORES || (cur && rows.some((s) => s.id === cur))) return;
+        const restored = loadSelection(userId, rows);
+        setScope(restored);
+        if (!cur && restored === ALL_STORES) setView("overview");
+      })
+      .catch((e) => { if (alive) setStoresError(e instanceof Error ? e.message : "店舗を読み込めませんでした"); })
+      .finally(() => { if (alive) setStoresLoaded(true); });
+    return () => { alive = false; };
+  }, [userId, storesKey]);
+
+  const selectScope = useCallback((next: string) => {
+    setScope(next);
+    if (userId) saveSelection(userId, next);
+    // 「全店舗」は全店舗の比較を開く。店舗へ切り替えたときは表示中の画面（取得依頼など）をそのまま絞り込む
+    setView((v) => (next === ALL_STORES ? "overview" : v === "overview" || v === "stores" ? "dashboard" : v));
+  }, [userId]);
+  const reselect = useCallback(() => {
+    setScope(null);
+    if (userId) saveSelection(userId, null);
+  }, [userId]);
+  const currentStore = stores.find((s) => s.id === scope);
+  const scopeKeys = useMemo(() => (scope && scope !== ALL_STORES ? keysForStore(scope, stores.flatMap((s) => s.sites)) : null), [scope, stores]);
+  const defaultStoreId = currentStore?.id ?? "";
+  const scopedCredentials = useMemo(() => filterByStore(credentials, scopeKeys), [credentials, scopeKeys]);
+  const scopedRequests = useMemo(() => filterByStore(requests, scopeKeys, (r) => r.storeId), [requests, scopeKeys]);
 
   useEffect(() => {
     let alive = true;
@@ -63,15 +118,21 @@ export default function App() {
     return () => { alive = false; };
   }, [refreshKey, userId]);
 
+  // 店舗の割り当てを変えたら表示中の店舗のデータも変わるため、storesKey でも読み直す
   useEffect(() => {
+    if (userId && !scope) return;
     let alive = true;
     setLoading(true);
-    getDashboard(filter)
+    getDashboard(filter, userId ? scope ?? ALL_STORES : ALL_STORES)
       .then((d) => { if (alive) setData(d); })
-      .catch((e) => { if (alive) setNotice({ text: e instanceof Error ? e.message : "データの取得に失敗しました", error: true }); })
+      .catch((e) => {
+        if (!alive) return;
+        if (e instanceof ApiError && e.status === 404 && userId) { reselect(); refreshStores(); }
+        setNotice({ text: e instanceof Error ? e.message : "データの取得に失敗しました", error: true });
+      })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [filter, refreshKey, userId]);
+  }, [filter, refreshKey, userId, scope, storesKey, reselect, refreshStores]);
 
   // 取得依頼: 処理待ちがある間は30秒ごとに確認し、完了したらダッシュボードを読み直す
   const loadRequests = useCallback(async () => {
@@ -117,12 +178,20 @@ export default function App() {
   }, [userId, loadRequests]);
 
   const filteredSrc = filter === "all" ? "すべてのサイト" : (sources.find((s) => s.id === filter)?.name ?? "");
-  const [title, subtitle] = VIEW_TITLES[view];
-  const openCount = requests.filter((r) => r.status === "queued" || r.status === "claimed").length;
+  const choosing = !!userId && !scope && view !== "stores";
+  const [baseTitle, subtitle] = choosing ? ["店舗の選択", "表示する店舗を選んでください"] as const : VIEW_TITLES[view];
+  const scopeName = !userId ? null : scope === ALL_STORES ? "全店舗" : currentStore?.name ?? null;
+  const title = scopeName && !choosing && view !== "overview" && view !== "stores" ? `${scopeName} · ${baseTitle}` : baseTitle;
+  const openCount = scopedRequests.filter((r) => r.status === "queued" || r.status === "claimed").length;
+  const onView = (v: View) => {
+    if (v === "overview") { selectScope(ALL_STORES); return; }
+    setView(v);
+  };
+  const signInFirst = <div className="rounded-md border border-line bg-card px-6 py-12 text-center text-[12px] font-semibold text-faint">右上の「ログイン」から開始してください</div>;
 
   return (
     <div className="flex min-h-screen">
-      <Sidebar view={view} onView={setView} />
+      <Sidebar view={choosing ? null : view} onView={onView} signedIn={!!userId} storeName={scopeName} />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
           title={title}
@@ -132,6 +201,7 @@ export default function App() {
           signedIn={!!userId}
           openRequests={openCount}
           onRequests={() => setView("requests")}
+          switcher={userId && scope ? <StoreSwitcher stores={stores} scope={scope} onChange={selectScope} onReselect={reselect} /> : null}
         />
 
         {notice ? (
@@ -147,7 +217,13 @@ export default function App() {
         ) : null}
 
         <main className="flex flex-1 flex-col gap-5 px-6 py-6">
-          {view === "dashboard" ? (
+          {choosing ? (
+            <StoreSelect stores={stores} sources={sources} loading={!storesLoaded} error={storesError} onSelect={selectScope} onManage={() => setView("stores")} onRetry={refreshStores} />
+          ) : view === "overview" ? (
+            userId ? <OverviewPage key={`${userId}/${storesKey}`} sources={sources} onSelectStore={selectScope} onManage={() => setView("stores")} /> : signInFirst
+          ) : view === "stores" ? (
+            userId ? <StoreManager stores={stores} sources={sources} onChanged={refreshStores} /> : signInFirst
+          ) : view === "dashboard" ? (
             <>
               <nav className="flex flex-wrap items-center gap-1.5">
                 <button
@@ -180,7 +256,7 @@ export default function App() {
                 ))}
               </nav>
 
-              <IngestPanel filter={filter} signedIn={!!userId} sources={sources} credentials={credentials} requests={requests} busyKey={busyKey}
+              <IngestPanel filter={filter} signedIn={!!userId} sources={sources} credentials={scopedCredentials} requests={scopedRequests} busyKey={busyKey} stores={stores}
                 onRequest={(source, storeId) => void onRequest(source, storeId)} onRequests={() => setView("requests")} onAccounts={() => setView("accounts")} />
 
               {loading ? (
@@ -225,18 +301,19 @@ export default function App() {
           ) : view === "requests" ? (
             userId ? (
               <RequestsPanel sources={sources} credentials={credentials} requests={requests} loading={requestsLoading} busyKey={busyKey}
+                stores={stores} scopeKeys={scopeKeys} defaultStoreId={defaultStoreId} onStoresChanged={refreshStores}
                 onRequest={(source, storeId, action, params) => void onRequest(source, storeId, action, params)} onRefresh={() => void loadRequests()} />
             ) : (
               <div className="rounded-md border border-line bg-card px-6 py-12 text-center text-[12px] font-semibold text-faint">右上の「ログイン」から開始してください</div>
             )
           ) : view === "schedules" ? (
             userId ? (
-              <SchedulesPanel key={userId} sources={sources} credentials={credentials} />
+              <SchedulesPanel key={`${userId}/${scope}`} sources={sources} credentials={credentials} stores={stores} scopeKeys={scopeKeys} defaultStoreId={defaultStoreId} onStoresChanged={refreshStores} />
             ) : (
               <div className="rounded-md border border-line bg-card px-6 py-12 text-center text-[12px] font-semibold text-faint">右上の「ログイン」から開始してください</div>
             )
           ) : (
-            <CredentialsPanel key={userId ?? "guest"} sources={sources} onChanged={refreshAll} />
+            <CredentialsPanel key={`${userId ?? "guest"}/${scope}`} sources={sources} onChanged={refreshAll} stores={stores} scopeKeys={scopeKeys} defaultStoreId={defaultStoreId} onStoresChanged={refreshStores} />
           )}
         </main>
       </div>

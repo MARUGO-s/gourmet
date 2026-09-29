@@ -1,0 +1,52 @@
+// stores.js の型（ブラウザ側 TypeScript 用。実装は JS の1か所だけ）
+export type StoreSiteRow = { id?: string; store_id?: string; storeId?: string; source: string; site_store_key?: string; siteStoreKey?: string };
+export type PublicStoreSite = { id: string; storeId: string; source: string; siteStoreKey: string };
+export type PublicStore = { id: string; name: string; sortOrder: number; updatedAt: string | null; sites: PublicStoreSite[] };
+export type StoreKeys = Record<string, Set<string>>;
+export type OverviewSite = {
+  keys: { key: string; name: string | null }[];
+  pv: number | null; prevPv: number | null; pvChange: number | null; pvChangePct: number | null;
+  reservations: number | null; prevReservations: number | null;
+  rating: number | null; reviewCount: number | null; unreplied: number | null; lastUpdatedAt: string | null;
+};
+export type OverviewTotals = {
+  pv: number | null; prevPv: number | null; pvChange: number | null; pvChangePct: number | null;
+  reservations: number | null; prevReservations: number | null; reviewCount: number | null; unreplied: number | null;
+  rating: number | null; ratingSites: number; lastUpdatedAt: string | null;
+};
+export type OverviewRow = { id: string; name: string; sortOrder: number; sites: Record<string, OverviewSite>; totals: OverviewTotals };
+export type Overview = {
+  month: string; prevMonth: string; sources: string[]; stores: OverviewRow[]; unassigned: OverviewRow | null;
+  totals: OverviewTotals & { sites: Record<string, OverviewTotals> };
+};
+export const STORE_SOURCES: string[];
+export const UNASSIGNED: "unassigned";
+export const UNASSIGNED_NAME: string;
+export const ALL_STORES: "all";
+export const MAX_STORES: number;
+export const STORE_NAME_MAX: number;
+export function isStoreId(value: unknown): value is string;
+export function validateStoreInput(input: unknown, options?: { partial?: boolean }): { name?: string; sort_order?: number };
+export function siteKeyError(source: string, key: unknown): string | null;
+export function validateSiteInput(input: unknown): { source: string; site_store_key: string };
+export function validateReorder(input: unknown, existingIds: string[]): { id: string; sort_order: number }[];
+export function publicSite(r: unknown): PublicStoreSite;
+export function sortStores<T extends { name: string; id: string }>(rows: T[]): T[];
+export function publicStores(stores: unknown[], sites: unknown[]): PublicStore[];
+export function buildSiteIndex(sites: StoreSiteRow[]): Map<string, string>;
+export function storeFor(index: Map<string, string>, source: string, key: string | null | undefined): string | null;
+export function keysForStore(storeId: string, sites: StoreSiteRow[]): StoreKeys;
+export function unassignedKeys(sites: StoreSiteRow[], observed: { source: string; key: string }[]): StoreKeys;
+export function scopeKeys(scope: string | null | undefined, sites: StoreSiteRow[], observed?: { source: string; key: string }[]): StoreKeys | null;
+export function inScope(keys: StoreKeys | null, source: string, key: string | null | undefined): boolean;
+export function combineKeyValues(entries: { key: string; value: number | null }[], mode?: "sum" | "avg"): number | null;
+export function reviewStoreKey(r: unknown): string;
+export function filterReviews<T>(reviews: T[], keys: StoreKeys | null): T[];
+export function storeSnapshots(input: { targets: string[]; keys: StoreKeys | null; daily?: unknown[]; monthly?: unknown[]; legacy?: unknown[] }): unknown[];
+export function previousMonth(month: string): string;
+export function isMonth(v: unknown): v is string;
+export function referenceMonth(monthly: { month: string; pv: number | null }[], currentMonth: string, requested?: string | null): string;
+export function buildOverview(input: unknown): Overview;
+export function sortOverviewRows(rows: OverviewRow[], column: string, direction?: "asc" | "desc"): OverviewRow[];
+export function filterByStore<T>(rows: T[], keys: StoreKeys | null, keyOf?: (r: T) => string): T[];
+export function storeLabelFor(stores: { id: string; name: string }[], sites: StoreSiteRow[], source: string, key: string | null | undefined): string;
