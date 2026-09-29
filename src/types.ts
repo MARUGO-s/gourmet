@@ -157,3 +157,6 @@ export type AgentRequest = {
   result: Record<string, unknown> | null;
   error: string | null;
 };
+
+// 自動取得の設定（fetch_schedules）。型は共通モジュールの宣言を使う
+export type { PublicSchedule as FetchSchedule, ScheduleInput, ScheduleMode } from "../supabase/functions/_shared/fetch-schedules.js";

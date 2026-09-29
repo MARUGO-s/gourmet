@@ -1,6 +1,6 @@
 type Props = {
-  view: "dashboard" | "requests" | "accounts";
-  onView: (v: "dashboard" | "requests" | "accounts") => void;
+  view: "dashboard" | "requests" | "schedules" | "accounts";
+  onView: (v: "dashboard" | "requests" | "schedules" | "accounts") => void;
 };
 
 function NavIcon({ name }: { name: string }) {
@@ -33,6 +33,15 @@ function NavIcon({ name }: { name: string }) {
       </svg>
     );
   }
+  if (name === "schedules") {
+    return (
+      <svg {...common}>
+        <rect x="3" y="4.5" width="18" height="16" rx="2" />
+        <path d="M3 9.5h18M8 2.5v4M16 2.5v4" />
+        <path d="M12 12.5v3l2 1.5" />
+      </svg>
+    );
+  }
   return (
     <svg {...common}>
       <circle cx="12" cy="8" r="4" />
@@ -45,6 +54,7 @@ function NavIcon({ name }: { name: string }) {
 const ITEMS: { id: Props["view"]; label: string }[] = [
   { id: "dashboard", label: "ダッシュボード" },
   { id: "requests", label: "取得依頼" },
+  { id: "schedules", label: "自動取得の設定" },
   { id: "accounts", label: "アカウント管理" },
 ];
 

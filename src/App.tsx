@@ -12,12 +12,13 @@ import CredentialsPanel from "./components/CredentialsPanel";
 import TabelogDetails from "./components/TabelogDetails";
 import IngestPanel from "./components/IngestPanel";
 import RequestsPanel from "./components/RequestsPanel";
+import SchedulesPanel from "./components/SchedulesPanel";
 // 一休の詳細分析は選択時だけ読み込む（初期バンドルを小さく保つ）
 const IkyuDetails = lazy(() => import("./components/IkyuDetails"));
 
-type View = "dashboard" | "requests" | "accounts";
+type View = "dashboard" | "requests" | "schedules" | "accounts";
 const VIEW_TITLES: Record<View, [string, string | null]> = {
-  dashboard: ["ダッシュボード", null], requests: ["取得依頼", "Grok Botへの取得依頼と履歴"], accounts: ["アカウント管理", "口コミサイトのアカウント（店舗×サイト）"],
+  dashboard: ["ダッシュボード", null], requests: ["取得依頼", "Grok Botへの取得依頼と履歴"], schedules: ["自動取得の設定", "店舗×サイトごとの自動取得の周期（日本時間）"], accounts: ["アカウント管理", "口コミサイトのアカウント（店舗×サイト）"],
 };
 
 export default function App() {
@@ -225,6 +226,12 @@ export default function App() {
             userId ? (
               <RequestsPanel sources={sources} credentials={credentials} requests={requests} loading={requestsLoading} busyKey={busyKey}
                 onRequest={(source, storeId, action, params) => void onRequest(source, storeId, action, params)} onRefresh={() => void loadRequests()} />
+            ) : (
+              <div className="rounded-md border border-line bg-card px-6 py-12 text-center text-[12px] font-semibold text-faint">右上の「ログイン」から開始してください</div>
+            )
+          ) : view === "schedules" ? (
+            userId ? (
+              <SchedulesPanel key={userId} sources={sources} credentials={credentials} />
             ) : (
               <div className="rounded-md border border-line bg-card px-6 py-12 text-center text-[12px] font-semibold text-faint">右上の「ログイン」から開始してください</div>
             )
