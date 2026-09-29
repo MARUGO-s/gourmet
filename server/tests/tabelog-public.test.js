@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readTabelogPublicDocument, collectTabelogPublicData } from "../tabelog-public.js";
+import { readTabelogPublicDocument, collectTabelogPublicData } from "../../scripts/tabelog/public.js";
 
 function read(ld, dom = {}) {
   const previous = globalThis.document;

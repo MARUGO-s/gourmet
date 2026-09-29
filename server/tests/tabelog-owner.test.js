@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mergeOwnerReviews, ownerGoto, selectAllMonths,readOwnerDailyTable,readOwnerPublicUrl} from '../tabelog-owner.js';
-import {collectTabelogMetrics} from '../tabelog-result.js';
-import {validateTabelogResult, snapshotUpdates} from '../sync-data.js';
+import {mergeOwnerReviews, ownerGoto, selectAllMonths,readOwnerDailyTable,readOwnerPublicUrl} from '../../scripts/tabelog/owner.js';
+import {collectTabelogMetrics} from '../../scripts/tabelog/result.js';
+import {validateTabelogResult} from '../../scripts/tabelog/validate.js';
+import {tabelogResultToPayload} from '../../scripts/tabelog/payload.js';
 import {computeDashboard} from '../../supabase/functions/_shared/dashboard.js';
 
 const review=(groupId,id,complete=true)=>({externalId:`${groupId}:${id}`,groupId,rating:3.47,date:complete?'2020-01-02':null,visitMonth:'2019-12',text:'同じ本文',details:{textComplete:complete,scores:[{label:'夜',value:3.47,breakdown:null}]}});
@@ -29,9 +30,8 @@ test('owner posts stay intact while the public page supplies the official aggreg
   assert.equal(result.reviews.length,1);
   assert.equal(result.reviews[0].text,'同じ本文');
   assert.equal(result.reports.ownerReviews.groups,1);
-  const saved=snapshotUpdates('u','tabelog',result,'2026-09-29');
-  assert.equal(saved.find(row=>row.date==='2026-09-29').rating,3.26);
-  assert.equal(saved.find(row=>row.date==='2026-09-29').reviews,49);
+  const payload=tabelogResultToPayload(result,{storeKey:'13245351',runId:'r1',today:'2026-09-29'});
+  assert.deepEqual(payload.stores[0].summary,{rating:3.26,reviewCount:49});
 });
 test('a failed public page does not discard owner reviews or invent an aggregate',async()=>{
   const owner=mergeOwnerReviews({total:1,items:[review('B1','11')]},{total:0,items:[]});
@@ -40,7 +40,7 @@ test('a failed public page does not discard owner reviews or invent an aggregate
   assert.deepEqual(result.data,{rating:null,reviews:null});
   assert.equal(result.reviews[0].externalId,'B1:11');
   assert.match(result.warning,/HTTP 403/);
-  assert.equal(snapshotUpdates('u','tabelog',result).length,0);
+  assert.equal(tabelogResultToPayload(result,{storeKey:'1',runId:'r2'}).stores[0].summary,null);
 });
 test('the owner navigation link identifies only this store',()=>{
   const original=globalThis.document;
@@ -66,7 +66,8 @@ test('review identities, real dates and ratings are checked before saving',()=>{
 test('historic months with unpublished reservations retain null instead of a zero snapshot',()=>{
   const result={status:'partial',warning:'予約未掲載',data:{rating:null,reviews:null},daily:[{date:'2019-12-01',pv:0}],monthly:[{month:'2019-12',reservations:null,pv:0}],reviews:[]};
   validateTabelogResult(result);
-  assert.deepEqual(snapshotUpdates('u','tabelog',result),[{user_id:'u',source:'tabelog',date:'2019-12-01',pv:0}]);
+  const [store]=tabelogResultToPayload(result,{storeKey:'1',runId:'r3'}).stores;
+  assert.equal(store.monthly[0].reservations,null);assert.equal(store.daily[0].pv,0);
 });
 test('dashboard returns every review, retains null dates, and keeps individual scores out of KPIs',()=>{
   const reviews=Array.from({length:53},(_,i)=>({...review(`B${i+1}`,'excerpt',false),id:String(i),source:'tabelog',visit_month:'2026-08'}));

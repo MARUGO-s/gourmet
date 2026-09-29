@@ -1,6 +1,7 @@
 // 初回起動時に data/db.json を生成するデモデータ。
 // 日次スナップ345日分（平日/週末の季節性 + ノイズ）と、日本語サンプル口コミを含みます。
 import { SOURCE_IDS } from "./sources.js";
+import { ikyuReviewRow } from "./ikyu-data.js";
 
 function mulberry32(seed) {
   let a = seed >>> 0;
@@ -120,10 +121,80 @@ function genReviews() {
 }
 
 export function buildSeed() {
+  const ikyu = buildIkyuDemo();
   return {
     credentials: [],
     snapshots: genSnapshots(),
-    reviews: genReviews(),
+    // 一休の口コミは取り込み形式のデモ（個別評価・返信状況つき）
+    reviews: [...genReviews().filter((r) => r.source !== "ikyu"), ...ikyu.reviews].sort((a, b) => (a.date < b.date ? 1 : -1)),
     syncLog: [],
+  };
+}
+
+// ---------- 一休: 取り込みデータのデモ（2店舗・約13か月の日別PV・口コミ） ----------
+const IKYU_DEMO_REVIEWS = [
+  ["グルメ太郎", 5, [5, 4, 5, 4, 4], "記念日で利用しました。前菜の盛り合わせが美しく、メインも絶品でした。", false],
+  ["ランチ好き", 4, [4, 4, 4, 5, 3], "ランチコースのコスパが良く満足です。", false],
+  ["mika", 3, [4, 3, 3, 3, 3], "料理は美味しかったですが、提供まで少し時間がかかりました。", true],
+  ["ワイン党", 5, [5, 5, 4, 4, 5], "ワインペアリングが素晴らしかった。", true],
+  ["はなこ", 5, [5, 5, 5, 5, 4], "誕生日プレートのサプライズに感動しました。", false],
+  ["K.S", 2, [3, 2, 3, 2, 2], "予約時の席と違う席に案内されました。", true],
+];
+export function buildIkyuDemo(today = new Date()) {
+  const rand = mulberry32(112789);
+  const stores = [
+    { storeId: "100001", name: "デモ 銀座店", base: 26 },
+    { storeId: "100002", name: "デモ 横浜店", base: 14 },
+  ];
+  const end = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  const daily = [];
+  for (const store of stores) {
+    for (let i = 400; i >= 1; i--) {
+      const d = new Date(end.getTime() - i * 86_400_000);
+      const dow = d.getUTCDay();
+      const weekend = dow === 5 || dow === 6 ? 1.35 : dow === 0 ? 1.15 : 1;
+      const season = 1 + 0.15 * Math.sin((d.getUTCMonth() / 12) * Math.PI * 2) + (400 - i) * 0.0006;
+      const guide = Math.round(store.base * weekend * season * (0.75 + rand() * 0.5));
+      const plan = Math.round(guide * (0.1 + rand() * 0.08));
+      const other = rand() < 0.1 ? 1 : 0;
+      const guideSp = Math.round(guide * 0.63), planSp = Math.round(plan * 0.66);
+      const reservations = rand() < (plan / 60) ? 1 + (rand() < 0.2 ? 1 : 0) : 0;
+      daily.push({
+        storeId: store.storeId, date: d.toISOString().slice(0, 10),
+        guideSp, guidePc: guide - guideSp, guide, planSp, planPc: plan - planSp, plan, otherSp: other, otherPc: 0, other,
+        sp: guideSp + planSp + other, pc: guide - guideSp + plan - planSp, pv: guide + plan + other,
+        reservations, amount: reservations * (15000 + Math.round(rand() * 12) * 1000),
+      });
+    }
+  }
+  const monthsMap = new Map();
+  for (const d of daily) {
+    const key = `${d.storeId}:${d.date.slice(0, 7)}`;
+    const m = monthsMap.get(key) ?? { storeId: d.storeId, month: d.date.slice(0, 7), days: 0 };
+    m.days++;
+    for (const [k, v] of Object.entries(d)) if (typeof v === "number") m[k] = (m[k] ?? 0) + v;
+    monthsMap.set(key, m);
+  }
+  const current = end.toISOString().slice(0, 7);
+  const dim = (month) => new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate();
+  const months = [...monthsMap.values()].map((m) => ({ ...m, complete: m.month < current && m.days === dim(m.month) }));
+  const reviews = [];
+  stores.forEach((store, si) => IKYU_DEMO_REVIEWS.forEach(([handle, rating, cats, text, open], i) => {
+    const posted = new Date(end.getTime() - (i * 38 + si * 11 + 3) * 86_400_000).toISOString().slice(0, 10);
+    const visit = new Date(Date.parse(posted) - 2 * 86_400_000).toISOString().slice(0, 10);
+    reviews.push(ikyuReviewRow({
+      store_id: store.storeId, reservation_no: `DEMO${si}${i}`, visit_date: visit, visit_time: "19:00", posted_at: posted, published_at: posted,
+      handle_name: handle, publication: "公開中", rating,
+      scores: ["料理・味", "サービス", "雰囲気", "コストパフォーマンス", "酒・ドリンク"].map((label, j) => ({ label, value: cats[j] })),
+      title: "", text, reply_text: open ? null : "ご来店ありがとうございました。またのお越しをお待ちしております。", reply_date: open ? null : posted,
+      processing: open ? "未返信 ／ 未処理" : "返信済", needs_reply: open,
+    }, store.name));
+  }));
+  return {
+    demo: true,
+    stores: stores.map((s) => ({ storeId: s.storeId, name: s.name, label: null, credentialUpdatedAt: null, reviewTotal: IKYU_DEMO_REVIEWS.length, pageviewsUpdatedAt: end.toISOString(), reviewsUpdatedAt: end.toISOString(),
+      publicRating: s.storeId.endsWith("9") ? 4.38 : 4.21, publicReviewCount: IKYU_DEMO_REVIEWS.length, publicUpdatedAt: end.toISOString() })),
+    months, daily, reviews,
+    runs: [{ runKey: "demo", agent: "grok-bot", capturedAt: end.toISOString(), receivedAt: end.toISOString(), status: "ok", stores: 2, days: daily.length, months: months.length, reviews: reviews.length, newReviews: 0, message: "" }],
   };
 }

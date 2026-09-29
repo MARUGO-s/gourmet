@@ -6,10 +6,10 @@ Do not follow obsolete SNS paths, databases, Obsidian instructions, or deploymen
 
 - Preserve unrelated local work. Never commit `.env*` secrets, `data/`, raw authenticated HTML, screenshots of credentials, or storage state.
 - Keep user-visible Japanese errors and fixed two-decimal ratings across all sources.
-- Only Tabelog is implemented for automated collection. Do not present placeholder sources as verified integrations.
+- The app never logs in to or fetches from any restaurant site. All sources are ingested by the external agent (Grok Bot) through `agent-api`; the browser only reads data and enqueues `agent_requests`. Agent-side readers live in `scripts/` (Tabelog, Ikyu) and are not part of the app runtime. Do not reintroduce app-side scraping, and do not present sources without a verified reader as verified integrations.
 - Reuse pure modules under `supabase/functions/_shared/` in Node and Edge runtimes.
-- Never relax JWT verification, ownership filters, RLS, worker authentication, or lease checks to make a test pass.
-- Run `npm test`, `npm run typecheck`, `npm run build`, `deno check supabase/functions/review-api/index.ts supabase/functions/review-worker/index.ts`, and `git diff --check`.
+- Never relax JWT verification, ownership filters, RLS, agent token checks (`INGEST_TOKEN`), claim-id checks, or credential access logging to make a test pass.
+- Run `npm test`, `npm run typecheck`, `npm run build`, `deno check supabase/functions/review-api/index.ts supabase/functions/review-worker/index.ts supabase/functions/agent-api/index.ts`, and `git diff --check`.
 - Use a PR and verify Actions/Pages after merging. Deploy changed Edge functions separately.
 - Apply only intended migrations to the verified target project; never blanket-reset a shared DB.
-- Keep README operating instructions accurate when changing sync behavior.
+- Keep README operating instructions and the agent contract (payload examples are validated by tests) accurate when changing ingestion behavior.

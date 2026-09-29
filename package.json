@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "node --test server/tests/*.test.js",
-    "worker": "node server/worker.js"
+    "agent:queue": "node scripts/agent-queue.mjs",
+    "agent:ingest": "node scripts/agent-ingest.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.116.0",

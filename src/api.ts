@@ -3,7 +3,8 @@ import type {
   CredentialRow,
   DashboardData,
   SourceMeta,
-  SyncJob,
+  AgentRequest,
+  AgentRequestAction,
 } from "./types";
 
 // ログイン中のセッションがあれば Supabase JWT を API リクエストに転送する。
@@ -58,6 +59,7 @@ export async function saveCredential(input: {
   username: string;
   password: string;
   storeId?: string;
+  storeKey?: string;
 }) {
   const headers = await authHeaders();
   return apiFetch("/api/credentials", {
@@ -75,24 +77,17 @@ export async function deleteCredential(id: string) {
   }).then((r) => json<{ ok: boolean }>(r));
 }
 
-export async function syncNow(source: "all" | string) {
+// Grok Bot への取得依頼（本人の依頼だけ。状態の変更はエージェント側のみ）
+export async function getRequests() {
   const headers = await authHeaders();
-  return apiFetch("/api/sync", {
+  return apiFetch("/api/requests", { headers }).then((r) => json<{ requests: AgentRequest[] }>(r));
+}
+
+export async function createRequest(input: { source: string; storeId: string; action: AgentRequestAction; params?: { fromMonth?: string; note?: string } }) {
+  const headers = await authHeaders();
+  return apiFetch("/api/requests", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...headers },
-    body: JSON.stringify({ source }),
-    signal: AbortSignal.timeout(30_000),
-  }).then((r) => json<SyncJob>(r));
-}
-
-export async function getSyncJob(id: string) {
-  const headers = await authHeaders();
-  return apiFetch(`/api/sync/jobs/${encodeURIComponent(id)}`, { headers, signal: AbortSignal.timeout(30_000) })
-    .then((r) => json<SyncJob>(r));
-}
-
-export async function getActiveSync() {
-  const headers = await authHeaders();
-  return apiFetch("/api/sync/active", { headers, signal: AbortSignal.timeout(30_000) })
-    .then((r) => json<{ job: SyncJob | null }>(r));
+    body: JSON.stringify(input),
+  }).then((r) => json<{ request: AgentRequest }>(r));
 }

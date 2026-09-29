@@ -11,6 +11,7 @@ function ReviewBody({ review: r }: { review: Review }) {
     <summary className="cursor-pointer text-[12px] leading-relaxed text-subtle">
       <span className="font-bold">{r.title || r.text.slice(0, 70) || "本文なし"}</span>
       <span className="ml-2 text-[10px] text-faint">{!r.text ? "点数のみ" : r.details?.textComplete === false ? "抜粋" : "本文を表示"}</span>
+      {r.details?.needsReply ? <span className="ml-2 rounded bg-danger-soft px-1.5 py-0.5 text-[9px] font-bold text-danger">要返信</span> : null}
       <span className="mt-1 block text-[10px] text-faint">{r.author}</span>
     </summary>
     <div className="mt-3 space-y-3 text-[12px] leading-relaxed">
@@ -21,6 +22,10 @@ function ReviewBody({ review: r }: { review: Review }) {
         {s.breakdown ? <p className="mt-1 text-[11px] text-subtle">{s.breakdown.replace(/\d+\.\d+/g, n => Number(n).toFixed(2))}</p> : null}
       </div>)}
       {r.details?.usedPrice ? <p className="text-subtle">{r.details.usedPrice}</p> : null}
+      {r.details?.origin === "ikyu_owner" ? <p className="text-[11px] text-subtle">
+        {r.details.storeName ? `${r.details.storeName} ・ ` : ""}予約番号 {r.details.reservationNo} ・ 来店 {r.details.visitDate ?? "—"} {r.details.visitTime ?? ""} ・ {r.details.publication ?? ""} ・ {r.details.processing ?? ""}
+        {r.details.listUrl ? <a href={r.details.listUrl} target="_blank" rel="noopener noreferrer" className="ml-2 font-bold text-brand underline">一休の返信画面 ↗</a> : null}
+      </p> : null}
       {r.details?.ownerReply ? <div className="rounded border border-line p-3">
         <p className="font-bold">お店からの返信 <span className="text-faint">{r.details.ownerReply.date}</span></p>
         <p className="mt-1 text-[10px] text-faint">{r.details.ownerReply.status}</p>

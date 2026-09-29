@@ -40,7 +40,7 @@ function Ranking({ ranking }: { ranking: Available["ranking"] }) {
   if (!ranking) {
     return (
       <Panel title="エリア内アクセスランキング">
-        <p className="px-5 py-8 text-center text-[12px] font-semibold text-faint">次回の同期後に表示されます</p>
+        <p className="px-5 py-8 text-center text-[12px] font-semibold text-faint">次回のGrok Botの取り込み後に表示されます</p>
       </Panel>
     );
   }
@@ -96,7 +96,7 @@ function TopPages({ topPages }: { topPages: Available["topPages"] }) {
   if (!topPages) {
     return (
       <Panel title="よく見られているページ">
-        <p className="px-5 py-8 text-center text-[12px] font-semibold text-faint">次回の同期後に表示されます</p>
+        <p className="px-5 py-8 text-center text-[12px] font-semibold text-faint">次回のGrok Botの取り込み後に表示されます</p>
       </Panel>
     );
   }
@@ -141,7 +141,7 @@ function Monthly({ monthly }: { monthly: Available["monthly"] }) {
   if (!monthly.length) {
     return (
       <Panel title="月別レポート">
-        <p className="px-5 py-8 text-center text-[12px] font-semibold text-faint">次回の同期後に表示されます</p>
+        <p className="px-5 py-8 text-center text-[12px] font-semibold text-faint">次回のGrok Botの取り込み後に表示されます</p>
       </Panel>
     );
   }

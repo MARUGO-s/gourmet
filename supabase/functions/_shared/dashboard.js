@@ -11,7 +11,8 @@ function previousMonth(month) {
 // snapshots の保存規約（食べログ）:
 //   - 日別PV は各日付の行の pv
 //   - 月別の予約組数はその月の1日の行の reservations（食べログは月単位でしか提供しない）
-//   - 評価・口コミ数は同期した日の行の rating / reviews。未取得はnull、実測0は0。
+//   - 評価・口コミ数は取り込んだ日の行の rating / reviews。未取得はnull、実測0は0。
+//   - 外部取り込み（agent-api）は全店舗の合計をこの規約で書き込む（ingest_source / ingest_ikyu）。
 export function computeDashboard(snapshots, reviews, lastSync, targets, demo) {
   const rows = snapshots.filter((s) => targets.includes(s.source));
 

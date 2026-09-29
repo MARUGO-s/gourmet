@@ -1,0 +1,19 @@
+{
+ "storeKey": "13245351",
+ "name": "テスト食堂",
+ "daily": [
+  "daily-2026-08.html",
+  "daily-2026-09.html"
+ ],
+ "conversion": "conversion.html",
+ "accessRanking": "access-ranking.html",
+ "reviews": {
+  "reply": [
+   "reply-1.html"
+  ],
+  "pickup": [
+   "pickup-1.html"
+  ]
+ },
+ "public": "public.html"
+}
