@@ -10,6 +10,8 @@ import { japanDate } from "./sync-data.js";
 import { collectTabelogMetrics } from "./tabelog-result.js";
 import { collectTabelogPublicData } from "./tabelog-public.js";
 import { collectOwnerReviews, collectOwnerDaily, collectPageHistory, readOwnerPublicUrl, selectAllMonths } from "./tabelog-owner.js";
+import { collectIkyuPublic } from "./ikyu-public.js";
+import { unpackIkyuUsername } from "../supabase/functions/_shared/ikyu-login.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DUMP_DIR = path.join(__dirname, "..", "data", "dump");
@@ -368,10 +370,36 @@ export async function syncOne(sourceId, cred, { onProgress = () => {}, timeoutMs
   }
 }
 
+const IKYU_OWNER_GAP = "公開ページの評価と口コミを保存しました。PVと予約数は店舗管理画面のロボット確認が必要なため未取得です。";
+
+async function extractIkyu(cred, onProgress) {
+  const unpacked = unpackIkyuUsername(cred.username);
+  if (!unpacked) return err("no_credential", "一休.comレストランの店舗IDを読み取れません。アカウントを登録し直してください");
+  const storeId = unpacked.storeId;
+  try {
+    onProgress("public_metrics", "一休.comレストランの公開ページを取得しています");
+    const parsed = await collectIkyuPublic(storeId);
+    if (parsed.rating == null || parsed.reviews == null) {
+      return err("extraction", "一休.comレストランの公開ページから評価または口コミ数を読み取れませんでした");
+    }
+    return {
+      status: "partial",
+      warning: IKYU_OWNER_GAP,
+      data: { rating: parsed.rating, reviews: parsed.reviews, pv: null, reservations: null },
+      reviews: parsed.items,
+      daily: [],
+      monthly: [],
+    };
+  } catch (error) {
+    return err(error.step || "public_page", error.message || "一休.comレストランの公開ページを取得できませんでした");
+  }
+}
+
 async function runSyncOne(sourceId, cred, { onProgress, registerBrowser }) {
   const source = getSource(sourceId);
   if (!source) return err("unknown_source", `不明なサイト: ${sourceId}`);
   if (!cred) return err("no_credential", `${source.name} のログイン情報が未登録です`);
+  if (sourceId === "ikyu") return await extractIkyu(cred, onProgress);
 
   // cred は { username, passwordEnc }（DB保存行）を期待。平文 password のみの場合も許容。
   const password = cred.passwordEnc ? decrypt(cred.passwordEnc) : cred.password;

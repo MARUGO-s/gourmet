@@ -66,9 +66,9 @@ export const SOURCES = [
     name: "一休.comレストラン",
     nameEn: "Ikyu",
     color: "#8A7340",
-    loginUrl: "https://www.ikyu.com/", // TODO: 事業者向け管理画面の URL に置換
-    dashboardUrl: "https://www.ikyu.com/", // TODO: 要調整
-    login: { username: "#email", password: "#password", submit: ".submit-btn" },
+    loginUrl: "https://restaurant.ikyu.com/rsOwner/login",
+    dashboardUrl: "https://restaurant.ikyu.com/",
+    login: { username: "#rstid", password: "#pswd", submit: "button.submit" },
     fields: {
       rating: ".rating", // TODO: 要調整
       reviewCount: ".review-count",

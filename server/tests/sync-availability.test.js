@@ -8,13 +8,9 @@ const sources = [
   { id: "retty", name: "Retty", hasCredential: false },
 ];
 
-test("ikyu stays clickable after the account is saved", () => {
-  const sync = headerSync(true, "ikyu", sources);
-  assert.equal(sync.enabled, true);
-  if (!sync.enabled || sync.mode !== "unconnected") return;
-  assert.equal(sync.hasCredential, true);
-  assert.match(unconnectedSyncMessage(sync.name, sync.hasCredential), /保存済み/);
-  assert.match(unconnectedSyncMessage(sync.name, sync.hasCredential), /開始していません/);
+test("a saved ikyu account starts an ikyu sync", () => {
+  assert.deepEqual(headerSync(true, "ikyu", sources), { enabled: true, mode: "ikyu" });
+  assert.equal(headerSync(true, "ikyu", sources.map((s) => s.id === "ikyu" ? { ...s, hasCredential: false } : s)).enabled, false);
 });
 
 test("a site without an account still opens from the sync button", () => {

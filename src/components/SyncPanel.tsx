@@ -14,6 +14,39 @@ type Props = {
 export default function SyncPanel({ job, signedIn, sources, syncState, filter, onAccounts, onSync }: Props) {
   const registered = sources.some((s) => s.id === "tabelog" && s.hasCredential);
   const focused = filter !== "all" && filter !== "tabelog" ? sources.find((s) => s.id === filter) : null;
+  if (focused?.id === "ikyu") {
+    return (
+      <section className="rounded-md border border-line bg-card p-5" aria-label="一休.comレストランの取得">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-[13px] font-bold">一休.comレストラン</h2>
+            <p className="mt-1 text-[12px] leading-relaxed text-subtle">
+              公開ページの評価と口コミを取得します。PVと予約数は店舗管理画面のロボット確認が必要なため、同期しても未取得のままです。
+            </p>
+          </div>
+          {signedIn && focused.hasCredential ? (
+            <button onClick={onSync} disabled={syncState.busy} className="rounded-md bg-brand px-4 py-2 text-[12px] font-bold text-white disabled:opacity-50">
+              {syncState.busy ? syncState.label : "一休を同期"}
+            </button>
+          ) : signedIn ? (
+            <button onClick={onAccounts} className="rounded-md border border-brand px-4 py-2 text-[12px] font-bold text-brand">アカウントを登録</button>
+          ) : (
+            <p className="rounded bg-surface px-3 py-2 text-[12px] text-subtle">右上の「ログイン」から開始してください</p>
+          )}
+        </div>
+        {job?.sources.includes("ikyu") ? (
+          <div className="mt-4 border-t border-line pt-3" role="status" aria-live="polite">
+            <p className={`text-[12px] font-bold ${job.status === "error" ? "text-danger" : job.results.some((result) => result.status === "partial") ? "text-warn" : job.status === "running" ? "text-brand" : "text-ok"}`}>
+              {job.message}
+            </p>
+            {job.results.filter((result) => result.source === "ikyu" && result.warning).map((result) => (
+              <p key={result.source} className="mt-1 text-[11px] leading-relaxed text-subtle">{result.warning}</p>
+            ))}
+          </div>
+        ) : null}
+      </section>
+    );
+  }
   if (focused) {
     return (
       <section className="rounded-md border border-line bg-card p-5" aria-label={`${focused.name}の取得`}>

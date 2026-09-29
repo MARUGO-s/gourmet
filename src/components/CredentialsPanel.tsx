@@ -176,7 +176,7 @@ export default function CredentialsPanel({ sources, onChanged }: Props) {
             </p>
           ) : source === "ikyu" ? (
             <p className="rounded bg-brand-soft px-3 py-2 text-[11px] leading-relaxed text-brand">
-              一休.comレストラン管理画面と同じ3項目です。店舗IDは6桁の数字です。自動取得の接続はこれからです。
+              一休.comレストラン管理画面と同じ3項目です。店舗IDは6桁の数字です。同期では公開ページの評価と口コミを取得します。
             </p>
           ) : <p className="rounded bg-surface px-3 py-2 text-[11px] leading-relaxed text-subtle">このサイトの自動取得は接続準備中です。現在、自動取得できるのは食べログです。</p>}
           <label className="flex flex-col gap-1.5">
