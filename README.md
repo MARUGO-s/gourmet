@@ -345,7 +345,8 @@ INGEST_TOKEN=... node scripts/agent-ingest.mjs payload.json
    rm -P "$f" 2>/dev/null || shred -u "$f" 2>/dev/null || rm -f "$f"
    supabase secrets list --project-ref ycsqfajidusuibqljjwr   # 名前とハッシュだけが表示される
    ```
-   任意: `OPENAI_MODEL`（既定`gpt-5-mini`）、`OPENAI_REASONING_EFFORT`（gpt-5系・o系のみ。既定`low`）。
+   任意: `OPENAI_MODEL`（既定`gpt-6-luna`。`gpt-5-mini`なども指定可）、`OPENAI_REASONING_EFFORT`（`none`/`minimal`/`low`/`medium`/`high`。推論モデル＝gpt-5系・gpt-5.x・gpt-6系・o系のみ送信。既定`low`）。
+   gpt-6系はChat Completionsで関数（tools）を使うとき`reasoning_effort`に`none`しか受け付けないため、質問への回答（関数呼び出し）では設定に関係なく`none`を送ります。レポート作成（JSON出力）には`OPENAI_REASONING_EFFORT`を使います。`none`はgpt-5.1以降・gpt-6系にだけ送り、gpt-5 / gpt-5-mini / o系では送りません。
 3. 関数を配置する: `supabase functions deploy ai-analyst --project-ref ycsqfajidusuibqljjwr --no-verify-jwt`（認証は関数内で`auth.getUser()`、review-apiと同じ）。
 4. PRをmainへマージし、GitHub Pagesの「AI分析」で質問・レポート作成ができることを確認する（キー未設定なら画面に「未設定」と表示されます）。
 

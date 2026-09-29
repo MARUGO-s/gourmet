@@ -4,7 +4,7 @@ import {
   AI_TOOLS, resolvePeriod, validateAskInput, validateReportInput, resolveStore, dailyPv, groupPv, monthlyMetrics, replyState, reviewStats, pickReviews,
   runTool, periodKpis, buildReportFacts, normalizeReportAi, composeReportMarkdown, contextMessage, listStores, compareStores,
 } from "../../supabase/functions/_shared/ai-analyst.js";
-import { answerWithTools, chatCompletion, openAiConfig, AiError } from "../../supabase/functions/_shared/openai.js";
+import { answerWithTools, buildChatRequest, chatCompletion, isReasoningModel, openAiConfig, reasoningEffortFor, AiError } from "../../supabase/functions/_shared/openai.js";
 import { markdownToHtml, reportHtmlDocument } from "../../supabase/functions/_shared/markdown.js";
 
 const CAVA = "11111111-1111-4111-8111-111111111111";
@@ -152,7 +152,8 @@ const fakeFetch = (responses, seen = []) => async (url, init) => {
 
 test("OpenAI: キー未設定・エラーの文言にキーや本文を含めない", async () => {
   const cfg = openAiConfig((k) => ({ OPENAI_API_KEY: "  ", OPENAI_MODEL: "" })[k]);
-  assert.equal(cfg.model, "gpt-5-mini");
+  assert.equal(cfg.model, "gpt-6-luna");
+  assert.equal(cfg.reasoningEffort, "low");
   await assert.rejects(chatCompletion(cfg, { messages: [] }), (e) => e instanceof AiError && e.status === 503 && e.message.includes("OPENAI_API_KEY"));
   const secret = "sk-test-SECRET123";
   const config = { apiKey: secret, model: "gpt-5-mini", reasoningEffort: "low" };
@@ -178,6 +179,54 @@ test("OpenAI: 関数呼び出しを実行して回答する", async () => {
   const toolMsg = seen[1].messages.find((m) => m.role === "tool");
   assert.equal(toolMsg.tool_call_id, "call_1");
   assert.equal(JSON.parse(toolMsg.content).bySource.ikyu.pv, 280);
+});
+
+test("OpenAI: モデルは OPENAI_MODEL で上書きでき、reasoning_effort はモデルと tools に応じて決まる", () => {
+  const cfg = openAiConfig((k) => ({ OPENAI_API_KEY: "k", OPENAI_MODEL: " gpt-5-mini ", OPENAI_REASONING_EFFORT: "medium" })[k]);
+  assert.equal(cfg.model, "gpt-5-mini");
+  assert.equal(cfg.reasoningEffort, "medium");
+  assert.equal(openAiConfig((k) => ({ OPENAI_REASONING_EFFORT: "bogus" })[k]).reasoningEffort, "low");
+  for (const m of ["gpt-6-luna", "gpt-6", "gpt-5-mini", "gpt-5.1", "gpt-5.2-mini", "o3", "o4-mini"]) assert.equal(isReasoningModel(m), true, m);
+  for (const m of ["gpt-4o", "gpt-4.1-mini"]) assert.equal(isReasoningModel(m), false, m);
+  // gpt-6 系 + tools は常に "none"
+  assert.equal(reasoningEffortFor("gpt-6-luna", "high", { tools: true }), "none");
+  assert.equal(reasoningEffortFor("gpt-6-luna", "low"), "low");
+  assert.equal(reasoningEffortFor("gpt-6-luna", undefined), "low");
+  // gpt-5 系は tools があっても設定どおり。"none" は gpt-5.1 以降・gpt-6 系のみ送る
+  assert.equal(reasoningEffortFor("gpt-5-mini", "low", { tools: true }), "low");
+  assert.equal(reasoningEffortFor("gpt-5-mini", "none"), undefined);
+  assert.equal(reasoningEffortFor("gpt-5.1", "none"), "none");
+  assert.equal(reasoningEffortFor("gpt-6-luna", "none"), "none");
+  assert.equal(reasoningEffortFor("gpt-4o", "low", { tools: true }), undefined);
+
+  const tools = [{ type: "function", function: { name: "f", parameters: { type: "object", properties: {} } } }];
+  const luna = { apiKey: "secret", model: "gpt-6-luna", reasoningEffort: "low" };
+  const withTools = buildChatRequest(luna, { messages: [], tools, tool_choice: "auto" });
+  assert.equal(withTools.model, "gpt-6-luna");
+  assert.equal(withTools.reasoning_effort, "none");
+  assert.equal(withTools.apiKey, undefined);
+  assert.equal(buildChatRequest(luna, { messages: [], tools: [], response_format: { type: "json_object" } }).reasoning_effort, "low");
+  assert.equal(buildChatRequest(luna, { messages: [], response_format: { type: "json_object" } }).reasoning_effort, "low");
+  assert.equal(buildChatRequest({ model: "gpt-4o", reasoningEffort: "low" }, { messages: [], reasoning_effort: "high" }).reasoning_effort, undefined);
+});
+
+test("OpenAI: gpt-6-luna の関数呼び出しは全ラウンドで reasoning_effort none を送る", async () => {
+  const seen = [];
+  const fetchImpl = fakeFetch([
+    { body: { model: "gpt-6-luna", choices: [{ finish_reason: "tool_calls", message: { role: "assistant", content: null,
+      tool_calls: [{ id: "call_1", type: "function", function: { name: "get_kpis", arguments: JSON.stringify({ source: "ikyu" }) } }] } }] } },
+    { body: { model: "gpt-6-luna", choices: [{ finish_reason: "stop", message: { role: "assistant", content: "回答" } }] } },
+  ], seen);
+  const r = await answerWithTools({ apiKey: "k", model: "gpt-6-luna", reasoningEffort: "medium" },
+    { ds, messages: [{ role: "user", content: "一休のPVは？" }], ctx: { store: CAVA, from: day(1), to: day(28) } }, { fetchImpl });
+  assert.equal(r.answer, "回答");
+  assert.equal(seen.length, 2);
+  for (const b of seen) { assert.equal(b.model, "gpt-6-luna"); assert.equal(b.reasoning_effort, "none"); assert.ok(b.tools.length > 0); assert.equal(b.temperature, undefined); }
+  // JSON（レポート）は OPENAI_REASONING_EFFORT のまま
+  const seen2 = [];
+  await chatCompletion({ apiKey: "k", model: "gpt-6-luna", reasoningEffort: "medium" }, { messages: [], response_format: { type: "json_object" } },
+    { fetchImpl: fakeFetch([{ body: { choices: [{ message: { role: "assistant", content: "{}" } }] } }], seen2) });
+  assert.equal(seen2[0].reasoning_effort, "medium");
 });
 
 test("Markdownの表示はHTMLをエスケープし、http(s)のリンクだけを許可する", () => {

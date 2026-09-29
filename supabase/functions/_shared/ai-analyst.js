@@ -12,7 +12,7 @@ export const AI_LIMITS = {
   reviewText: 280, reviewsPerCall: 20, titleChars: 100,
   askPerHour: 60, reportsPerHour: 10,
 };
-export const DEFAULT_MODEL = "gpt-5-mini";
+export const DEFAULT_MODEL = "gpt-6-luna";
 const DAY_MS = 86_400_000;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const fail = (message) => { throw new Error(message); };
