@@ -17,3 +17,5 @@ verify_enabled = true
 verify_jwt = false
 [functions.review-worker]
 verify_jwt = false
+[functions.agent-api]
+verify_jwt = false

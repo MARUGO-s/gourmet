@@ -1,5 +1,6 @@
-// 対応サイトのレジストリ。
-// URL / セレクタは雛形です。実運用時は各サイトの管理画面構造に合わせて調整してください。
+// 対応サイトのレジストリ（表示名・色・管理画面URL）。
+// すべてのサイトは外部エージェント（Grok Bot）が取り込む。アプリはここのURL・セレクタでログイン・取得しない。
+// login / fields / reviewsSelector は旧実装の雛形で、エージェント側の参考情報（未検証）。
 export const SOURCES = [
   {
     id: "tabelog",
@@ -11,7 +12,7 @@ export const SOURCES = [
     loginUrl: "https://owner.tabelog.com/owner_account/login/",
     dashboardUrl: "https://owner.tabelog.com/", // ログイン後、店舗管理画面へ
     login: { username: "#login_id", password: "#password", submit: "button[type=submit]" },
-    // 数値抽出は server/scraper.js の extractTabelog（公開ページJSON-LD・アクセス数レポート・来店指標表）
+    // 読み取りは scripts/tabelog/（エージェント側・保存HTMLは scripts/tabelog-html-to-json.mjs）
   },
   {
     id: "hotpepper",
