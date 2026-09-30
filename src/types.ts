@@ -172,3 +172,5 @@ export type AiStatus = { configured: boolean; model: string; limits: { askPerHou
 export type AiAskResult = { answer: string; model: string; calls: { name: string; args: Record<string, unknown> }[]; period: { from: string; to: string }; store: string };
 export type AiReportSummary = { id: string; title: string; storeId: string; storeName: string; from: string; to: string; model: string; createdAt: string };
 export type AiReport = AiReportSummary & { markdown: string; content: Record<string, unknown> };
+export type MtalkRecipient = { id: string; username: string; stores: string[] };
+export type AiReportShare = { id: string; reportId: string | null; reportTitle: string; recipientId: string; recipientName: string; status: "pending" | "sent" | "failed"; error: string | null; createdAt: string; sentAt: string | null };

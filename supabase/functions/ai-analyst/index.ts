@@ -1,20 +1,36 @@
 // AI分析（OpenAI）。利用者の認証は review-api と同じ（Authorization の Supabase JWT を auth.getUser で検証）。
 // データの読み込みは本人のJWTのクライアント（RLS・SELECTのみ）。保存（ai_reports・ai_usage）は検証後に本人の user_id に限定して service_role。
 // モデルは AI_TOOLS の関数だけを呼べ、SQLや表名は受け取らない。OPENAI_API_KEY はブラウザ・応答・ログへ出さない。
+// M-talk 送信（/mtalk-recipients, /reports/:id/share-mtalk, /shares）: ログイン中の利用者が自分のレポートを、M-talk の
+// 有効な利用者1人へ「AI分析」Botのカード＋PDFで送る。PDFはここで作る（Noto Sans JP を埋め込み）。
+// GOURMET_MTALK_TOKEN・MTALK_API_URL は秘密情報。ブラウザ・応答・ログ・エラーへ出さない。送信は毎回 ai_report_shares に記録する。
 import { createClient } from "npm:@supabase/supabase-js@2.116.0";
+import * as PDFLib from "npm:pdf-lib@1.17.1";
+import * as fontkit from "npm:fontkit@2.0.4";
 import { service, json, body } from "../_shared/http.ts";
 import { must, japanDate } from "../_shared/sync-data.js";
 import { AI_LIMITS, REPORT_SCHEMA_HINT, buildReportFacts, composeReportMarkdown, contextMessage, normalizeReportAi, reportPromptFacts, systemPrompt,
   validateAskInput, validateReportInput } from "../_shared/ai-analyst.js";
 import { AiError, answerWithTools, chatCompletion, openAiConfig } from "../_shared/openai.js";
 import { loadAnalystDataset } from "../_shared/ai-data.js";
+import { MTALK_SHARE_LIMITS, MtalkError, buildShareCard, bytesToBase64, mtalkConfig, mtalkRequest, normalizeRecipients, publicShare, senderLabel,
+  shareFileName, validateShareInput } from "../_shared/mtalk-share.js";
+import { loadReportFonts, renderReportPdf } from "../_shared/report-pdf.js";
+import * as fontModule from "../_shared/fonts/noto-sans-jp.js";
 
 const reportPath = /^\/reports\/([0-9a-f-]{36})$/;
 const listColumns = "id,title,store_id,store_name,period_from,period_to,model,created_at";
+const sharePath = /^\/reports\/([0-9a-f-]{36})\/share-mtalk$/;
+const shareColumns = "id,report_id,report_title,recipient_user_id,recipient_name,status,error,created_at,sent_at";
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+let fontCache: Promise<{ regular: Uint8Array; bold: Uint8Array }> | null = null;
+const reportFonts = () => (fontCache ??= loadReportFonts(fontModule).catch((e) => { fontCache = null; throw e; }));
+const jstNow = () => new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 16).replace("T", " ");
 
 Deno.serve(async req => {
   if (req.method === "OPTIONS") return json(req, {});
-  const path = new URL(req.url).pathname.replace(/^.*\/ai-analyst/, "") || "/";
+  const url = new URL(req.url);
+  const path = url.pathname.replace(/^.*\/ai-analyst/, "") || "/";
   const admin = service();
   const token = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
   if (!token) return json(req, { error:"ログインが必要です" }, 401);
@@ -98,8 +114,65 @@ Deno.serve(async req => {
       }).select(`${listColumns},markdown,content`).single());
       return json(req, { report:{ ...publicReport(saved), markdown:saved.markdown, content:saved.content } }, 201);
     }
+
+    // ---------- M-talk 送信 ----------
+    const mtalk = mtalkConfig((k: string) => Deno.env.get(k));
+    if (path === "/mtalk-recipients" && req.method === "GET") {
+      const data = await mtalkRequest(mtalk, "GET", "/recipients", null);
+      return json(req, { recipients:normalizeRecipients(data) });
+    }
+    if (path === "/shares" && req.method === "GET") {
+      const reportId = url.searchParams.get("reportId");
+      if (reportId && !UUID.test(reportId)) return json(req, { error:"レポートIDが不正です" }, 400);
+      let q = client.from("ai_report_shares").select(shareColumns).eq("user_id", user.id).order("created_at", { ascending:false }).limit(50);
+      if (reportId) q = q.eq("report_id", reportId);
+      const rows = await must(q);
+      return json(req, { shares:rows.map(publicShare), configured:mtalk.configured, limits:{ perHour:MTALK_SHARE_LIMITS.perHour } });
+    }
+    if (sharePath.test(path) && req.method === "POST") {
+      let input;
+      try { input = validateShareInput(await body(req, 2_000)); }
+      catch (error) { return json(req, { error:error instanceof SyntaxError ? "送信内容が不正です" : (error as Error).message }, 400); }
+      if (!mtalk.configured) return json(req, { error:"M-talk連携は未設定です（管理者がサーバーに接続情報を設定すると利用できます）" }, 503);
+      const since = new Date(Date.now() - 3600_000).toISOString();
+      const { count, error:countError } = await admin.from("ai_report_shares").select("id", { count:"exact", head:true }).eq("user_id", user.id).gte("created_at", since);
+      if (countError) throw countError;
+      if ((count ?? 0) >= MTALK_SHARE_LIMITS.perHour) return json(req, { error:`M-talkへの送信は1時間に${MTALK_SHARE_LIMITS.perHour}件までです。しばらくしてからお試しください` }, 429);
+      // 本人のレポートだけ（RLSに加えて user_id でも絞る）
+      const reportId = path.split("/")[2];
+      const rows = await must(client.from("ai_reports").select(`${listColumns},markdown,content`).eq("id", reportId).eq("user_id", user.id).limit(1));
+      if (!rows.length) return json(req, { error:"レポートが見つかりません" }, 404);
+      const report = { ...publicReport(rows[0]), markdown:rows[0].markdown, content:rows[0].content };
+      const recipient = normalizeRecipients(await mtalkRequest(mtalk, "GET", "/recipients", null)).find((r: { id: string }) => r.id === input.recipientUserId) as { id: string; username: string } | undefined;
+      if (!recipient) return json(req, { error:"送信先のM-talk利用者が見つからないか、利用停止中です。送信先を選び直してください" }, 404);
+      const sender = senderLabel(user);
+      const share = await must(admin.from("ai_report_shares").insert({
+        user_id:user.id, report_id:report.id, report_title:String(report.title).slice(0, 200), recipient_user_id:recipient.id,
+        recipient_name:recipient.username.slice(0, 200), sender_label:sender, status:"pending",
+      }).select("id").single());
+      try {
+        const pdf = await renderReportPdf({ PDFLib, fontkit, fonts:await reportFonts(), report,
+          meta:[`送信者: ${sender}`, `送信先: ${recipient.username}（M-talk）`, `PDF出力: ${jstNow()}（日本時間）`] });
+        if (pdf.byteLength > MTALK_SHARE_LIMITS.pdfMaxBytes) throw new MtalkError("PDFが大きすぎるため送信できませんでした", 413);
+        const card = buildShareCard(report, { sender });
+        const sent = await mtalkRequest(mtalk, "POST", "/send", {
+          recipient_user_id:recipient.id, report_id:report.id, ...card, pdf_base64:bytesToBase64(pdf), filename:shareFileName(report), dedupe_key:`gourmet:${share.id}`,
+        });
+        const saved = await must(admin.from("ai_report_shares").update({
+          status:"sent", sent_at:new Date().toISOString(), pdf_bytes:pdf.byteLength, error:null,
+          mtalk_group_id:Number(sent.group_id) || null, mtalk_card_message_id:Number(sent.card_message_id) || null, mtalk_file_message_id:Number(sent.file_message_id) || null,
+        }).eq("id", share.id).eq("user_id", user.id).select(shareColumns).single());
+        return json(req, { share:publicShare(saved) }, 201);
+      } catch (error) {
+        const message = error instanceof MtalkError ? error.message : "M-talkへの送信を完了できませんでした";
+        await admin.from("ai_report_shares").update({ status:"failed", error:message.slice(0, 300) }).eq("id", share.id).eq("user_id", user.id)
+          .then(({ error:e }) => { if (e) console.warn("[ai-analyst] share log failed"); });
+        throw error;
+      }
+    }
     return json(req, { error:"ページが見つかりません" }, 404);
   } catch (error) {
+    if (error instanceof MtalkError) return json(req, { error:error.message }, error.status);
     if (error instanceof AiError) return json(req, { error:error.message }, (error as AiError & { status: number }).status);
     // SQLエラー・APIキー・入力をログや応答に出さない
     console.warn("[ai-analyst] failed");

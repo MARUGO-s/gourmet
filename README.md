@@ -350,6 +350,22 @@ INGEST_TOKEN=... node scripts/agent-ingest.mjs payload.json
 3. 関数を配置する: `supabase functions deploy ai-analyst --project-ref ycsqfajidusuibqljjwr --no-verify-jwt`（認証は関数内で`auth.getUser()`、review-apiと同じ）。
 4. PRをmainへマージし、GitHub Pagesの「AI分析」で質問・レポート作成ができることを確認する（キー未設定なら画面に「未設定」と表示されます）。
 
+### AI分析レポートを M-talk へ送る（migration 015・ai-analyst・line_report の mtalk-external-post）
+
+ログイン中の利用者は、自分の保存レポートを M-talk の有効な利用者（利用停止・削除・Botを除く）1人へ送れます。M-talk には専用Bot「AI分析」との1対1で、要点のカード（送信者・店舗・期間・PV・予約・口コミ・未返信・要点3件・施策3件）とレポート全文のPDF（A4、Noto Sans JP 埋め込み）が届きます。送信のたびに`ai_report_shares`へ記録します（送信者・レポート・送信先・日時・M-talkのメッセージID・成否）。1時間に30件まで。
+
+- 画面: AI分析 → レポートを開く →「M-talkに送る」→ 送信先を検索して1人選ぶ → カードのプレビュー → 確認 → 送信。結果はトーストで表示し、レポートの下に送信履歴を出します。
+- API（ai-analyst、本人のJWT必須）: `GET /mtalk-recipients`（M-talkへの中継）、`POST /reports/:id/share-mtalk {recipient_user_id}`（本人のレポートのみ）、`GET /shares?reportId=`（本人の送信記録）。
+- PDFは`_shared/report-pdf.js`（pdf-lib + fontkit v2、`_shared/fonts/noto-sans-jp.js`＝Noto Sans JP Regular/Bold の CP932 サブセット、gzip+base64、SIL OFL 1.1）で関数内で作ります。フォントは`scripts/build-pdf-fonts.py`で作り直せます。収録外の文字（絵文字など）は「〓」になります。`--use-api`配置でも同梱されるよう static_files は使いません。
+- M-talk側の受け口は line_report の`mtalk-external-post`（verify_jwt=false、`Authorization: Bearer GOURMET_MTALK_TOKEN` + `X-Mtalk-Timestamp` + `X-Mtalk-Signature: v1=HMAC-SHA256(token, "v1:<UNIX秒>:<METHOD>:<path>:<本文>")`、±5分）。
+
+配置の順番:
+1. line_report（hocbnifuactbvmyjraxy）に migration `20261001000000_chat_ai_analysis_bot.sql` と関数`mtalk-external-post`を配置し、秘密情報`GOURMET_MTALK_TOKEN`（32文字以上のランダム値）を設定する。
+2. gourmet（ycsqfajidusuibqljjwr）に`015_ai_report_shares.sql`だけを適用する（014と同じ手順）。
+3. gourmet の秘密情報に`GOURMET_MTALK_TOKEN`（1と同じ値）と`MTALK_API_URL`（`https://hocbnifuactbvmyjraxy.supabase.co/functions/v1/mtalk-external-post`）を、OpenAIのキーと同じ一時ファイルの手順で設定する。値はブラウザ・Git・ログに置きません。
+4. `supabase functions deploy ai-analyst --project-ref ycsqfajidusuibqljjwr --no-verify-jwt`。
+5. 画面から自分宛て（またはテスト用の利用者宛て）に1件送り、M-talkにカードとPDFが届くこと、送信履歴が「送信済み」になることを確認する。未設定のときは送信先の読み込みで「M-talk連携は未設定です」と表示されます。
+
 ## 配置・運用
 
 PRを作成してテスト成功後にmainへマージすると、GitHub Pagesへ配置されます。Edge Functionsは別途明示的に配置してください（上記コマンド）。
@@ -371,6 +387,8 @@ DB変更はこのプロジェクトを確認して対象SQLだけ適用します
 2026-09-29: 店舗×サイトごとの自動取得の設定を追加（migration 012 `fetch_schedules`、`review-api /schedules`、`agent-api /schedules/enqueue-due`、`agent-queue.mjs --enqueue-due`）。
 
 2026-09-29: 店舗マスタと店舗の選択・全店舗の比較を追加（migration 013 `stores`・`store_sites`、初期データ`supabase/seed/013_seed_stores.sql`、`review-api /stores`・`/overview`・`/dashboard?store=`）。
+
+2026-10-01: AI分析レポートを M-talk の利用者へ送る機能を追加（migration 015 `ai_report_shares`、`ai-analyst /mtalk-recipients`・`/reports/:id/share-mtalk`・`/shares`、PDFの生成、line_report `mtalk-external-post`）。
 
 ## 参考
 
