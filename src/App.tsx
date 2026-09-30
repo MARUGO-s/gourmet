@@ -32,6 +32,9 @@ const VIEW_TITLES: Record<View, [string, string | null]> = {
 
 export default function App() {
   const [view, setView] = useState<View>("dashboard");
+  // スマートフォン幅のメニュー（ドロワー）の開閉
+  const [menuOpen, setMenuOpen] = useState(false);
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
   const [sources, setSources] = useState<SourceMeta[]>([]);
   const [filter, setFilter] = useState<"all" | string>("all");
   const [data, setData] = useState<DashboardData | null>(null);
@@ -193,7 +196,8 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen">
-      <Sidebar view={choosing ? null : view} onView={onView} signedIn={!!userId} storeName={scopeName} />
+      <Sidebar view={choosing ? null : view} onView={onView} signedIn={!!userId} storeName={scopeName}
+        mobileOpen={menuOpen} onClose={closeMenu} onReselect={userId && scope ? reselect : undefined} />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
           title={title}
@@ -203,6 +207,8 @@ export default function App() {
           signedIn={!!userId}
           openRequests={openCount}
           onRequests={() => setView("requests")}
+          onMenu={() => setMenuOpen(true)}
+          menuOpen={menuOpen}
           switcher={userId && scope ? <StoreSwitcher stores={stores} scope={scope} onChange={selectScope} onReselect={reselect} /> : null}
         />
 
@@ -218,7 +224,7 @@ export default function App() {
           </div>
         ) : null}
 
-        <main className="flex flex-1 flex-col gap-5 px-6 py-6">
+        <main className="flex flex-1 flex-col gap-5 px-4 py-5 md:px-6 md:py-6">
           {choosing ? (
             <StoreSelect stores={stores} sources={sources} loading={!storesLoaded} error={storesError} onSelect={selectScope} onManage={() => setView("stores")} onRetry={refreshStores} />
           ) : view === "overview" ? (

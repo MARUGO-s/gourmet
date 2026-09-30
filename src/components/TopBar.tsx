@@ -11,16 +11,34 @@ type Props = {
   onRequests: () => void;
   // 店舗の切り替え（ログイン中で店舗を選択済みのとき）
   switcher?: ReactNode;
+  // スマートフォン幅のメニュー（ドロワー）を開く
+  onMenu?: () => void;
+  menuOpen?: boolean;
 };
 
 // すべてのサイトは Grok Bot が取り込む。アプリからは取得せず、「取得を依頼」で依頼だけを登録する。
-export default function TopBar({ title, subtitle, lastSync, demo, signedIn, openRequests, onRequests, switcher }: Props) {
+export default function TopBar({ title, subtitle, lastSync, demo, signedIn, openRequests, onRequests, switcher, onMenu, menuOpen = false }: Props) {
   const lastSyncLabel = lastSync
     ? new Date(lastSync).toLocaleString("ja-JP", { dateStyle: "short", timeStyle: "short" })
     : "—";
   return (
-    <header className="no-print flex flex-wrap items-center gap-3 border-b border-line bg-card px-6 py-4">
-      <div className="min-w-0 flex-1">
+    <header className="no-print flex flex-wrap items-center gap-3 border-b border-line bg-card px-4 py-4 md:px-6">
+      {onMenu ? (
+        <button
+          type="button"
+          onClick={onMenu}
+          aria-label="メニュー"
+          aria-controls="mobile-nav"
+          aria-expanded={menuOpen}
+          title="メニュー"
+          className="no-print mobile-nav-toggle -ml-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-line text-ink hover:bg-surface md:hidden"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+      ) : null}
+      <div className="min-w-0 flex-1 basis-[calc(100%-3rem)] md:basis-0">
         <h1 className="truncate text-[15px] leading-tight font-bold tracking-tight">{title}</h1>
         <p className="mt-0.5 text-[11px] font-medium text-faint">
           {subtitle} · データはGrok Botが取り込み · 最終取り込み {lastSyncLabel}
