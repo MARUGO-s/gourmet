@@ -199,7 +199,9 @@ test("OpenAI: 関数呼び出しを実行して回答する", async () => {
   ], seen);
   const r = await answerWithTools({ apiKey: "k", model: "gpt-5-mini", reasoningEffort: "low" },
     { ds, messages: [{ role: "user", content: "一休のPVは？" }], ctx: { store: CAVA, from: day(1), to: day(28) } }, { fetchImpl });
-  assert.equal(r.answer, "## 回答\n一休のPVは280です");
+  // 期間を書かなかった回答には、関数の結果の対象サイト・期間を付け足す
+  assert.equal(r.answer, `## 回答\n一休のPVは280です\n\n（対象: 一休.comレストラン・${day(1)} 〜 ${day(28)}）`);
+  assert.equal(r.verification.status, "verified");
   assert.deepEqual(r.calls, [{ name: "get_kpis", args: { source: "ikyu" } }]);
   assert.deepEqual(r.usage, { prompt_tokens: 30, completion_tokens: 13 });
   assert.equal(seen[0].reasoning_effort, "low");

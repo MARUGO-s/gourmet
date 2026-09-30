@@ -15,11 +15,16 @@ import { must, japanDate } from "../_shared/sync-data.js";
 import { AI_LIMITS, REPORT_SCHEMA_HINT, buildReportFacts, composeReportMarkdown, contextMessage, normalizeReportAi, reportPromptFacts, resolvePeriod, systemPrompt,
   validateAskInput, validateReportInput } from "../_shared/ai-analyst.js";
 import { AiError, answerWithTools, chatCompletion, openAiConfig } from "../_shared/openai.js";
+import { buildEvidence, labelReportSpeculation, sanitizeReportAi, verificationFeedback, verifyReportAi } from "../_shared/answer-verify.js";
+
+// 回答の締め切り（関数の呼び出し・検証・1回の書き直しを含む）。M-talk は line_report 側が100秒で打ち切る
+const ASK_DEADLINE_MS = 90_000;
+const MTALK_DEADLINE_MS = 80_000;
 import { loadAnalystDataset } from "../_shared/ai-data.js";
 import { MTALK_SHARE_LIMITS, MtalkError, buildShareCard, bytesToBase64, mtalkConfig, mtalkRequest, normalizeRecipients, publicShare, senderLabel,
   shareFileName, validateShareInput } from "../_shared/mtalk-share.js";
 import { loadReportFonts, renderReportPdf } from "../_shared/report-pdf.js";
-import { MTALK_CHAT_LIMITS, MTALK_CHAT_PATH, MtalkChatError, mtalkChatPrompt, reportContextMessage, resolveDataOwner, scopedReadClient, splitReply,
+import { MTALK_CHAT_LIMITS, MTALK_CHAT_PATH, MtalkChatError, mtalkChatPrompt, reportContextMessage, reportFactLines, resolveDataOwner, scopedReadClient, splitReply,
   toMtalkPlainText, validateMtalkChatInput, verifyMtalkRequest } from "../_shared/mtalk-chat.js";
 import * as fontModule from "../_shared/fonts/noto-sans-jp.js";
 
@@ -75,9 +80,11 @@ Deno.serve(async req => {
         ...input.history,
         { role:"user", content:input.question },
       ];
-      const result = await answerWithTools(config, { ds, messages, ctx:{ store:input.store, from:input.from, to:input.to } });
+      // 照合の根拠はこの質問の関数の結果と画面の前提（店舗・期間）だけ。会話履歴（過去の回答）は根拠にしない
+      const result: any = await answerWithTools(config, { ds, messages, ctx:{ store:input.store, from:input.from, to:input.to },
+        evidenceTexts:[contextMessage(ds, input)], question:input.question, deadlineMs:ASK_DEADLINE_MS });
       await logUsage("ask", result.model, result.usage);
-      return json(req, { answer:result.answer, model:result.model, calls:result.calls, period:{ from:input.from, to:input.to }, store:input.store });
+      return json(req, { answer:result.answer, model:result.model, calls:result.calls, verification:result.verification, period:{ from:input.from, to:input.to }, store:input.store });
     }
 
     if (path === "/reports" && req.method === "GET") {
@@ -102,18 +109,40 @@ Deno.serve(async req => {
       const ds = await loadAnalystDataset(client, { today });
       if (input.store !== "all" && !ds.stores.some((s: any) => s.id === input.store)) return json(req, { error:"店舗が見つかりません。店舗を選び直してください" }, 404);
       const facts = buildReportFacts(ds, input);
-      const r = await chatCompletion(config, {
-        messages: [
-          { role:"system", content:`${systemPrompt(today)}\n\nこれから渡す集計データ（JSON）だけに基づいて、分析レポートの文章を書きます。数値の表はシステムが別に作成するため、文章では重要な数値だけを引用してください。${REPORT_SCHEMA_HINT}` },
-          { role:"user", content:`${input.focus ? `特に知りたいこと: ${input.focus}\n\n` : ""}集計データ:\n${reportPromptFacts(facts)}` },
-        ],
-        response_format:{ type:"json_object" }, max_completion_tokens:12000,
-      }, { timeoutMs:140_000 });
-      if (!r.message.content) throw new AiError(r.finishReason === "length" ? "AIの出力が上限に達しました。期間を短くしてお試しください" : "AIからレポートが得られませんでした", 502);
-      const ai = normalizeReportAi(r.message.content);
+      const promptFacts = reportPromptFacts(facts);
+      const reportMessages: any[] = [
+        { role:"system", content:`${systemPrompt(today)}\n\nこれから渡す集計データ（JSON）だけに基づいて、分析レポートの文章を書きます。数値の表はシステムが別に作成するため、文章では重要な数値だけを引用してください。集計データに無い数値・日付・件数は書かず、推測は「（推測）」と明記してください。${REPORT_SCHEMA_HINT}` },
+        { role:"user", content:`${input.focus ? `特に知りたいこと: ${input.focus}\n\n` : ""}集計データ:\n${promptFacts}` },
+      ];
+      const started = Date.now();
+      const generate = async (timeoutMs: number) => {
+        const res = await chatCompletion(config, { messages:reportMessages, response_format:{ type:"json_object" }, max_completion_tokens:12000 }, { timeoutMs });
+        if (!res.message.content) throw new AiError(res.finishReason === "length" ? "AIの出力が上限に達しました。期間を短くしてお試しください" : "AIからレポートが得られませんでした", 502);
+        return res;
+      };
+      // 文章の数値・日付・件数を集計データと照合。合わなければ時間に余裕があるときだけ1回書き直し、それでも合わない文は削る
+      const evidence = buildEvidence([promptFacts], { allowedText:input.focus ?? "" });
+      let r = await generate(140_000);
+      let ai = normalizeReportAi(r.message.content);
+      let check = verifyReportAi(ai, evidence);
+      let usage = r.usage;
+      if (!check.ok && Date.now() - started < 60_000) {
+        reportMessages.push({ role:"assistant", content:r.message.content }, { role:"user", content:`${verificationFeedback(check.issues)}\n同じJSON形式で全体を出し直してください。` });
+        try {
+          const r2 = await generate(Math.max(20_000, 140_000 - (Date.now() - started)));
+          const ai2 = normalizeReportAi(r2.message.content);
+          const check2 = verifyReportAi(ai2, evidence);
+          usage = { prompt_tokens:(usage?.prompt_tokens ?? 0) + (r2.usage?.prompt_tokens ?? 0), completion_tokens:(usage?.completion_tokens ?? 0) + (r2.usage?.completion_tokens ?? 0) };
+          if (check2.issues.length <= check.issues.length) { r = r2; ai = ai2; check = check2; }
+        } catch (error) {
+          if (!(error instanceof AiError)) throw error; // 書き直しに失敗したら1回目を削って使う
+        }
+      }
+      if (!check.ok) ai = sanitizeReportAi(ai, check.issues);
+      ai = labelReportSpeculation(ai);
       const title = input.title || ai.title || `${facts.store.name} 分析レポート（${input.from}〜${input.to}）`;
       const markdown = composeReportMarkdown(facts, ai, { title, model:r.model });
-      await logUsage("report", r.model, r.usage);
+      await logUsage("report", r.model, usage);
       const saved = await must(admin.from("ai_reports").insert({
         user_id:user.id, store_id:input.store === "all" ? null : input.store, store_name:facts.store.name, period_from:input.from, period_to:input.to,
         title:title.slice(0, 200), markdown, content:{ version:1, facts, ai, focus:input.focus || null }, model:String(r.model).slice(0, 100),
@@ -238,13 +267,15 @@ async function mtalkChat(req: Request, admin: ReturnType<typeof service>): Promi
       ...input.history,
       { role:"user", content:input.question },
     ];
-    const result: any = await answerWithTools(config, { ds, messages, ctx:ask, maxTokens:4000 });
+    // line_report 側は100秒で打ち切るので、書き直しを含めて80秒以内に返す
+    const result: any = await answerWithTools(config, { ds, messages, ctx:ask, maxTokens:4000,
+      evidenceTexts:[contextMessage(ds, ask), reportFactLines(report)], question:input.question, deadlineMs:MTALK_DEADLINE_MS });
     await admin.from("ai_usage").insert({ user_id:owner.userId, kind:"mtalk", mtalk_user_id:input.mtalkUserId, model:String(result.model).slice(0, 100),
       prompt_tokens:result.usage?.prompt_tokens ?? null, completion_tokens:result.usage?.completion_tokens ?? null })
       .then(({ error }) => { if (error) console.warn("[ai-analyst] mtalk usage log failed"); });
     const parts = splitReply(toMtalkPlainText(result.answer));
     if (!parts.length) return plainJson({ error:"AIから回答が得られませんでした。質問を変えてお試しください" }, 502);
-    return plainJson({ parts, model:result.model, calls:result.calls.length, owner:owner.via, report:report ? { id:report.id, title:report.title } : null });
+    return plainJson({ parts, model:result.model, calls:result.calls.length, verification:result.verification?.status ?? null, owner:owner.via, report:report ? { id:report.id, title:report.title } : null });
   } catch (error) {
     if (error instanceof AiError) return plainJson({ error:error.message }, (error as AiError & { status: number }).status);
     console.warn("[ai-analyst] mtalk-chat failed");
