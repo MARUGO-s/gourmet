@@ -383,24 +383,24 @@ M-talk の利用者が「AI分析」Botとの1対1に文章を書くと、数秒
 2. `supabase functions deploy ai-analyst --project-ref ycsqfajidusuibqljjwr --no-verify-jwt`。
 3. line_report 側（migration と mtalk-external-post）を配置する。
 
-### 口コミ通知（migration 017・agent-api・review-api `/alert-settings`・line_report の mtalk-external-post `/alert`）
+### 口コミ通知（migration 017・018・agent-api・review-api `/alert-settings`・line_report の mtalk-external-post `/alert`・`/store-bots`）
 
-取り込み（自動取得・取得依頼・手動のどれでも）で**新しい口コミ**（DBに無かった口コミ）が入ったとき、または**食べログの総合点**が前回の値から変わったとき（例「3.26 → 3.28」）に、M-talk の「AI分析」Botから1対1で送ります。
+取り込み（自動取得・取得依頼・手動のどれでも）で**新しい口コミ**（DBに無かった口コミ）が入ったとき、または**食べログの総合点**が前回の値から変わったとき（例「3.26 → 3.28」）に、その店舗の **M-talk 店舗Bot** として、Bot が参加している**グループのルーム**（1対1・ゴミ箱は除く）へ送ります。ルームの全員に見えます。
 
 - 検出: DB トリガー（取り込みと同じトランザクション）が`review_alert_events`に1回だけ記録します。口コミは サイト×店舗×口コミ（食べログは`B<数字>`単位で、抜粋と全文は同じ口コミ）、総合点は 変化前→変化後×日付 で一意。
 - 初回の安全策: その店舗×サイトで初めて取り込んだ口コミ（＝機能の開始前からある口コミ）は`baseline`（送らない）。投稿日が60日より前の口コミも`skipped`。総合点は前回の値がある場合だけ（初回は比べない）。
-- 送信: agent-api が`/ingest`の直後と`/requests/pending`（Grok Bot が数分ごと）のたびにバックグラウンドで送ります（`/alerts/dispatch`で即時も可）。店舗ごとに1通へまとめ、総合点の変化カード＋口コミカード10件まで（残りは「ほか N件」とアプリへのリンク）。口コミは サイト・評価・投稿日・来店・タイトル・本文（1000文字まで）・リンク（食べログ: 口コミページ、一休: 店舗管理画面の口コミ一覧）。
-- 二重送信の防止: ① events の一意キー ② 送信先ごとの記録`review_alert_deliveries`（batch×送信先）③ M-talk の`chat_alert_dispatches`（`gourmet-alert:<batch>`）。送れなかったものは同じ batch で最大5回やり直し、送信先が見つからない（404）はやり直しません。
-- 設定: 画面「口コミ通知」で店舗ごとに 新着口コミ／食べログ総合点の変化 のオン・オフと送信先（M-talk の利用者、複数）。設定が無い店舗は両方オン・送信先 itagawa yoshito。履歴（送信・検出）も同じ画面に出ます。
-- API（review-api、本人のJWT必須）: `GET /alert-settings`、`POST /alert-settings {storeId,newReviews,scoreChanges,recipients:[{id,name}]}`、`GET /alert-log`。
-- 新しい秘密情報はありません（ai-analyst と同じ`MTALK_API_URL`・`GOURMET_MTALK_TOKEN`を agent-api も使います）。未設定のときは送らずに待ちます。
+- 店舗Bot: 既定は**自動**（gourmet の店舗名と M-talk の店舗Botの名前・店舗キーを、全角/半角・大小文字・空白・記号・末尾の「店」「bot」を無視し、よく使うカタカナ⇔英字の読み（マルゴ⇔MARUGO、サンナナイチ⇔371 など）を揃えて比べる。1つに決まらなければ決めない）。画面で Bot を指定・「送らない」にでき、ルームも選べます（未選択＝参加している全グループ）。Bot が決まらない店舗は送らず、`skipped`（「M-talkの店舗Botが未設定」）として記録し、画面に「未設定」と出します。
+- 送信: agent-api が`/ingest`の直後と`/requests/pending`（Grok Bot が数分ごと）のたびにバックグラウンドで送ります（`/alerts/dispatch`で即時も可）。店舗ごとに1通へまとめ、総合点の変化カード＋口コミカード10件まで（残りは「ほか N件」とアプリへのリンク）。
+- 二重送信の防止: ① events の一意キー ② 送信の記録`review_alert_deliveries`（batch×Bot、ルームごとの結果は`rooms`）③ M-talk の`chat_alert_dispatches`（ルームごと、`gourmet-alert:<batch>`）。送れなかったものは同じ batch で最大5回やり直し（送信済みのルームには再投稿しない）、Bot・ルームが見つからない（404）はやり直しません。
+- API（review-api、本人のJWT必須）: `GET /alert-settings`（設定・M-talk の店舗Botとルーム・判定結果）、`POST /alert-settings {storeId,newReviews,scoreChanges,bot:{mode:"auto"|"manual"|"none",id?,name?},roomIds?:[…]|null}`、`GET /alert-log`。
+- 個人宛て（migration 017 の`recipients`）は互換のため列を残しますが、送信には使いません。
+- 新しい秘密情報はありません（ai-analyst と同じ`MTALK_API_URL`・`GOURMET_MTALK_TOKEN`）。未設定のときは送らずに待ちます。
 
-配置の順番:
+配置の順番（店舗Bot への変更）:
 
-1. line_report の`mtalk-external-post`（`POST /alert`を追加。migration なし）を配置する。
-2. gourmet に`017_review_alerts.sql`だけを適用する（`supabase db query --linked -f supabase/migrations/017_review_alerts.sql`）。既存の口コミは記録しません（トリガーは新しく入った行だけ）。
-3. `supabase functions deploy agent-api --project-ref ycsqfajidusuibqljjwr --no-verify-jwt`と`review-api`（同じオプション）。
-4. PRをマージして画面（GitHub Pages）を配置し、Grok Bot の作業用の複製（`scripts/`）を更新する（食べログの`publicUrl`のため）。
+1. line_report の`mtalk-external-post`（`GET /store-bots`と`POST /alert`の`bot_id`を追加。migration なし。個人宛ての`recipient_user_id`も当面受け付ける）を配置する。
+2. gourmet に`018_review_alerts_store_bots.sql`だけを適用する（`supabase db query --linked -f supabase/migrations/018_review_alerts_store_bots.sql`）。列の追加だけで既存の行は変えません。
+3. `agent-api`・`review-api`を`--no-verify-jwt`で配置し、PRをマージして画面を配置する。
 
 ## 配置・運用
 
@@ -423,6 +423,8 @@ DB変更はこのプロジェクトを確認して対象SQLだけ適用します
 2026-09-29: 店舗×サイトごとの自動取得の設定を追加（migration 012 `fetch_schedules`、`review-api /schedules`、`agent-api /schedules/enqueue-due`、`agent-queue.mjs --enqueue-due`）。
 
 2026-09-29: 店舗マスタと店舗の選択・全店舗の比較を追加（migration 013 `stores`・`store_sites`、初期データ`supabase/seed/013_seed_stores.sql`、`review-api /stores`・`/overview`・`/dashboard?store=`）。
+
+2026-10-01: 口コミ通知の送り先を個人宛てから M-talk の店舗Bot（店舗名で自動判定・画面で指定）が参加しているグループのルームへ変更（migration 018、line_report `mtalk-external-post /store-bots`）。
 
 2026-10-01: 口コミ通知を追加（migration 017 `review_alert_settings`・`review_alert_events`・`review_alert_deliveries`・`source_stores.public_url`、`agent-api /alerts/dispatch`、`review-api /alert-settings`・`/alert-log`、画面「口コミ通知」、line_report `mtalk-external-post /alert`）。
 

@@ -12,7 +12,8 @@
 //   POST /agent-api/schedules/enqueue-due  自動取得の設定（fetch_schedules）のうち予定時刻を過ぎたものを取得依頼にする
 //   POST /agent-api/alerts/dispatch        口コミ通知（新着口コミ・総合点の変化）の送信待ちを M-talk へ送る（結果を返す）
 // 口コミ通知は取り込み（/ingest）の直後と取得依頼の確認（/requests/pending、Grok Bot が数分ごと）のたびにバックグラウンドでも送る。
-// 検出は DB トリガー（migration 017）。送信は line_report mtalk-external-post POST /alert（GOURMET_MTALK_TOKEN + HMAC、ai-analyst と同じ秘密情報）。
+// 検出は DB トリガー（migration 017）。送信は店舗の M-talk 店舗Botとして、その Bot が参加しているグループのルームへ
+// line_report mtalk-external-post POST /alert（GOURMET_MTALK_TOKEN + HMAC、ai-analyst と同じ秘密情報）。Bot の自動判定は GET /store-bots。
 import { service, body } from "../_shared/http.ts";
 import { decrypt } from "../_shared/crypto.ts";
 import { must } from "../_shared/sync-data.js";
@@ -22,7 +23,7 @@ import { normalizeIkyuIngest } from "../_shared/ikyu-data.js";
 import { normalizeSourceIngest } from "../_shared/source-ingest.js";
 import { publicRequest, validateFinish } from "../_shared/agent-requests.js";
 import { enqueueDueSchedules, supabaseScheduleStore, ENQUEUE_LIMIT } from "../_shared/fetch-schedules.js";
-import { ALERT_LIMITS, ALERT_PATH, dispatchReviewAlerts, supabaseAlertStore } from "../_shared/review-alerts.js";
+import { ALERT_LIMITS, ALERT_PATH, STORE_BOTS_PATH, dispatchReviewAlerts, normalizeStoreBots, supabaseAlertStore } from "../_shared/review-alerts.js";
 import { mtalkConfig, mtalkRequest } from "../_shared/mtalk-share.js";
 
 // 口コミ通知の送信（同時に2つ走っても claim_review_alert_events が1回だけ確保する）。失敗しても取り込みの応答には影響させない
@@ -30,7 +31,8 @@ function runAlerts(admin: any, userId: string) {
   const mtalk = mtalkConfig((k: string) => Deno.env.get(k));
   return dispatchReviewAlerts(supabaseAlertStore(admin, userId), {
     configured: mtalk.configured,
-    send: (_recipient: string, payload: unknown) => mtalkRequest(mtalk, "POST", ALERT_PATH, payload, { timeoutMs: ALERT_LIMITS.timeoutMs }),
+    send: (_bot: string, payload: unknown) => mtalkRequest(mtalk, "POST", ALERT_PATH, payload, { timeoutMs: ALERT_LIMITS.timeoutMs }),
+    listBots: async () => normalizeStoreBots(await mtalkRequest(mtalk, "GET", STORE_BOTS_PATH, null, { timeoutMs: ALERT_LIMITS.timeoutMs })),
   });
 }
 function alertsInBackground(admin: any, userId: string) {

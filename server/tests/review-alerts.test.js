@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import {
-  ALERT_LIMITS, DEFAULT_ALERT_RECIPIENTS, buildAlertMessage, describeAlert, dispatchReviewAlerts, publicAlertSettings, ratingText,
+  ALERT_LIMITS, NO_BOT_REASON, buildAlertMessage, describeAlert, dispatchReviewAlerts, matchStoreBot, normalizeStoreBots, publicAlertSettings, ratingText,
   resolveAlertSettings, reviewLink, validateAlertSettingsInput, publicAlertEvent,
 } from "../../supabase/functions/_shared/review-alerts.js";
 import { mtalkRequest } from "../../supabase/functions/_shared/mtalk-share.js";
@@ -17,29 +17,95 @@ const OTHER = "11111111-2222-4333-8444-555555555555";
 const ME = "3186a986-547f-41c0-81c2-56f9427e123c";
 const PUBLIC = "https://tabelog.com/tokyo/A1309/A130903/13245351/";
 const migration = fs.readFileSync(new URL("../../supabase/migrations/017_review_alerts.sql", import.meta.url), "utf8");
+const migration018 = fs.readFileSync(new URL("../../supabase/migrations/018_review_alerts_store_bots.sql", import.meta.url), "utf8");
 
-// ---------- 設定 ----------
-test("alert settings: only own stores, booleans, unique recipients, recipients required when on", () => {
-  const ok = validateAlertSettingsInput({ storeId: STORE.toUpperCase(), newReviews: true, scoreChanges: false, recipients: [{ id: ME, name: " itagawa\n yoshito " }] }, [STORE]);
-  assert.deepEqual(ok, { store_id: STORE, new_reviews: true, score_changes: false, recipients: [{ id: ME, name: "itagawa yoshito" }] });
-  assert.throws(() => validateAlertSettingsInput({ storeId: OTHER, newReviews: true, scoreChanges: true, recipients: [{ id: ME }] }, [STORE]), /店舗/);
-  assert.throws(() => validateAlertSettingsInput({ storeId: STORE, newReviews: "yes", scoreChanges: true, recipients: [{ id: ME }] }, [STORE]), /true/);
-  assert.throws(() => validateAlertSettingsInput({ storeId: STORE, newReviews: true, scoreChanges: true, recipients: [{ id: ME }, { id: ME.toUpperCase() }] }, [STORE]), /重複/);
-  assert.throws(() => validateAlertSettingsInput({ storeId: STORE, newReviews: true, scoreChanges: true, recipients: [{ id: "x" }] }, [STORE]), /不正/);
-  assert.throws(() => validateAlertSettingsInput({ storeId: STORE, newReviews: true, scoreChanges: true, recipients: [] }, [STORE]), /1人以上/);
-  const many = Array.from({ length: ALERT_LIMITS.recipients + 1 }, (_, i) => ({ id: `3186a986-547f-41c0-81c2-${String(i).padStart(12, "0")}` }));
-  assert.throws(() => validateAlertSettingsInput({ storeId: STORE, newReviews: true, scoreChanges: true, recipients: many }, [STORE]), /20人/);
-  // 両方オフなら送信先なしでも保存できる
-  assert.deepEqual(validateAlertSettingsInput({ storeId: STORE, newReviews: false, scoreChanges: false, recipients: [] }, [STORE]).recipients, []);
+// ---------- 店舗Bot の判定（実際の gourmet 24店舗 × M-talk 店舗Bot 22件） ----------
+const BOTS = `barpelota|バルぺロタ
+bistrocavacava|Bistro CAVACAVA
+briccola|トラットリア ブリッコラ
+claudia2|クラウディア2
+donaiya|元祖どないや 新宿三丁目店
+erics|エリックスバイエリックトロション
+marugo|MARUGO
+marugoD|マルゴ D
+marugogrande|マルゴ グランデ
+marugomarunouchi|マルゴ丸の内
+marugootto|マルゴ オット
+marugoS|マルゴエス
+marugosecond|マルゴ セカンド
+marugoshinbashi|マルゴ 新橋
+marugoyotsuya|マルゴ 四谷
+mitan|ミタン
+sannanaichi|サンナナイチ バル
+sauvage|ソバージュ
+shenlong|シェンロン&クラウディア
+sushikoruri|鮨こるり
+violette|ヴィオレット
+yakinikumarugo|焼肉マルゴ`.split("\n").map((l, i) => {
+  const [storeKey, username] = l.split("|");
+  return { id: `285666af-5fbb-43a9-88e2-${String(i).padStart(12, "0")}`, username, storeKey, rooms: [{ id: 100 + i, name: username, isStoreRoom: true, members: 5 }] };
+});
+const CAVA_BOT = BOTS.find((b) => b.storeKey === "bistrocavacava");
+const GOURMET_STORES = ["MARUGO-D", "MARUGO-OTTO", "元祖どないや新宿三丁目", "鮨こるり", "MARUGO", "MARUGO2", "MARUGO GRANDE", "MARUGO MARUNOUCHI", "マルゴ新橋", "マルゴS",
+  "MARUGO YOTSUYA", "371BAR", "三三五五", "BAR PELOTA", "Claudia2", "BISTRO CAVACAVA", "eric'S", "MITAN", "焼肉マルゴ", "SOBA-JU", "Bar Violet", "X&C", "トラットリア ブリッコラ", "BLU NERO"];
+
+test("store bot matching: 21 of the 24 gourmet stores match one M-talk store bot by name", () => {
+  const got = Object.fromEntries(GOURMET_STORES.map((n) => [n, matchStoreBot(n, BOTS)?.bot.storeKey ?? null]));
+  assert.deepEqual(got, {
+    "MARUGO-D": "marugoD", "MARUGO-OTTO": "marugootto", "元祖どないや新宿三丁目": "donaiya", "鮨こるり": "sushikoruri", MARUGO: "marugo", MARUGO2: "marugosecond",
+    "MARUGO GRANDE": "marugogrande", "MARUGO MARUNOUCHI": "marugomarunouchi", "マルゴ新橋": "marugoshinbashi", "マルゴS": "marugoS", "MARUGO YOTSUYA": "marugoyotsuya",
+    "371BAR": "sannanaichi", "三三五五": null, "BAR PELOTA": "barpelota", Claudia2: "claudia2", "BISTRO CAVACAVA": "bistrocavacava", "eric'S": "erics", MITAN: "mitan",
+    "焼肉マルゴ": "yakinikumarugo", "SOBA-JU": "sauvage", "Bar Violet": "violette", "X&C": null, "トラットリア ブリッコラ": "briccola", "BLU NERO": null,
+  });
+  assert.equal(Object.values(got).filter(Boolean).length, 21);
+  // 全角・半角・空白・記号・「bot」・カタカナ読みの違いは同じ店
+  for (const n of ["ＢＩＳＴＲＯ　ＣＡＶＡＣＡＶＡ", "bistro cava cava", "Bistro CAVACAVA bot", "ビストロ カヴァカヴァ", "BISTRO CAVA CAVA", "サヴァサヴァ"]) {
+    assert.equal(matchStoreBot(n, BOTS)?.bot.id, CAVA_BOT.id, n);
+  }
+  assert.equal(matchStoreBot("BISTRO CAVACAVA", [...BOTS, { ...CAVA_BOT, id: "11111111-1111-4111-8111-111111111111" }]), null, "2つに当たるときは決めない");
+  assert.equal(matchStoreBot("", BOTS), null);
+  assert.equal(matchStoreBot("MARUGO", null), null);
 });
 
-test("alert settings default to both on and itagawa yoshito", () => {
-  assert.deepEqual(resolveAlertSettings(null), { newReviews: true, scoreChanges: true, recipients: [{ ...DEFAULT_ALERT_RECIPIENTS[0] }], isDefault: true });
-  assert.equal(DEFAULT_ALERT_RECIPIENTS[0].id, ME);
-  const [a, b] = publicAlertSettings([{ id: STORE, name: "BISTRO CAVA CAVA" }, { id: OTHER, name: "店B" }],
-    [{ store_id: OTHER, new_reviews: false, score_changes: true, recipients: [{ id: ME, name: "i" }, { id: "bad" }], updated_at: "2026-10-01T00:00:00Z" }]);
-  assert.equal(a.isDefault, true);
-  assert.deepEqual([b.newReviews, b.scoreChanges, b.recipients.length, b.isDefault, b.updatedAt], [false, true, 1, false, "2026-10-01T00:00:00Z"]);
+// ---------- 設定 ----------
+test("alert settings: own stores only, bot auto/manual/none, rooms only with a chosen bot", () => {
+  const BOT = CAVA_BOT.id;
+  assert.deepEqual(validateAlertSettingsInput({ storeId: STORE.toUpperCase(), newReviews: true, scoreChanges: false, bot: { mode: "auto" } }, [STORE]),
+    { store_id: STORE, new_reviews: true, score_changes: false, mtalk_bot_mode: "auto", mtalk_bot_id: null, mtalk_bot_name: null, mtalk_room_ids: null });
+  assert.deepEqual(validateAlertSettingsInput({ storeId: STORE, newReviews: true, scoreChanges: true, bot: { mode: "manual", id: BOT.toUpperCase(), name: " Bistro\n CAVACAVA " }, roomIds: [5, 30, 5] }, [STORE]),
+    { store_id: STORE, new_reviews: true, score_changes: true, mtalk_bot_mode: "manual", mtalk_bot_id: BOT, mtalk_bot_name: "Bistro CAVACAVA", mtalk_room_ids: [5, 30] });
+  assert.equal(validateAlertSettingsInput({ storeId: STORE, newReviews: true, scoreChanges: true, bot: { mode: "manual", id: BOT }, roomIds: [] }, [STORE]).mtalk_room_ids, null, "空＝全グループ");
+  assert.equal(validateAlertSettingsInput({ storeId: STORE, newReviews: true, scoreChanges: true, bot: { mode: "none" } }, [STORE]).mtalk_bot_mode, "none");
+  assert.equal(validateAlertSettingsInput({ storeId: STORE, newReviews: true, scoreChanges: true }, [STORE]).mtalk_bot_mode, "auto", "省略は自動");
+  assert.ok(!("recipients" in validateAlertSettingsInput({ storeId: STORE, newReviews: true, scoreChanges: true, recipients: [{ id: ME }] }, [STORE])), "個人宛ては保存しない（互換のため列は残す）");
+  assert.throws(() => validateAlertSettingsInput({ storeId: OTHER, newReviews: true, scoreChanges: true }, [STORE]), /店舗/);
+  assert.throws(() => validateAlertSettingsInput({ storeId: STORE, newReviews: "yes", scoreChanges: true }, [STORE]), /true/);
+  assert.throws(() => validateAlertSettingsInput({ storeId: STORE, newReviews: true, scoreChanges: true, bot: { mode: "x" } }, [STORE]), /店舗Bot/);
+  assert.throws(() => validateAlertSettingsInput({ storeId: STORE, newReviews: true, scoreChanges: true, bot: { mode: "manual", id: "x" } }, [STORE]), /選んで/);
+  assert.throws(() => validateAlertSettingsInput({ storeId: STORE, newReviews: true, scoreChanges: true, bot: { mode: "auto" }, roomIds: [5] }, [STORE]), /指定/);
+  assert.throws(() => validateAlertSettingsInput({ storeId: STORE, newReviews: true, scoreChanges: true, bot: { mode: "manual", id: BOT }, roomIds: [1.5] }, [STORE]), /ルーム/);
+  assert.throws(() => validateAlertSettingsInput({ storeId: STORE, newReviews: true, scoreChanges: true, bot: { mode: "manual", id: BOT }, roomIds: Array.from({ length: 21 }, (_, i) => i + 1) }, [STORE]), /20件/);
+});
+
+test("alert settings default to both on with the store bot matched by name; old recipient rows still read", () => {
+  assert.deepEqual(resolveAlertSettings(null), { newReviews: true, scoreChanges: true, botMode: "auto", botId: null, botName: null, roomIds: null, isDefault: true });
+  const legacy = resolveAlertSettings({ new_reviews: true, score_changes: false, recipients: [{ id: ME, name: "i" }] });
+  assert.deepEqual([legacy.botMode, legacy.scoreChanges], ["auto", false], "migration 018 以前の行（個人宛て）も自動判定で読む");
+  const [cava, blu, manual, none] = publicAlertSettings(
+    [{ id: STORE, name: "BISTRO CAVACAVA" }, { id: OTHER, name: "BLU NERO" }, { id: "a", name: "X&C" }, { id: "b", name: "MARUGO" }],
+    [{ store_id: "a", mtalk_bot_mode: "manual", mtalk_bot_id: BOTS[18].id, mtalk_bot_name: "旧名", mtalk_room_ids: [118] }, { store_id: "b", mtalk_bot_mode: "none" }], BOTS);
+  assert.deepEqual(cava.bot, { id: CAVA_BOT.id, name: "Bistro CAVACAVA", how: "exact" });
+  assert.equal(blu.bot, null, "未設定");
+  assert.deepEqual([manual.bot.name, manual.bot.how, manual.roomIds], ["シェンロン&クラウディア", "manual", [118]], "指定の Bot は今の名前で出す");
+  assert.equal(none.bot, null);
+  const offline = publicAlertSettings([{ id: "a", name: "X&C" }, { id: STORE, name: "BISTRO CAVACAVA" }], [{ store_id: "a", mtalk_bot_mode: "manual", mtalk_bot_id: BOTS[18].id, mtalk_bot_name: "旧名" }], null);
+  assert.deepEqual([offline[0].bot?.name, offline[1].bot], ["旧名", null], "Bot 一覧が読めないとき: 指定は保存名、自動は判定できない");
+});
+
+test("store bot list from M-talk is sanitized", () => {
+  const got = normalizeStoreBots({ bots: [{ id: CAVA_BOT.id.toUpperCase(), username: " Bistro CAVACAVA ", store_key: "bistrocavacava", rooms: [{ id: 5, name: "Bistro CAVACAVA", is_store_room: true, members: 6 }, { id: "x" }] }, { id: "bad", username: "x" }] });
+  assert.deepEqual(got, [{ id: CAVA_BOT.id, username: "Bistro CAVACAVA", storeKey: "bistrocavacava", rooms: [{ id: 5, name: "Bistro CAVACAVA", isStoreRoom: true, members: 6 }] }]);
+  assert.deepEqual(normalizeStoreBots(null), []);
 });
 
 // ---------- 通知の内容 ----------
@@ -90,7 +156,7 @@ test("message: score changes first, newest 10 reviews, rest as more_count, text 
 });
 
 // ---------- 送信（偽の store で手順を確認） ----------
-function fakeStore(events, { settings = new Map(), sites = { "tabelog/13245351": { id: STORE, name: "BISTRO CAVA CAVA" } } } = {}) {
+function fakeStore(events, { settings = new Map(), sites = { "tabelog/13245351": { id: STORE, name: "BISTRO CAVACAVA" } } } = {}) {
   const db = { events: events.map((e) => ({ status: "pending", batch_id: null, attempts: 0, ...e })), deliveries: [] };
   return {
     db,
@@ -113,91 +179,107 @@ function fakeStore(events, { settings = new Map(), sites = { "tabelog/13245351":
   };
 }
 const ids = () => { let n = 0; return () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`; };
+const listBots = async () => BOTS;
+const okRooms = (rooms = [{ group_id: 5, name: "Bistro CAVACAVA", message_id: 70 }, { group_id: 30, name: "BistroCAVACAVA", message_id: 71 }]) => ({ ok: true, bot_id: CAVA_BOT.id, rooms, deduplicated: false });
 
-test("dispatch: one message per store to each recipient, dedupe key per batch, nothing sent twice", async () => {
+test("dispatch: one message per store as the matched store bot to its rooms, dedupe key per batch, nothing sent twice", async () => {
   const store = fakeStore([review(1), review(2), score(3.26, 3.28)]);
   const sent = [];
-  const send = async (to, body) => { sent.push({ to, body }); return { ok: true, group_id: 7, message_id: 70 }; };
-  const r = await dispatchReviewAlerts(store, { send, newId: ids() });
+  const send = async (to, body) => { sent.push({ to, body }); return okRooms(); };
+  const r = await dispatchReviewAlerts(store, { send, listBots, newId: ids() });
   assert.deepEqual([r.claimed, r.sent, r.retry, r.failed], [3, 3, 0, 0]);
   assert.equal(sent.length, 1);
-  assert.equal(sent[0].to, ME);
-  assert.equal(sent[0].body.recipient_user_id, ME);
+  assert.equal(sent[0].to, CAVA_BOT.id);
+  assert.equal(sent[0].body.bot_id, CAVA_BOT.id);
+  assert.ok(!("room_ids" in sent[0].body), "未選択＝Bot が参加している全グループ（M-talk 側で決める）");
+  assert.ok(!("recipient_user_id" in sent[0].body), "個人宛てには送らない");
   assert.equal(sent[0].body.dedupe_key, "gourmet-alert:00000000-0000-4000-8000-000000000001");
-  assert.equal(sent[0].body.reviews.length, 2);
-  assert.equal(sent[0].body.score_changes.length, 1);
-  assert.deepEqual(store.db.deliveries.map((d) => [d.status, d.new_reviews, d.score_changes, d.mtalk_message_id]), [["sent", 2, 1, 70]]);
+  assert.deepEqual([sent[0].body.reviews.length, sent[0].body.score_changes.length], [2, 1]);
+  const [d] = store.db.deliveries;
+  assert.deepEqual([d.status, d.target, d.recipient_name, d.new_reviews, d.score_changes, d.mtalk_group_id, d.mtalk_message_id], ["sent", "bot", "Bistro CAVACAVA", 2, 1, 5, 70]);
+  assert.deepEqual(d.rooms.map((x) => x.id), [5, 30]);
+  assert.match(r.messages[0], /→ Bistro CAVACAVA$/);
   assert.ok(store.db.events.every((e) => e.status === "sent"));
-  const again = await dispatchReviewAlerts(store, { send, newId: ids() });
+  const again = await dispatchReviewAlerts(store, { send, listBots, newId: ids() });
   assert.equal(again.claimed, 0);
   assert.equal(sent.length, 1);
 });
 
-test("dispatch: settings off → skipped with reason; no recipients → skipped", async () => {
-  const settings = new Map([[STORE, { store_id: STORE, new_reviews: false, score_changes: true, recipients: [{ id: ME, name: "i" }] }]]);
-  const store = fakeStore([review(1), score(3.26, 3.28)], { settings });
-  const sent = [];
-  const r = await dispatchReviewAlerts(store, { send: async (to, b) => { sent.push(b); return {}; }, newId: ids() });
-  assert.deepEqual([r.sent, r.skipped], [1, 1]);
-  assert.equal(sent[0].reviews.length, 0);
-  assert.equal(store.db.events.find((e) => e.kind === "new_review").reason, "通知の設定がオフ");
-  const none = fakeStore([review(1)], { settings: new Map([[STORE, { store_id: STORE, new_reviews: true, score_changes: true, recipients: [] }]]) });
-  const r2 = await dispatchReviewAlerts(none, { send: async () => assert.fail("送らない"), newId: ids() });
-  assert.equal(r2.skipped, 1);
-  assert.equal(none.db.events[0].reason, "送信先が未設定");
-});
-
-test("dispatch: M-talk not configured → nothing is claimed", async () => {
-  const store = fakeStore([review(1)]);
-  const r = await dispatchReviewAlerts(store, { configured: false, send: async () => assert.fail("送らない") });
-  assert.equal(r.notConfigured, true);
-  assert.equal(store.db.events[0].status, "pending");
-});
-
-test("dispatch: temporary failure keeps the batch and retries only unsent recipients; 404 is permanent; 5 attempts → failed", async () => {
-  const OTHER_USER = "7a1f1b53-9d3e-4b6e-8f59-2d7a4a2c1e10";
-  const settings = new Map([[STORE, { store_id: STORE, new_reviews: true, score_changes: true, recipients: [{ id: ME, name: "i" }, { id: OTHER_USER, name: "o" }] }]]);
+test("dispatch: chosen bot and rooms are sent as is (no bot list needed)", async () => {
+  const settings = new Map([[STORE, { store_id: STORE, new_reviews: true, score_changes: true, mtalk_bot_mode: "manual", mtalk_bot_id: CAVA_BOT.id, mtalk_bot_name: "Bistro CAVACAVA", mtalk_room_ids: [5] }]]);
   const store = fakeStore([review(1)], { settings });
-  const calls = [];
+  const sent = [];
+  await dispatchReviewAlerts(store, { send: async (to, b) => { sent.push(b); return okRooms([{ group_id: 5, name: "Bistro CAVACAVA", message_id: 1 }]); }, listBots: async () => assert.fail("読まない"), newId: ids() });
+  assert.deepEqual([sent[0].bot_id, sent[0].room_ids], [CAVA_BOT.id, [5]]);
+});
+
+test("dispatch: no store bot (unmatched / none) → skipped 未設定, never sent; settings off → skipped", async () => {
+  const blu = fakeStore([review(1)], { sites: { "tabelog/13245351": { id: STORE, name: "BLU NERO" } } });
+  const r = await dispatchReviewAlerts(blu, { send: async () => assert.fail("送らない"), listBots, newId: ids() });
+  assert.equal(r.skipped, 1);
+  assert.deepEqual([blu.db.events[0].status, blu.db.events[0].reason], ["skipped", NO_BOT_REASON]);
+  const none = fakeStore([review(1)], { settings: new Map([[STORE, { store_id: STORE, new_reviews: true, score_changes: true, mtalk_bot_mode: "none" }]]) });
+  await dispatchReviewAlerts(none, { send: async () => assert.fail("送らない"), listBots, newId: ids() });
+  assert.equal(none.db.events[0].reason, NO_BOT_REASON);
+  const off = fakeStore([review(1), score(3.26, 3.28)], { settings: new Map([[STORE, { store_id: STORE, new_reviews: false, score_changes: true }]]) });
+  const sent = [];
+  const r2 = await dispatchReviewAlerts(off, { send: async (_t, b) => { sent.push(b); return okRooms(); }, listBots, newId: ids() });
+  assert.deepEqual([r2.sent, r2.skipped, sent[0].reviews.length], [1, 1, 0]);
+  assert.equal(off.db.events.find((e) => e.kind === "new_review").reason, "通知の設定がオフ");
+});
+
+test("dispatch: bot list unavailable → retry later (not skipped); M-talk not configured → nothing is claimed", async () => {
+  const store = fakeStore([review(1)]);
+  const r = await dispatchReviewAlerts(store, { send: async () => assert.fail("送らない"), listBots: async () => { throw new Error("down"); }, newId: ids() });
+  assert.equal(r.retry, 1);
+  assert.equal(store.db.events[0].status, "pending");
+  const off = fakeStore([review(1)]);
+  const r2 = await dispatchReviewAlerts(off, { configured: false, send: async () => assert.fail("送らない") });
+  assert.equal(r2.notConfigured, true);
+  assert.equal(off.db.events[0].status, "pending");
+});
+
+test("dispatch: temporary failure keeps the batch and dedupe key; 404 (bot/rooms gone) is permanent; 5 attempts → failed", async () => {
+  const store = fakeStore([review(1)]);
+  const keys = [];
   let down = true;
-  const send = async (to, body) => {
-    calls.push([to, body.dedupe_key]);
-    if (to === OTHER_USER && down) throw Object.assign(new Error("M-talk に接続できませんでした"), { status: 502 });
-    return { ok: true };
-  };
-  const first = await dispatchReviewAlerts(store, { send, newId: ids() });
+  const send = async (_to, body) => { keys.push(body.dedupe_key); if (down) throw Object.assign(new Error("M-talk に接続できませんでした"), { status: 502 }); return okRooms(); };
+  const first = await dispatchReviewAlerts(store, { send, listBots, newId: ids() });
   assert.deepEqual([first.retry, first.sent], [1, 0]);
   assert.equal(store.db.events[0].status, "pending");
-  const batch = store.db.events[0].batch_id;
+  assert.equal(store.db.deliveries[0].status, "failed");
   down = false;
-  const second = await dispatchReviewAlerts(store, { send, newId: () => assert.fail("新しい batch は作らない") });
+  const second = await dispatchReviewAlerts(store, { send, listBots, newId: () => assert.fail("新しい batch は作らない") });
   assert.equal(second.sent, 1);
-  assert.deepEqual(calls.map((c) => c[0]), [ME, OTHER_USER, OTHER_USER], "送信済みの送信先には再送しない");
-  assert.ok(calls.every((c) => c[1] === `gourmet-alert:${batch}`), "やり直しも同じ dedupe_key（M-talk 側でも二重投稿しない）");
+  assert.equal(new Set(keys).size, 1, "やり直しも同じ dedupe_key（M-talk 側で送信済みのルームには二度投稿しない）");
+  assert.equal(store.db.deliveries[0].status, "sent");
 
   const gone = fakeStore([review(2)]);
-  const r404 = await dispatchReviewAlerts(gone, { send: async () => { throw Object.assign(new Error("見つかりません"), { status: 404 }); }, newId: ids() });
+  const r404 = await dispatchReviewAlerts(gone, { send: async () => { throw Object.assign(new Error("このBotが参加しているグループのルームがありません"), { status: 404 }); }, listBots, newId: ids() });
   assert.deepEqual([r404.failed, r404.retry], [1, 0]);
-  assert.equal(gone.db.deliveries[0].status, "failed");
+  assert.match(gone.db.events[0].reason, /ルームがありません/);
 
   const tired = fakeStore([review(3, { attempts: ALERT_LIMITS.maxAttempts - 1 })]);
-  const rTired = await dispatchReviewAlerts(tired, { send: async () => { throw Object.assign(new Error("x"), { status: 500 }); }, newId: ids() });
+  const rTired = await dispatchReviewAlerts(tired, { send: async () => { throw Object.assign(new Error("x"), { status: 500 }); }, listBots, newId: ids() });
   assert.equal(rTired.failed, 1);
   assert.match(tired.db.events[0].reason, /5回/);
 });
 
-test("dispatch: stale 'sending' events come back with their batch id and are grouped by it", async () => {
+test("dispatch: stale 'sending' events come back with their batch id; an already-sent batch is not sent again", async () => {
   const store = fakeStore([review(1, { batch_id: "b-old" }), review(2)]);
+  store.db.deliveries.push({ batch_id: "b-old", recipient_user_id: CAVA_BOT.id, status: "sent" });
   const keys = [];
-  await dispatchReviewAlerts(store, { send: async (_to, b) => { keys.push(b.dedupe_key); return {}; }, newId: () => "b-new" });
-  assert.deepEqual(keys.sort(), ["gourmet-alert:b-new", "gourmet-alert:b-old"]);
+  const r = await dispatchReviewAlerts(store, { send: async (_to, b) => { keys.push(b.dedupe_key); return okRooms(); }, listBots, newId: () => "b-new" });
+  assert.deepEqual(keys, ["gourmet-alert:b-new"]);
+  assert.equal(r.sent, 2);
 });
 
-test("dispatch: unassigned site stores still alert with the site store name to the default recipient", async () => {
+test("dispatch: unassigned site stores match the bot by the site's store name", async () => {
   const store = fakeStore([review(1, { store_key: "99999999" })]);
   const got = [];
-  await dispatchReviewAlerts(store, { send: async (to, b) => { got.push([to, b.store_name]); return {}; }, newId: ids() });
-  assert.deepEqual(got, [[ME, "未割り当て 99999999"]]);
+  await dispatchReviewAlerts(store, { send: async (to) => { got.push(to); return okRooms(); }, listBots, newId: ids() });
+  assert.deepEqual(got, [], "「未割り当て 99999999」に合う Bot は無い → 送らない");
+  assert.equal(store.db.events[0].reason, NO_BOT_REASON);
 });
 
 test("M-talk /alert: missing recipient is permanent (404), missing route (not yet deployed) is retried (502)", async () => {
@@ -221,6 +303,14 @@ test("migration 017: owner-only reads, claim only for service_role, triggers are
   assert.match(migration, /revoke all on function %s from public, anon, authenticated/);
   assert.match(migration, /unique \(user_id, dedupe_key\)/);
   assert.doesNotMatch(migration, /for (insert|update|delete|all)\s+to authenticated/i, "画面からの書き込みは review-api（検証後）だけ");
+});
+
+test("migration 018: store bot columns, recipients kept for compatibility, deliveries record rooms", () => {
+  assert.match(migration018, /add column if not exists mtalk_bot_mode text not null default 'auto'/);
+  assert.match(migration018, /check \(mtalk_bot_mode in \('auto', 'manual', 'none'\)\)/);
+  assert.match(migration018, /mtalk_bot_mode <> 'manual' or mtalk_bot_id is not null/);
+  assert.match(migration018, /add column if not exists rooms jsonb/);
+  assert.doesNotMatch(migration018, /drop column|delete from|update public\./i, "既存の行・列は変えない");
 });
 
 // ---------- 実際の Postgres での検出（Postgres 17 がある環境だけ） ----------

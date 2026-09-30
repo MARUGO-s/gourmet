@@ -15,7 +15,17 @@ import { validateScheduleInput, nextDueOnSave, publicSchedule } from "../_shared
 import { ALL_STORES, UNASSIGNED, MAX_STORES, buildOverview, filterReviews, isMonth, isStoreId, publicSite, publicStores, scopeKeys, storeSnapshots,
   validateReorder, validateSiteInput, validateStoreInput } from "../_shared/stores.js";
 import { loadOverviewInputs, loadStoreDailyInputs, loadStoreMaster } from "../_shared/store-data.js";
-import { DEFAULT_ALERT_RECIPIENTS, publicAlertEvent, publicAlertSettings, publicDelivery, validateAlertSettingsInput } from "../_shared/review-alerts.js";
+import { STORE_BOTS_PATH, normalizeStoreBots, publicAlertEvent, publicAlertSettings, publicDelivery, validateAlertSettingsInput } from "../_shared/review-alerts.js";
+import { mtalkConfig, mtalkRequest } from "../_shared/mtalk-share.js";
+
+// M-talk の店舗Bot（と参加しているグループのルーム）。読めなければ bots=null と理由（画面は保存済みの設定だけ出す）
+async function loadStoreBots(): Promise<{ bots: any[] | null; botsError: string | null }> {
+  try {
+    return { bots: normalizeStoreBots(await mtalkRequest(mtalkConfig((k: string) => Deno.env.get(k)), "GET", STORE_BOTS_PATH, null, { timeoutMs: 15_000 })), botsError: null };
+  } catch (error) {
+    return { bots: null, botsError: (error as Error).message || "M-talk の店舗Botを読み込めませんでした" };
+  }
+}
 
 const demo = buildSeed();
 // ログインID・暗号文はブラウザへ返さない（登録済み・更新日時のみ）
@@ -234,13 +244,14 @@ Deno.serve(async req => {
       return json(req,{ok:true});
     }
     // 口コミ通知（新着口コミ・総合点の変化 → M-talk）の店舗ごとの設定と履歴。閲覧は本人のJWT（RLS）、保存は検証後に本人の user_id に限定して service_role。
-    // 送信は agent-api（取り込みの直後）。設定の無い店舗は既定（両方オン・既定の送信先）。
+    // 送信は agent-api（取り込みの直後）。設定の無い店舗は既定（両方オン・店舗Botは店舗名で自動判定）。
     if (path === "/alert-settings" && req.method === "GET") {
-      const [stores, rows]=await Promise.all([
+      const [stores, rows, { bots, botsError }]=await Promise.all([
         must(client.from("stores").select("id,name,sort_order").order("sort_order").order("name")),
         must(client.from("review_alert_settings").select("*")),
+        loadStoreBots(),
       ]);
-      return json(req,{settings:publicAlertSettings(stores,rows),defaults:{recipients:DEFAULT_ALERT_RECIPIENTS,newReviews:true,scoreChanges:true}});
+      return json(req,{settings:publicAlertSettings(stores,rows,bots),bots,botsError,defaults:{botMode:"auto",newReviews:true,scoreChanges:true}});
     }
     if (path === "/alert-settings" && req.method === "POST") {
       const stores=await must(admin.from("stores").select("id,name").eq("user_id",user.id));
@@ -248,7 +259,8 @@ Deno.serve(async req => {
       try { row=validateAlertSettingsInput(await body(req),stores.map((s:any)=>s.id)); }
       catch (error) { return json(req,{error:(error as Error).message},400); }
       const saved=await must(admin.from("review_alert_settings").upsert({...row,user_id:user.id,updated_at:new Date().toISOString(),updated_by:user.id},{onConflict:"user_id,store_id"}).select("*").single());
-      return json(req,{setting:publicAlertSettings(stores.filter((s:any)=>s.id===row.store_id),[saved])[0]});
+      const { bots }=await loadStoreBots();
+      return json(req,{setting:publicAlertSettings(stores.filter((s:any)=>s.id===row.store_id),[saved],bots)[0]});
     }
     if (path === "/alert-log" && req.method === "GET") {
       const [deliveries, events]=await Promise.all([
