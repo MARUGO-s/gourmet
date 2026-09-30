@@ -8,6 +8,7 @@ import {
   ALERT_LIMITS, DEFAULT_ALERT_RECIPIENTS, buildAlertMessage, describeAlert, dispatchReviewAlerts, publicAlertSettings, ratingText,
   resolveAlertSettings, reviewLink, validateAlertSettingsInput, publicAlertEvent,
 } from "../../supabase/functions/_shared/review-alerts.js";
+import { mtalkRequest } from "../../supabase/functions/_shared/mtalk-share.js";
 import { normalizeSourceIngest } from "../../supabase/functions/_shared/source-ingest.js";
 import { normalizeIkyuIngest } from "../../supabase/functions/_shared/ikyu-data.js";
 
@@ -197,6 +198,18 @@ test("dispatch: unassigned site stores still alert with the site store name to t
   const got = [];
   await dispatchReviewAlerts(store, { send: async (to, b) => { got.push([to, b.store_name]); return {}; }, newId: ids() });
   assert.deepEqual(got, [[ME, "未割り当て 99999999"]]);
+});
+
+test("M-talk /alert: missing recipient is permanent (404), missing route (not yet deployed) is retried (502)", async () => {
+  const config = { url: "https://example.supabase.co/functions/v1/mtalk-external-post", token: "t".repeat(40), configured: true };
+  const reply = (status, body) => async (url, init) => {
+    assert.equal(url, `${config.url}/alert`);
+    assert.match(init.headers["X-Mtalk-Signature"], /^v1=[0-9a-f]{64}$/);
+    return new Response(JSON.stringify(body), { status });
+  };
+  await assert.rejects(mtalkRequest(config, "POST", "/alert", {}, { fetchImpl: reply(404, { error: "送信先の利用者が見つからないか、利用停止中です" }) }), (e) => e.status === 404);
+  await assert.rejects(mtalkRequest(config, "POST", "/alert", {}, { fetchImpl: reply(404, { error: "not found" }) }), (e) => e.status === 502);
+  assert.deepEqual(await mtalkRequest(config, "POST", "/alert", {}, { fetchImpl: reply(200, { ok: true, message_id: 1 }) }), { ok: true, message_id: 1 });
 });
 
 // ---------- マイグレーション ----------
