@@ -20,7 +20,7 @@ import type {
   AlertSettingInput,
   AlertDelivery,
   AlertEvent,
-  AlertRecipient,
+  StoreBot,
 } from "./types";
 
 // ログイン中のセッションがあれば Supabase JWT を API リクエストに転送する。
@@ -124,11 +124,11 @@ export async function saveSchedule(input: ScheduleInput) {
   }).then((r) => json<{ schedule: FetchSchedule }>(r));
 }
 
-// 口コミ通知の設定（店舗ごと: 新着口コミ・総合点の変化のオン/オフと M-talk の送信先）と履歴
+// 口コミ通知の設定（店舗ごと: 新着口コミ・総合点の変化のオン/オフと M-talk の店舗Bot・ルーム）と履歴
 export async function getAlertSettings() {
   const headers = await authHeaders();
   return apiFetch("/api/alert-settings", { headers })
-    .then((r) => json<{ settings: AlertSetting[]; defaults: { recipients: AlertRecipient[]; newReviews: boolean; scoreChanges: boolean } }>(r));
+    .then((r) => json<{ settings: AlertSetting[]; bots: StoreBot[] | null; botsError: string | null; defaults: { botMode: "auto"; newReviews: boolean; scoreChanges: boolean } }>(r));
 }
 
 export async function saveAlertSetting(input: AlertSettingInput) {
