@@ -3,6 +3,7 @@ import { askAi, createAiReport, deleteAiReport, getAiReport, getAiReports, getAi
 import type { AiChatMessage, AiReport, AiReportSummary, AiStatus, Store } from "../types";
 import { markdownToHtml, reportHtmlDocument } from "../../supabase/functions/_shared/markdown.js";
 import { formatTime } from "../lib/agent-requests";
+import MtalkShareDialog, { ShareHistory, ShareToast, useReportShares } from "./MtalkShare";
 
 type Props = { userId: string; stores: Store[]; scope: string };
 type Preset = "7" | "30" | "90" | "thisMonth" | "lastMonth" | "12m" | "custom";
@@ -192,6 +193,10 @@ function Reports({ storeId, storeName, range, disabled }: { storeId: string; sto
   const [focus, setFocus] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
+  const [sharing, setSharing] = useState(false);
+  const [toast, setToast] = useState<{ text: string; error: boolean } | null>(null);
+  const closeToast = useCallback(() => setToast(null), []);
+  const shareLog = useReportShares(current?.id);
   const load = useCallback(async () => {
     setLoading(true);
     try { setList((await getAiReports()).reports); }
@@ -266,6 +271,7 @@ function Reports({ storeId, storeName, range, disabled }: { storeId: string; sto
           <header className="no-print flex flex-wrap items-center gap-2 border-b border-line px-5 py-3">
             <span className="text-[11px] text-faint">{current.storeName} · {current.from}〜{current.to} · {current.model}</span>
             <div className="ml-auto flex flex-wrap gap-1.5">
+              <button onClick={() => setSharing(true)} className="rounded-md bg-brand px-3 py-1.5 text-[11px] font-bold text-white transition hover:opacity-90">M-talkに送る</button>
               <button onClick={() => window.print()} className={btn}>印刷・PDF</button>
               <button onClick={() => download(fileName(current.title, "md"), current.markdown, "text/markdown")} className={btn}>Markdown</button>
               <button onClick={() => download(fileName(current.title, "html"), reportHtmlDocument(current.title, current.markdown), "text/html")} className={btn}>HTML</button>
@@ -273,8 +279,11 @@ function Reports({ storeId, storeName, range, disabled }: { storeId: string; sto
             </div>
           </header>
           <Markdown text={current.markdown} className="md-report px-8 py-6" />
+          <ShareHistory shares={shareLog.shares} loading={shareLog.loading} />
         </article>
       ) : null}
+      {current && sharing ? <MtalkShareDialog report={current} onClose={() => setSharing(false)} onSent={() => void shareLog.reload()} onToast={setToast} /> : null}
+      <ShareToast toast={toast} onClose={closeToast} />
     </div>
   );
 }

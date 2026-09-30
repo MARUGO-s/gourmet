@@ -14,6 +14,8 @@ import type {
   AiAskResult,
   AiReport,
   AiReportSummary,
+  AiReportShare,
+  MtalkRecipient,
 } from "./types";
 
 // ログイン中のセッションがあれば Supabase JWT を API リクエストに転送する。
@@ -168,3 +170,9 @@ export const getAiReport = (id: string) => aiFetch<{ report: AiReport }>(`/repor
 export const createAiReport = (input: { storeId: string; from: string; to: string; title?: string; focus?: string }) =>
   aiFetch<{ report: AiReport }>("/reports", { method: "POST", body: JSON.stringify(input) }, 160_000);
 export const deleteAiReport = (id: string) => aiFetch<{ ok: boolean }>(`/reports/${encodeURIComponent(id)}`, { method: "DELETE" });
+// M-talk へ送る（ai-analyst が M-talk の接続情報を持ち、ブラウザは本人のJWTで呼ぶだけ）
+export const getMtalkRecipients = () => aiFetch<{ recipients: MtalkRecipient[] }>("/mtalk-recipients", {}, 30_000);
+export const getAiReportShares = (reportId?: string) =>
+  aiFetch<{ shares: AiReportShare[]; configured: boolean; limits: { perHour: number } }>(`/shares${reportId ? `?reportId=${encodeURIComponent(reportId)}` : ""}`);
+export const shareAiReportToMtalk = (reportId: string, recipientUserId: string) =>
+  aiFetch<{ share: AiReportShare }>(`/reports/${encodeURIComponent(reportId)}/share-mtalk`, { method: "POST", body: JSON.stringify({ recipient_user_id: recipientUserId }) }, 120_000);
