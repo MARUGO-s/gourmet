@@ -21,8 +21,8 @@ const browser = await chromium.launch({ headless: true });
 try {
   const manifest = JSON.parse(fs.readFileSync(args.manifest, "utf8"));
   const today = japanDate();
-  const { result } = await readSavedTabelog(manifest, path.dirname(path.resolve(args.manifest)), { browser, today });
-  const payload = tabelogResultToPayload(result, { storeKey: manifest.storeKey, name: manifest.name ?? null, runId: args["run-id"], requestId: args["request-id"], today });
+  const { result, publicUrl } = await readSavedTabelog(manifest, path.dirname(path.resolve(args.manifest)), { browser, today });
+  const payload = tabelogResultToPayload(result, { storeKey: manifest.storeKey, name: manifest.name ?? null, publicUrl: publicUrl ?? manifest.publicUrl ?? null, runId: args["run-id"], requestId: args["request-id"], today });
   const checked = normalizeSourceIngest(payload, today); // 送信前にサーバーと同じ検証
   const json = JSON.stringify(payload, null, 2);
   if (args.out) fs.writeFileSync(args.out, json); else process.stdout.write(`${json}\n`);

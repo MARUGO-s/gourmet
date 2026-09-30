@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 
-type ViewId = "overview" | "dashboard" | "ai" | "requests" | "schedules" | "accounts" | "stores";
+type ViewId = "overview" | "dashboard" | "ai" | "requests" | "schedules" | "alerts" | "accounts" | "stores";
 type Props = {
   // null = 店舗の選択画面
   view: ViewId | null;
@@ -73,6 +73,14 @@ function NavIcon({ name }: { name: string }) {
       </svg>
     );
   }
+  if (name === "alerts") {
+    return (
+      <svg {...common}>
+        <path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15L6 16z" />
+        <path d="M10 20.5a2 2 0 0 0 4 0" />
+      </svg>
+    );
+  }
   if (name === "schedules") {
     return (
       <svg {...common}>
@@ -97,6 +105,7 @@ const ITEMS: { id: ViewId; label: string; signedIn?: boolean }[] = [
   { id: "ai", label: "AI分析", signedIn: true },
   { id: "requests", label: "取得依頼" },
   { id: "schedules", label: "自動取得の設定" },
+  { id: "alerts", label: "口コミ通知", signedIn: true },
   { id: "accounts", label: "アカウント管理" },
   { id: "stores", label: "店舗管理", signedIn: true },
 ];

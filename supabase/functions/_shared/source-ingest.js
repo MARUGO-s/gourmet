@@ -24,6 +24,7 @@ const rating = (v) => v == null || (Number.isFinite(v) && v >= 0 && v <= 5);
 const round2 = (v) => (v == null ? null : Math.round(v * 100) / 100);
 const daysInMonth = (month) => new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate();
 export const STORE_KEY = /^[0-9A-Za-z_-]{0,40}$/;
+export const TABELOG_PUBLIC_URL = /^https:\/\/tabelog\.com\/[A-Za-z0-9/_-]+\/[0-9]{8}\/$/;
 const repliedStatus = /返信済|対応済|処理済|完了/;
 
 // 端末別の内訳: pvOther（未分類の差）を指定した場合は未指定端末を0として合計が pv と一致。
@@ -88,6 +89,10 @@ export function normalizeSourceIngest(payload, today = japanDate()) {
     keys.add(key);
     const where = (s) => `店舗${key || "（既定）"}の${s}`;
     if (!optText(store.name, 200)) fail(where("店舗名が不正です"));
+    // 食べログの公開店舗ページ（口コミ通知のリンク用）。店舗IDが8桁なら URL の店舗IDと一致すること
+    const publicUrl = store.publicUrl ?? null;
+    if (publicUrl != null && (source !== "tabelog" || typeof publicUrl !== "string" || publicUrl.length > 300 || !TABELOG_PUBLIC_URL.test(publicUrl)
+      || (/^\d{8}$/.test(key) && !publicUrl.endsWith(`/${key}/`)))) fail(where("publicUrl が不正です（https://tabelog.com/…/<8桁の店舗ID>/）"));
     const summary = store.summary ?? null;
     if (summary != null && (typeof summary !== "object" || !rating(summary.rating) || !count(summary.reviewCount))) fail(where("summary（rating 0〜5 / reviewCount）が不正です"));
     const daily = store.daily ?? [], monthly = store.monthly ?? [];
@@ -137,7 +142,7 @@ export function normalizeSourceIngest(payload, today = japanDate()) {
     });
     if (days.length || months.length || reviews.length || reports.length || (summary && (summary.rating != null || summary.reviewCount != null))) hasData = true;
     return {
-      store_key: key, name: store.name?.trim() || null,
+      store_key: key, name: store.name?.trim() || null, public_url: publicUrl,
       rating: round2(summary?.rating ?? null), review_count: summary?.reviewCount ?? null,
       review_total: reviewBlock?.total ?? null, reviews_included: reviewBlock != null,
       days: days.map((d) => ({ date: d.date, ...pick(d) })), months, reviews, reports,

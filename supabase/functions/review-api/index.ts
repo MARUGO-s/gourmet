@@ -15,6 +15,7 @@ import { validateScheduleInput, nextDueOnSave, publicSchedule } from "../_shared
 import { ALL_STORES, UNASSIGNED, MAX_STORES, buildOverview, filterReviews, isMonth, isStoreId, publicSite, publicStores, scopeKeys, storeSnapshots,
   validateReorder, validateSiteInput, validateStoreInput } from "../_shared/stores.js";
 import { loadOverviewInputs, loadStoreDailyInputs, loadStoreMaster } from "../_shared/store-data.js";
+import { DEFAULT_ALERT_RECIPIENTS, publicAlertEvent, publicAlertSettings, publicDelivery, validateAlertSettingsInput } from "../_shared/review-alerts.js";
 
 const demo = buildSeed();
 // ログインID・暗号文はブラウザへ返さない（登録済み・更新日時のみ）
@@ -231,6 +232,30 @@ Deno.serve(async req => {
       const [, , storeId, , siteId]=path.split("/");
       await must(admin.from("store_sites").delete().eq("user_id",user.id).eq("store_id",storeId).eq("id",siteId));
       return json(req,{ok:true});
+    }
+    // 口コミ通知（新着口コミ・総合点の変化 → M-talk）の店舗ごとの設定と履歴。閲覧は本人のJWT（RLS）、保存は検証後に本人の user_id に限定して service_role。
+    // 送信は agent-api（取り込みの直後）。設定の無い店舗は既定（両方オン・既定の送信先）。
+    if (path === "/alert-settings" && req.method === "GET") {
+      const [stores, rows]=await Promise.all([
+        must(client.from("stores").select("id,name,sort_order").order("sort_order").order("name")),
+        must(client.from("review_alert_settings").select("*")),
+      ]);
+      return json(req,{settings:publicAlertSettings(stores,rows),defaults:{recipients:DEFAULT_ALERT_RECIPIENTS,newReviews:true,scoreChanges:true}});
+    }
+    if (path === "/alert-settings" && req.method === "POST") {
+      const stores=await must(admin.from("stores").select("id,name").eq("user_id",user.id));
+      let row;
+      try { row=validateAlertSettingsInput(await body(req),stores.map((s:any)=>s.id)); }
+      catch (error) { return json(req,{error:(error as Error).message},400); }
+      const saved=await must(admin.from("review_alert_settings").upsert({...row,user_id:user.id,updated_at:new Date().toISOString(),updated_by:user.id},{onConflict:"user_id,store_id"}).select("*").single());
+      return json(req,{setting:publicAlertSettings(stores.filter((s:any)=>s.id===row.store_id),[saved])[0]});
+    }
+    if (path === "/alert-log" && req.method === "GET") {
+      const [deliveries, events]=await Promise.all([
+        must(client.from("review_alert_deliveries").select("*").order("created_at",{ascending:false}).limit(50)),
+        must(client.from("review_alert_events").select("id,kind,source,store_key,status,reason,payload,created_at,sent_at").neq("status","baseline").order("created_at",{ascending:false}).limit(50)),
+      ]);
+      return json(req,{deliveries:deliveries.map(publicDelivery),events:events.map(publicAlertEvent)});
     }
     // 全店舗の比較（店舗×サイトの月別PV・前月比・予約・評価・口コミ数・未返信・最終更新）。未割り当ての店舗コードは「未割り当て」にまとめる。
     if (path === "/overview" && req.method === "GET") {

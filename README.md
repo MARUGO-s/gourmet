@@ -88,6 +88,7 @@ Grok Bot（約5分ごと）→ agent-api /requests/claim（claimed）→ /creden
 | `/requests/complete` | `{"id","claimId","result"?:{...}}` | `{"request":{...}}`（同じ報告の再送は成功扱い） |
 | `/requests/fail` | `{"id","claimId","error":"理由","result"?}` | 同上。`claimId`不一致・期限切れは409 |
 | `/schedules/enqueue-due` | `{"limit"?:1〜50（既定20）,"dryRun"?:false}` | `{"now","dryRun","enqueued":[{"scheduleId","source","storeId","requestId","dueAt","nextDueAt"}],"skipped":[{"scheduleId","source","storeId","reason":"open_request\|rate_limited\|concurrent\|invalid","nextDueAt"?}]}` |
+| `/alerts/dispatch` | `{}` | `{"claimed","sent","skipped","retry","failed","messages":["店舗: 食べログ 総合点 3.26 → 3.28 / 新着口コミ 2件"],"notConfigured"?}`。口コミ通知の送信待ちをすぐ送る（通常は`/ingest`・`/requests/pending`のたびに自動で送るので不要） |
 
 依頼の形: `{"id","source","storeId","action":"sync_now|fetch_metrics|fetch_reviews|backfill","params":{"fromMonth"?,"toMonth"?,"note"?},"status":"queued|claimed|done|failed","requestedAt","claimedAt","finishedAt","claimedBy","attempts","result","error"}`。`backfill`は`fromMonth`〜`toMonth`（最大120か月）の過去分。取得中のまま30分を過ぎると再び`queued`になり（3回で`failed`）、24時間拾われない依頼は`failed`になります。
 
@@ -204,6 +205,7 @@ INGEST_TOKEN=... node scripts/agent-credentials.mjs --source ikyu --store 112789
 - 当日（日本時間）以降の日は集計中のため保存しません（`skippedDays`）。`monthly`は当月以前、前月以前を確定（`complete`）としてサーバーが判定。月別が無い前月以前の月は、全日の日別がそろっていれば日別の合計を月別（`derived`）として保存します（明示の月別値は上書きしません）。
 - `summary`は取り込んだ日（日本時間）の店舗の評価（0〜5、小数第2位）・口コミ数として記録します。サイト全体の評価は店舗の最新値の平均、口コミ数は合計です。
 - 口コミは サイト×店舗×`externalId`（英数字と`._:#-`、200文字まで）で一意。日付は`YYYY-MM-DD`、訪問月は`YYYY-MM`。`needsReply`を省略すると返信本文または`status`（返信済・対応済・処理済・完了）から判定します（食べログは判定しません）。`details.url`は保存しません。予約者の氏名は送らないでください。
+- 食べログの`stores[].publicUrl`（任意）は自店舗の公開ページ（`https://tabelog.com/…/<8桁の店舗ID>/`、店舗IDと一致すること）。口コミ通知のリンク（`<publicUrl>dtlrvwlst/B…/`）に使います。`tabelog-html-to-json.mjs`は日別PVのページから読み取って自動で付けます。
 - `reports`: サイト固有の詳細（`kind`×`period`で上書き、1件200KB・20件まで）。食べログは`area_ranking`・`top_pages`・`owner_reviews`・`page_history`を詳細分析に表示します。
 - 上限: 50店舗・店舗あたり日別5000日・月別240か月・口コミ2000件。
 - 冪等: 同じ`runId`・日・月・口コミIDの再送は上書き。取り込みに含まれない過去の行は削除しません。サイトの全店舗合計を`snapshots`へ反映し、「すべて」のKPI・PV推移に含めます（日別PVは日付の行、月別予約はその月1日の行、評価・口コミ数は取り込んだ日の行）。
@@ -381,6 +383,25 @@ M-talk の利用者が「AI分析」Botとの1対1に文章を書くと、数秒
 2. `supabase functions deploy ai-analyst --project-ref ycsqfajidusuibqljjwr --no-verify-jwt`。
 3. line_report 側（migration と mtalk-external-post）を配置する。
 
+### 口コミ通知（migration 017・agent-api・review-api `/alert-settings`・line_report の mtalk-external-post `/alert`）
+
+取り込み（自動取得・取得依頼・手動のどれでも）で**新しい口コミ**（DBに無かった口コミ）が入ったとき、または**食べログの総合点**が前回の値から変わったとき（例「3.26 → 3.28」）に、M-talk の「AI分析」Botから1対1で送ります。
+
+- 検出: DB トリガー（取り込みと同じトランザクション）が`review_alert_events`に1回だけ記録します。口コミは サイト×店舗×口コミ（食べログは`B<数字>`単位で、抜粋と全文は同じ口コミ）、総合点は 変化前→変化後×日付 で一意。
+- 初回の安全策: その店舗×サイトで初めて取り込んだ口コミ（＝機能の開始前からある口コミ）は`baseline`（送らない）。投稿日が60日より前の口コミも`skipped`。総合点は前回の値がある場合だけ（初回は比べない）。
+- 送信: agent-api が`/ingest`の直後と`/requests/pending`（Grok Bot が数分ごと）のたびにバックグラウンドで送ります（`/alerts/dispatch`で即時も可）。店舗ごとに1通へまとめ、総合点の変化カード＋口コミカード10件まで（残りは「ほか N件」とアプリへのリンク）。口コミは サイト・評価・投稿日・来店・タイトル・本文（1000文字まで）・リンク（食べログ: 口コミページ、一休: 店舗管理画面の口コミ一覧）。
+- 二重送信の防止: ① events の一意キー ② 送信先ごとの記録`review_alert_deliveries`（batch×送信先）③ M-talk の`chat_alert_dispatches`（`gourmet-alert:<batch>`）。送れなかったものは同じ batch で最大5回やり直し、送信先が見つからない（404）はやり直しません。
+- 設定: 画面「口コミ通知」で店舗ごとに 新着口コミ／食べログ総合点の変化 のオン・オフと送信先（M-talk の利用者、複数）。設定が無い店舗は両方オン・送信先 itagawa yoshito。履歴（送信・検出）も同じ画面に出ます。
+- API（review-api、本人のJWT必須）: `GET /alert-settings`、`POST /alert-settings {storeId,newReviews,scoreChanges,recipients:[{id,name}]}`、`GET /alert-log`。
+- 新しい秘密情報はありません（ai-analyst と同じ`MTALK_API_URL`・`GOURMET_MTALK_TOKEN`を agent-api も使います）。未設定のときは送らずに待ちます。
+
+配置の順番:
+
+1. line_report の`mtalk-external-post`（`POST /alert`を追加。migration なし）を配置する。
+2. gourmet に`017_review_alerts.sql`だけを適用する（`supabase db query --linked -f supabase/migrations/017_review_alerts.sql`）。既存の口コミは記録しません（トリガーは新しく入った行だけ）。
+3. `supabase functions deploy agent-api --project-ref ycsqfajidusuibqljjwr --no-verify-jwt`と`review-api`（同じオプション）。
+4. PRをマージして画面（GitHub Pages）を配置し、Grok Bot の作業用の複製（`scripts/`）を更新する（食べログの`publicUrl`のため）。
+
 ## 配置・運用
 
 PRを作成してテスト成功後にmainへマージすると、GitHub Pagesへ配置されます。Edge Functionsは別途明示的に配置してください（上記コマンド）。
@@ -402,6 +423,8 @@ DB変更はこのプロジェクトを確認して対象SQLだけ適用します
 2026-09-29: 店舗×サイトごとの自動取得の設定を追加（migration 012 `fetch_schedules`、`review-api /schedules`、`agent-api /schedules/enqueue-due`、`agent-queue.mjs --enqueue-due`）。
 
 2026-09-29: 店舗マスタと店舗の選択・全店舗の比較を追加（migration 013 `stores`・`store_sites`、初期データ`supabase/seed/013_seed_stores.sql`、`review-api /stores`・`/overview`・`/dashboard?store=`）。
+
+2026-10-01: 口コミ通知を追加（migration 017 `review_alert_settings`・`review_alert_events`・`review_alert_deliveries`・`source_stores.public_url`、`agent-api /alerts/dispatch`、`review-api /alert-settings`・`/alert-log`、画面「口コミ通知」、line_report `mtalk-external-post /alert`）。
 
 2026-10-01: AI分析レポートを M-talk の利用者へ送る機能を追加（migration 015 `ai_report_shares`、`ai-analyst /mtalk-recipients`・`/reports/:id/share-mtalk`・`/shares`、PDFの生成、line_report `mtalk-external-post`）。
 
