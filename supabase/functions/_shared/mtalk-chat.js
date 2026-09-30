@@ -68,6 +68,8 @@ export function mtalkChatPrompt() {
     "- まず結論を1〜2文で。続けて根拠の数値を箇条書きで。全体でおおむね800文字以内。",
     "- 扱うのは食べログ・一休.comレストランなどのPV・予約・口コミの分析だけ。それ以外の依頼には、できることを短く案内する。",
     "- 最新データの取り直し（再取得・スクレイピング）やPDFレポートの作成はここではできない。必要なら Review Command Center のAI分析画面を案内する。",
+    "- このトークでのBotの過去の返事は間違っている可能性がある。過去の返事の数値・件数・日付をそのまま繰り返さず、毎回関数で確かめ直す。過去の返事が関数の結果と違えば、違っていたことを短く伝えて正しい値を答える。",
+    "- 返事には対象のサイトと期間（例: 食べログ・2026-07-02〜2026-09-29、または全期間）を必ず書く。",
   ].join("\n");
 }
 
@@ -78,6 +80,7 @@ export function reportContextMessage(report) {
   const body = md.length > MTALK_CHAT_LIMITS.reportChars ? `${md.slice(0, MTALK_CHAT_LIMITS.reportChars)}\n…（以下省略）` : md;
   return [
     "このトークには、次のAI分析レポートが届いています。利用者の質問がこのレポートを指している場合は、その内容と期間・店舗を前提に答えてください。",
+    "レポートの期間は、質問が「最新」「悪い口コミ」「これまで」など期間を限らない内容なら当てはめない（関数の all_time を使う）。レポートの文章（AIのコメント）は根拠にせず、数値は関数で確かめてください。",
     `レポート: ${clean(report.title, 200)}（${clean(report.store_name, 200)}、${report.period_from}〜${report.period_to}）`,
     "---",
     body,
@@ -137,4 +140,10 @@ export function resolveDataOwner(latestShare, fallbackUserId) {
   if (latestShare && UUID.test(String(latestShare.user_id ?? ""))) return { userId: String(latestShare.user_id), reportId: latestShare.report_id ?? null, via: "share" };
   if (UUID.test(String(fallbackUserId ?? "").trim())) return { userId: String(fallbackUserId).trim(), reportId: null, via: "default" };
   return null;
+}
+
+/** レポート本文のうち、システムが集計して作った表の行だけ（照合の根拠に使う。AIのコメント部分は含めない） */
+export function reportFactLines(report) {
+  if (!report) return "";
+  return String(report.markdown ?? "").split("\n").filter((l) => /^\s*\|/.test(l)).join("\n");
 }
