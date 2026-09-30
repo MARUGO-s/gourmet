@@ -69,6 +69,7 @@ table .cell-wrap { white-space: normal; overflow-wrap: break-word; }
   @page { margin: 14mm; }
   body { background: #fff; }
   .no-print { display: none !important; }
+  .mobile-nav, .mobile-nav-toggle { display: none !important; }
   main { padding: 0 !important; }
   body:has(.ai-report) main > section > :not(.ai-report):not(:has(.ai-report)) { display: none !important; }
   .ai-report { border: 0 !important; }
