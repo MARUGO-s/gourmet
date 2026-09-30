@@ -10,6 +10,9 @@
 //   POST /agent-api/requests/complete      取得完了を報告
 //   POST /agent-api/requests/fail          取得失敗を報告
 //   POST /agent-api/schedules/enqueue-due  自動取得の設定（fetch_schedules）のうち予定時刻を過ぎたものを取得依頼にする
+//   POST /agent-api/alerts/dispatch        口コミ通知（新着口コミ・総合点の変化）の送信待ちを M-talk へ送る（結果を返す）
+// 口コミ通知は取り込み（/ingest）の直後と取得依頼の確認（/requests/pending、Grok Bot が数分ごと）のたびにバックグラウンドでも送る。
+// 検出は DB トリガー（migration 017）。送信は line_report mtalk-external-post POST /alert（GOURMET_MTALK_TOKEN + HMAC、ai-analyst と同じ秘密情報）。
 import { service, body } from "../_shared/http.ts";
 import { decrypt } from "../_shared/crypto.ts";
 import { must } from "../_shared/sync-data.js";
@@ -19,6 +22,22 @@ import { normalizeIkyuIngest } from "../_shared/ikyu-data.js";
 import { normalizeSourceIngest } from "../_shared/source-ingest.js";
 import { publicRequest, validateFinish } from "../_shared/agent-requests.js";
 import { enqueueDueSchedules, supabaseScheduleStore, ENQUEUE_LIMIT } from "../_shared/fetch-schedules.js";
+import { ALERT_LIMITS, ALERT_PATH, dispatchReviewAlerts, supabaseAlertStore } from "../_shared/review-alerts.js";
+import { mtalkConfig, mtalkRequest } from "../_shared/mtalk-share.js";
+
+// 口コミ通知の送信（同時に2つ走っても claim_review_alert_events が1回だけ確保する）。失敗しても取り込みの応答には影響させない
+function runAlerts(admin: any, userId: string) {
+  const mtalk = mtalkConfig((k: string) => Deno.env.get(k));
+  return dispatchReviewAlerts(supabaseAlertStore(admin, userId), {
+    configured: mtalk.configured,
+    send: (_recipient: string, payload: unknown) => mtalkRequest(mtalk, "POST", ALERT_PATH, payload, { timeoutMs: ALERT_LIMITS.timeoutMs }),
+  });
+}
+function alertsInBackground(admin: any, userId: string) {
+  const work = runAlerts(admin, userId).catch(() => console.warn("[agent-api] review alerts dispatch failed"));
+  const runtime = (globalThis as { EdgeRuntime?: { waitUntil(p: Promise<unknown>): void } }).EdgeRuntime;
+  if (runtime?.waitUntil) runtime.waitUntil(work);
+}
 
 const reply = (value: unknown, status = 200) => new Response(JSON.stringify(value), {
   status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
@@ -51,11 +70,18 @@ Deno.serve(async (req) => {
         let normalized;
         try { normalized = normalizeIkyuIngest(input); } catch (error) { return invalid(error); }
         const saved = await must(admin.rpc("ingest_ikyu", { p_user: userId, p_run: normalized.run, p_stores: normalized.stores }));
+        alertsInBackground(admin, userId);
         return reply({ ok: true, source: "ikyu", status: normalized.run.status, skippedDays: normalized.skippedDays, ...saved });
       }
       let normalized;
       try { normalized = normalizeSourceIngest(input); } catch (error) { return invalid(error); }
       const saved = await must(admin.rpc("ingest_source", { p_user: userId, p_source: normalized.source, p_run: normalized.run, p_stores: normalized.stores }));
+      // 食べログの公開店舗ページ（口コミ通知のリンク用。取り込みの検証済み）
+      for (const st of normalized.stores.filter((x: any) => x.public_url)) {
+        await admin.from("source_stores").update({ public_url: st.public_url }).eq("user_id", userId).eq("source", normalized.source).eq("store_key", st.store_key)
+          .then(({ error }: any) => { if (error) console.warn("[agent-api] public_url update failed"); });
+      }
+      alertsInBackground(admin, userId);
       return reply({ ok: true, source: normalized.source, status: normalized.run.status, skippedDays: normalized.skippedDays, ...saved });
     }
     if (path === "/requests/pending") {
@@ -64,6 +90,7 @@ Deno.serve(async (req) => {
       let query = admin.from("agent_requests").select("*").eq("user_id", userId).in("status", ["queued", "claimed"]).order("requested_at").limit(100);
       if (source) query = query.eq("source", source);
       const rows = await must(query);
+      alertsInBackground(admin, userId); // 送れなかった通知のやり直し（数分ごとの確認に相乗り）
       return reply({ requests: rows.map((r: any) => publicRequest(r)) });
     }
     if (path === "/requests/claim") {
@@ -86,6 +113,10 @@ Deno.serve(async (req) => {
       const limit = input?.limit ?? ENQUEUE_LIMIT, dryRun = input?.dryRun ?? false;
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50 || typeof dryRun !== "boolean") return reply({ error: "limit（1〜50）/ dryRun が不正です" }, 400);
       const result = await enqueueDueSchedules(supabaseScheduleStore(admin, userId), { now: new Date(), limit, dryRun });
+      return reply(result);
+    }
+    if (path === "/alerts/dispatch") {
+      const result = await runAlerts(admin, userId);
       return reply(result);
     }
     if (path === "/credentials/versions") {

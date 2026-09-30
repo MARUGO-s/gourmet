@@ -16,6 +16,11 @@ import type {
   AiReportSummary,
   AiReportShare,
   MtalkRecipient,
+  AlertSetting,
+  AlertSettingInput,
+  AlertDelivery,
+  AlertEvent,
+  AlertRecipient,
 } from "./types";
 
 // ログイン中のセッションがあれば Supabase JWT を API リクエストに転送する。
@@ -117,6 +122,27 @@ export async function saveSchedule(input: ScheduleInput) {
     headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(input),
   }).then((r) => json<{ schedule: FetchSchedule }>(r));
+}
+
+// 口コミ通知の設定（店舗ごと: 新着口コミ・総合点の変化のオン/オフと M-talk の送信先）と履歴
+export async function getAlertSettings() {
+  const headers = await authHeaders();
+  return apiFetch("/api/alert-settings", { headers })
+    .then((r) => json<{ settings: AlertSetting[]; defaults: { recipients: AlertRecipient[]; newReviews: boolean; scoreChanges: boolean } }>(r));
+}
+
+export async function saveAlertSetting(input: AlertSettingInput) {
+  const headers = await authHeaders();
+  return apiFetch("/api/alert-settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(input),
+  }).then((r) => json<{ setting: AlertSetting }>(r));
+}
+
+export async function getAlertLog() {
+  const headers = await authHeaders();
+  return apiFetch("/api/alert-log", { headers }).then((r) => json<{ deliveries: AlertDelivery[]; events: AlertEvent[] }>(r));
 }
 
 export async function deleteSchedule(id: string) {

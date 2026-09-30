@@ -108,3 +108,14 @@ test("README example payloads pass the same validation as agent-api", async () =
     else assert.ok(normalizeSourceIngest(payload, "2026-09-29").stores.length);
   }
 });
+
+test("Tabelog publicUrl (review links in alerts) must be the store's own tabelog.com page", () => {
+  const tab = (publicUrl, storeKey = "13245351") => normalizeSourceIngest({ ...base({ storeKey, publicUrl }), source: "tabelog" }, TODAY);
+  assert.equal(tab("https://tabelog.com/tokyo/A1309/A130903/13245351/").stores[0].public_url, "https://tabelog.com/tokyo/A1309/A130903/13245351/");
+  assert.equal(tab(undefined).stores[0].public_url, null);
+  for (const bad of ["https://tabelog.com/tokyo/A1309/A130903/99999999/", "http://tabelog.com/tokyo/A1309/A130903/13245351/", "https://evil.example/tokyo/13245351/",
+    "https://tabelog.com/tokyo/A1309/A130903/13245351/?x=1", "https://tabelog.com/tokyo/A1309/A130903/13245351", 1]) {
+    assert.throws(() => tab(bad), /publicUrl/, String(bad));
+  }
+  assert.throws(() => normalizeSourceIngest(base({ publicUrl: "https://tabelog.com/tokyo/A1309/A130903/13245351/" }), TODAY), /publicUrl/, "食べログ以外は不可");
+});

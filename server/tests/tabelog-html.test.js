@@ -26,11 +26,12 @@ test("saved Tabelog owner pages convert offline to a valid ingest payload", { sk
     assert.deepEqual(result.reviews.map((r) => r.externalId), ["B100:111", "B101:222", "B200:excerpt"], "全文のある口コミの抜粋は重複させない");
     assert.equal(result.reviews[1].date, "2026-08-20");
     assert.equal(result.reports.ranking.self.rank, 2);
-    const payload = tabelogResultToPayload(result, { storeKey: manifest.storeKey, name: manifest.name, runId: "fixture", capturedAt: "2026-09-29T09:00:00+09:00", today: "2026-09-29" });
+    const payload = tabelogResultToPayload(result, { storeKey: manifest.storeKey, name: manifest.name, publicUrl, runId: "fixture", capturedAt: "2026-09-29T09:00:00+09:00", today: "2026-09-29" });
     const checked = normalizeSourceIngest(payload, "2026-09-29");
     assert.equal(checked.stores[0].days.length, 59);
     assert.equal(checked.stores[0].reviews[0].reply_text, "ご来店ありがとうございました。");
     assert.equal(checked.stores[0].rating, 3.26);
+    assert.equal(checked.stores[0].public_url, "https://tabelog.com/tokyo/A1309/A130903/13245351/", "口コミ通知のリンク用");
   } finally {
     await browser.close();
   }

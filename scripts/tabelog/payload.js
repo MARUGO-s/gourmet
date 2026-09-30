@@ -12,7 +12,7 @@ const devices = (row) => {
   return { pvPc: row.pc ?? null, pvSp: row.sp ?? null, pvApp: row.app ?? null, pvOther: row.unclassified ?? (all ? 0 : null) };
 };
 
-export function tabelogResultToPayload(result, { storeKey, name = null, runId, agent = "grok-bot", capturedAt = new Date().toISOString(), requestId, today } = {}) {
+export function tabelogResultToPayload(result, { storeKey, name = null, publicUrl = null, runId, agent = "grok-bot", capturedAt = new Date().toISOString(), requestId, today } = {}) {
   if (!result || !["ok", "partial"].includes(result.status)) throw new Error(result?.message ?? "食べログの取得結果がありません");
   validateTabelogResult(result);
   if (!/^[0-9A-Za-z_-]{0,40}$/.test(String(storeKey ?? ""))) throw new Error("storeKey が不正です（食べログの店舗ID等、英数字40文字以内）");
@@ -25,7 +25,7 @@ export function tabelogResultToPayload(result, { storeKey, name = null, runId, a
   if (r.ownerReviews) reports.push({ kind: "owner_reviews", period: captureDay, data: r.ownerReviews });
   if (r.pageHistory) reports.push({ kind: "page_history", period: `${r.pageHistory.first}-${r.pageHistory.last}`, data: r.pageHistory });
   const store = {
-    storeKey: String(storeKey ?? ""), name,
+    storeKey: String(storeKey ?? ""), name, ...(publicUrl ? { publicUrl } : {}),
     summary: result.data.rating != null || result.data.reviews != null ? { rating: result.data.rating ?? null, reviewCount: result.data.reviews ?? null } : null,
     daily: result.daily.map((d) => ({ date: d.date, pv: d.pv, ...devices(d) })),
     monthly: result.monthly.map((m) => ({

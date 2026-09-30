@@ -56,6 +56,8 @@ export async function mtalkRequest(config, method, path, payload, { fetchImpl = 
   }
   const data = await res.json().catch(() => null);
   if (res.ok && data && typeof data === "object") return data;
+  // /alert の 404 は送信先なし（やり直さない）。ルート自体が無い（M-talk 側が未配置: "not found"）は 502 でやり直す
+  if (res.status === 404 && path === "/alert" && data?.error !== "not found") throw new MtalkError("送信先のM-talk利用者が見つからないか、利用停止中です", 404);
   if (res.status === 404 && path === "/send") throw new MtalkError("送信先のM-talk利用者が見つからないか、利用停止中です。送信先を選び直してください", 404);
   if (res.status === 409) throw new MtalkError("同じ送信を処理中です。しばらくしてから再度お試しください", 409);
   if (res.status === 413) throw new MtalkError("PDFが大きすぎるため送信できませんでした", 413);

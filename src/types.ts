@@ -174,3 +174,6 @@ export type AiReportSummary = { id: string; title: string; storeId: string; stor
 export type AiReport = AiReportSummary & { markdown: string; content: Record<string, unknown> };
 export type MtalkRecipient = { id: string; username: string; stores: string[] };
 export type AiReportShare = { id: string; reportId: string | null; reportTitle: string; recipientId: string; recipientName: string; status: "pending" | "sent" | "failed"; error: string | null; createdAt: string; sentAt: string | null };
+
+// 口コミ通知（新着口コミ・食べログ総合点の変化 → M-talk「AI分析」Bot）。型は共通モジュールの宣言を使う
+export type { AlertRecipient, AlertSetting, AlertSettingInput, AlertDelivery, AlertEvent } from "../supabase/functions/_shared/review-alerts.js";
