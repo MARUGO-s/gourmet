@@ -366,6 +366,21 @@ INGEST_TOKEN=... node scripts/agent-ingest.mjs payload.json
 4. `supabase functions deploy ai-analyst --project-ref ycsqfajidusuibqljjwr --no-verify-jwt`。
 5. 画面から自分宛て（またはテスト用の利用者宛て）に1件送り、M-talkにカードとPDFが届くこと、送信履歴が「送信済み」になることを確認する。未設定のときは送信先の読み込みで「M-talk連携は未設定です」と表示されます。
 
+### M-talk の「AI分析」Bot へ質問する（migration 016・ai-analyst `POST /mtalk-chat`・line_report の mtalk-external-post `/chat-dispatch`）
+
+M-talk の利用者が「AI分析」Botとの1対1に文章を書くと、数秒〜数十秒で Bot が答えます。回答は画面の AI分析（`/ask`）と同じモデル（`OPENAI_MODEL`、既定 gpt-6-luna）・同じ7つの関数（PV・予約・口コミの集計だけ。SQLは受け取らない）で作り、チャット向けのプレーンテキスト（表・見出し記号なし、1通2000文字以内・最大3通）にします。再取得（スクレイピング）やPDFレポートの作成はしません。
+
+- 流れ: M-talk の`chat_messages`追加 → line_report のトリガー（pg_net）→ `mtalk-external-post /chat-dispatch` → 本関数`POST /mtalk-chat`（署名つき）→ 回答を Bot の発言として投稿。
+- 認証: JWT ではなく、gourmet→M-talk と同じ`GOURMET_MTALK_TOKEN`と HMAC 署名（`X-Mtalk-Timestamp`±5分・`X-Mtalk-Signature`、署名対象のパスは`/mtalk-chat`）。新しい秘密情報はありません。
+- 会話の前提: そのトークの直近10件の発言と、そのトークへ最後に送られたAI分析レポート（本文は8000文字まで）。レポートがあれば、その店舗・期間を既定にします。
+- 読むデータの持ち主（gourmet の利用者）: そのトークへ最後にレポートを送った利用者。レポートが1件も無いトークでは`INGEST_USER_ID`（取り込み先の利用者）。読み込みは`scopedReadClient`（service_role に`user_id = 持ち主`を必ず付ける SELECT 専用）で行い、他の利用者のデータは読みません。
+- 回数: M-talk 利用者ごとに1時間60回（`ai_usage`に`kind = 'mtalk'`・`mtalk_user_id`・`user_id = 持ち主`で記録）。
+
+配置の順番（line_report 側より先に行う）:
+1. gourmet に`016_ai_usage_mtalk.sql`だけを適用する（`supabase db query --linked -f supabase/migrations/016_ai_usage_mtalk.sql`）。
+2. `supabase functions deploy ai-analyst --project-ref ycsqfajidusuibqljjwr --no-verify-jwt`。
+3. line_report 側（migration と mtalk-external-post）を配置する。
+
 ## 配置・運用
 
 PRを作成してテスト成功後にmainへマージすると、GitHub Pagesへ配置されます。Edge Functionsは別途明示的に配置してください（上記コマンド）。
@@ -389,6 +404,8 @@ DB変更はこのプロジェクトを確認して対象SQLだけ適用します
 2026-09-29: 店舗マスタと店舗の選択・全店舗の比較を追加（migration 013 `stores`・`store_sites`、初期データ`supabase/seed/013_seed_stores.sql`、`review-api /stores`・`/overview`・`/dashboard?store=`）。
 
 2026-10-01: AI分析レポートを M-talk の利用者へ送る機能を追加（migration 015 `ai_report_shares`、`ai-analyst /mtalk-recipients`・`/reports/:id/share-mtalk`・`/shares`、PDFの生成、line_report `mtalk-external-post`）。
+
+2026-10-01: M-talk の「AI分析」Bot への質問に答える機能を追加（migration 016 `ai_usage.mtalk_user_id`・`kind = 'mtalk'`、`ai-analyst POST /mtalk-chat`、line_report `mtalk-external-post /chat-dispatch`）。
 
 ## 参考
 

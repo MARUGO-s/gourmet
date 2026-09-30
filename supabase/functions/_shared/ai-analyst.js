@@ -49,7 +49,7 @@ export function validateStoreScope(v) {
   if (!isStoreId(v)) fail("店舗の指定が不正です");
   return v;
 }
-function validateHistory(history) {
+export function validateHistory(history) {
   if (history == null) return [];
   if (!Array.isArray(history)) fail("会話履歴の形式が不正です");
   const kept = [];

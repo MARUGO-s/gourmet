@@ -4,18 +4,23 @@
 // M-talk 送信（/mtalk-recipients, /reports/:id/share-mtalk, /shares）: ログイン中の利用者が自分のレポートを、M-talk の
 // 有効な利用者1人へ「AI分析」Botのカード＋PDFで送る。PDFはここで作る（Noto Sans JP を埋め込み）。
 // GOURMET_MTALK_TOKEN・MTALK_API_URL は秘密情報。ブラウザ・応答・ログ・エラーへ出さない。送信は毎回 ai_report_shares に記録する。
+// M-talk からの質問（POST /mtalk-chat）: 呼び出し元は line_report の mtalk-external-post だけ（JWTではなく GOURMET_MTALK_TOKEN + HMAC 署名）。
+// 「AI分析」Bot との1対1での質問に、/ask と同じモデル・同じ関数で答える。データの持ち主は mtalk-chat.js の resolveDataOwner で決め、
+// その user_id で絞った SELECT だけで読む。回数は ai_usage（kind='mtalk'、mtalk_user_id ごとに1時間60回）。
 import { createClient } from "npm:@supabase/supabase-js@2.116.0";
 import * as PDFLib from "npm:pdf-lib@1.17.1";
 import * as fontkit from "npm:fontkit@2.0.4";
 import { service, json, body } from "../_shared/http.ts";
 import { must, japanDate } from "../_shared/sync-data.js";
-import { AI_LIMITS, REPORT_SCHEMA_HINT, buildReportFacts, composeReportMarkdown, contextMessage, normalizeReportAi, reportPromptFacts, systemPrompt,
+import { AI_LIMITS, REPORT_SCHEMA_HINT, buildReportFacts, composeReportMarkdown, contextMessage, normalizeReportAi, reportPromptFacts, resolvePeriod, systemPrompt,
   validateAskInput, validateReportInput } from "../_shared/ai-analyst.js";
 import { AiError, answerWithTools, chatCompletion, openAiConfig } from "../_shared/openai.js";
 import { loadAnalystDataset } from "../_shared/ai-data.js";
 import { MTALK_SHARE_LIMITS, MtalkError, buildShareCard, bytesToBase64, mtalkConfig, mtalkRequest, normalizeRecipients, publicShare, senderLabel,
   shareFileName, validateShareInput } from "../_shared/mtalk-share.js";
 import { loadReportFonts, renderReportPdf } from "../_shared/report-pdf.js";
+import { MTALK_CHAT_LIMITS, MTALK_CHAT_PATH, MtalkChatError, mtalkChatPrompt, reportContextMessage, resolveDataOwner, scopedReadClient, splitReply,
+  toMtalkPlainText, validateMtalkChatInput, verifyMtalkRequest } from "../_shared/mtalk-chat.js";
 import * as fontModule from "../_shared/fonts/noto-sans-jp.js";
 
 const reportPath = /^\/reports\/([0-9a-f-]{36})$/;
@@ -32,6 +37,7 @@ Deno.serve(async req => {
   const url = new URL(req.url);
   const path = url.pathname.replace(/^.*\/ai-analyst/, "") || "/";
   const admin = service();
+  if (path === MTALK_CHAT_PATH) return await mtalkChat(req, admin);
   const token = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
   if (!token) return json(req, { error:"ログインが必要です" }, 401);
   const { data: auth, error: authError } = await admin.auth.getUser(token);
@@ -179,6 +185,72 @@ Deno.serve(async req => {
     return json(req, { error:"処理を完了できませんでした。時間をおいて再度お試しください" }, 500);
   }
 });
+
+// ---------- M-talk からの質問（line_report → gourmet、サーバー間のみ。CORS なし） ----------
+const plainJson = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers:{ "Content-Type":"application/json; charset=utf-8", "Cache-Control":"no-store" } });
+
+async function mtalkChat(req: Request, admin: ReturnType<typeof service>): Promise<Response> {
+  if (req.method !== "POST") return plainJson({ error:"method not allowed" }, 405);
+  const bodyText = await req.text();
+  if (bodyText.length > 100_000) return plainJson({ error:"送信内容が大きすぎます" }, 413);
+  const authorized = await verifyMtalkRequest({
+    authorization:req.headers.get("authorization"), timestamp:req.headers.get("x-mtalk-timestamp"), signature:req.headers.get("x-mtalk-signature"),
+    method:"POST", path:MTALK_CHAT_PATH, body:bodyText,
+  }, Deno.env.get("GOURMET_MTALK_TOKEN") ?? "");
+  if (!authorized) return plainJson({ error:"unauthorized" }, 401);
+  try {
+    let input;
+    try { input = validateMtalkChatInput(JSON.parse(bodyText)); }
+    catch (error) { return plainJson({ error:error instanceof MtalkChatError ? error.message : "入力形式が不正です" }, 400); }
+    const config = openAiConfig((k: string) => Deno.env.get(k));
+    if (!config.apiKey) return plainJson({ error:"AI分析は現在準備中です（管理者の設定待ち）。しばらくしてからお試しください" }, 503);
+    const since = new Date(Date.now() - 3600_000).toISOString();
+    const { count, error:countError } = await admin.from("ai_usage").select("id", { count:"exact", head:true })
+      .eq("kind", "mtalk").eq("mtalk_user_id", input.mtalkUserId).gte("created_at", since);
+    if (countError) throw countError;
+    if ((count ?? 0) >= MTALK_CHAT_LIMITS.perHour) return plainJson({ error:`質問は1時間に${MTALK_CHAT_LIMITS.perHour}回までです。しばらくしてからお試しください` }, 429);
+
+    // データの持ち主: このトークへ最後にレポートを送った gourmet 利用者 → 無ければ INGEST_USER_ID
+    const { data:shares, error:shareError } = await admin.from("ai_report_shares").select("user_id,report_id,sent_at")
+      .eq("recipient_user_id", input.mtalkUserId).eq("mtalk_group_id", input.groupId).eq("status", "sent")
+      .order("sent_at", { ascending:false }).limit(1);
+    if (shareError) throw shareError;
+    const owner = resolveDataOwner(shares?.[0] ?? null, Deno.env.get("INGEST_USER_ID") ?? "");
+    if (!owner) return plainJson({ error:"分析できるデータがまだありません。Review Command Center からレポートを送ってもらってから質問してください" }, 404);
+    let report: any = null;
+    if (owner.reportId) {
+      const { data, error } = await admin.from("ai_reports").select("id,title,store_id,store_name,period_from,period_to,markdown")
+        .eq("id", owner.reportId).eq("user_id", owner.userId).limit(1);
+      if (error) throw error;
+      report = data?.[0] ?? null;
+    }
+    const today = japanDate();
+    const ds = await loadAnalystDataset(scopedReadClient(admin, owner.userId), { today });
+    const store = report?.store_id && ds.stores.some((s: any) => s.id === report.store_id) ? report.store_id : "all";
+    const period = report ? { from:String(report.period_from).slice(0, 10), to:String(report.period_to).slice(0, 10) } : resolvePeriod(null, null, today);
+    const ask = { store, ...period };
+    const reportMessage = reportContextMessage(report);
+    const messages = [
+      { role:"system", content:systemPrompt(today) },
+      { role:"system", content:mtalkChatPrompt() },
+      { role:"system", content:contextMessage(ds, ask) },
+      ...(reportMessage ? [{ role:"system", content:reportMessage }] : []),
+      ...input.history,
+      { role:"user", content:input.question },
+    ];
+    const result: any = await answerWithTools(config, { ds, messages, ctx:ask, maxTokens:4000 });
+    await admin.from("ai_usage").insert({ user_id:owner.userId, kind:"mtalk", mtalk_user_id:input.mtalkUserId, model:String(result.model).slice(0, 100),
+      prompt_tokens:result.usage?.prompt_tokens ?? null, completion_tokens:result.usage?.completion_tokens ?? null })
+      .then(({ error }) => { if (error) console.warn("[ai-analyst] mtalk usage log failed"); });
+    const parts = splitReply(toMtalkPlainText(result.answer));
+    if (!parts.length) return plainJson({ error:"AIから回答が得られませんでした。質問を変えてお試しください" }, 502);
+    return plainJson({ parts, model:result.model, calls:result.calls.length, owner:owner.via, report:report ? { id:report.id, title:report.title } : null });
+  } catch (error) {
+    if (error instanceof AiError) return plainJson({ error:error.message }, (error as AiError & { status: number }).status);
+    console.warn("[ai-analyst] mtalk-chat failed");
+    return plainJson({ error:"処理を完了できませんでした。時間をおいて再度お試しください" }, 500);
+  }
+}
 
 function publicReport(r: any) {
   return { id:r.id, title:r.title, storeId:r.store_id ?? "all", storeName:r.store_name, from:r.period_from, to:r.period_to, model:r.model, createdAt:r.created_at };
