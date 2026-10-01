@@ -8,7 +8,7 @@
 //   POST /agent-api/requests/pending       アプリからの取得依頼（依頼中・取得中）の一覧
 //   POST /agent-api/requests/claim         依頼を原子的に取得開始（FOR UPDATE SKIP LOCKED）
 //   POST /agent-api/requests/complete      取得完了を報告
-//   POST /agent-api/requests/fail          取得失敗を報告
+//   POST /agent-api/requests/fail          取得失敗を報告（failureKind: needs_relogin | needs_human_check | other。省略時は理由の文から判定）
 //   （/requests/pending・/requests/claim は origin（app | schedule | mtalk_live）で絞れる。Grok Bot は 9:00〜22:59 以外は mtalk_live だけ）
 //   POST /agent-api/schedules/enqueue-due  自動取得の設定（fetch_schedules）のうち予定時刻を過ぎたものを取得依頼にする
 //   POST /agent-api/alerts/dispatch        口コミ通知（新着口コミ・総合点の変化）の送信待ちを M-talk へ送る（結果を返す）
@@ -17,6 +17,7 @@
 // line_report mtalk-external-post POST /alert（GOURMET_MTALK_TOKEN + HMAC、ai-analyst と同じ秘密情報）。Bot の自動判定は GET /store-bots。
 import { service, body } from "../_shared/http.ts";
 import { decrypt } from "../_shared/crypto.ts";
+import { NOTICE_PATH, processFollowups, supabaseFollowupStore } from "../_shared/mtalk-followups.js";
 import { must } from "../_shared/sync-data.js";
 import { getSource } from "../_shared/sources.js";
 import { unpackIkyuUsername } from "../_shared/ikyu-login.js";
@@ -52,19 +53,31 @@ function runLive(admin: any, userId: string) {
   const mtalk = mtalkConfig((k: string) => Deno.env.get(k));
   if (!mtalk.configured) return Promise.resolve({ notConfigured: true });
   const env = (k: string) => Deno.env.get(k);
+  // 質問したときと同じ前提（そのトークへ最後に届いたレポート）で答える。持ち主は依頼を処理した INGEST_USER_ID に限る
+  const answer = async ({ question, history, system, lookup }: { question: string; history: any[]; system?: string; lookup: any }) => {
+    const owner = await resolveMtalkOwner(admin, lookup.mtalk_user_id, Number(lookup.mtalk_group_id), userId);
+    return answerMtalkQuestion(admin, env, { mtalkUserId: lookup.mtalk_user_id, owner: owner?.userId === userId ? owner : { userId, reportId: null },
+      question, history, system: system ?? null });
+  };
+  const split = (text: string) => splitReply(text);
   return processLiveLookups(supabaseLiveStore(admin), {
-    // 質問したときと同じ前提（そのトークへ最後に届いたレポート）で答える。持ち主は依頼を処理した INGEST_USER_ID に限る
-    answer: async ({ question, history, system, lookup }: { question: string; history: any[]; system?: string; lookup: any }) => {
-      const owner = await resolveMtalkOwner(admin, lookup.mtalk_user_id, Number(lookup.mtalk_group_id), userId);
-      return answerMtalkQuestion(admin, env, { mtalkUserId: lookup.mtalk_user_id, owner: owner?.userId === userId ? owner : { userId, reportId: null },
-        question, history, system: system ?? null });
-    },
-    post: ({ lookup, parts }: { lookup: any; parts: string[] }) => mtalkRequest(mtalk, "POST", LIVE_REPLY_PATH,
-      { lookup_id: lookup.id, mtalk_user_id: lookup.mtalk_user_id, mtalk_group_id: Number(lookup.mtalk_group_id), parts }, { timeoutMs: 15_000 }),
-    split: (text: string) => splitReply(text),
+    answer,
+    // links = 「ログイン情報を更新」のボタン（アプリの登録画面。ボタンの文と URL の確認は line_report 側）
+    post: ({ lookup, parts, links }: { lookup: any; parts: string[]; links?: any[] }) => mtalkRequest(mtalk, "POST", LIVE_REPLY_PATH,
+      { lookup_id: lookup.id, mtalk_user_id: lookup.mtalk_user_id, mtalk_group_id: Number(lookup.mtalk_group_id), parts, ...(links?.length ? { links } : {}) }, { timeoutMs: 15_000 }),
+    split,
     now: () => Date.now(),
-  }, userId);
+  }, userId).then(async (live) => {
+    // ログイン情報を更新したあとの取り直しの結果（「再ログイン後の取得結果」）
+    const followups = await processFollowups(supabaseFollowupStore(admin), {
+      answer, split, now: () => Date.now(),
+      notice: ({ noticeId, lookup, parts, links }: { noticeId: string; lookup: any; parts: string[]; links: any[] }) => mtalkRequest(mtalk, "POST", NOTICE_PATH,
+        { notice_id: noticeId, mtalk_user_id: lookup.mtalk_user_id, mtalk_group_id: Number(lookup.mtalk_group_id), parts, ...(links.length ? { links } : {}) }, { timeoutMs: 15_000 }),
+    }, userId);
+    return { live, followups };
+  });
 }
+
 function liveInBackground(admin: any, userId: string) {
   const work = runLive(admin, userId).catch(() => console.warn("[agent-api] mtalk live answers failed"));
   const runtime = (globalThis as { EdgeRuntime?: { waitUntil(p: Promise<unknown>): void } }).EdgeRuntime;
@@ -142,9 +155,11 @@ Deno.serve(async (req) => {
       const outcome = path === "/requests/complete" ? "done" : "failed";
       let finish;
       try { finish = validateFinish(input, outcome); } catch (error) { return invalid(error); }
-      const { data, error } = await admin.rpc("finish_agent_request", { p_user: userId, p_id: finish.id, p_claim: finish.claimId, p_status: outcome, p_result: finish.result, p_error: finish.error });
+      const { data, error } = await admin.rpc("finish_agent_request", { p_user: userId, p_id: finish.id, p_claim: finish.claimId, p_status: outcome, p_result: finish.result, p_error: finish.error,
+        ...(outcome === "failed" ? { p_failure_kind: finish.failureKind } : {}) });
       if (error) return error.message.includes("Invalid claim") ? reply({ error: "取得中の依頼が見つかりません（claimId不一致・期限切れ・他の状態で終了済み）" }, 409) : reply({ error: "処理を完了できませんでした" }, 500);
-      if (data?.origin === "mtalk_live") liveInBackground(admin, userId); // 「最新を調べる」の質問に、すべての取得が終わっていれば答える
+      // 「最新を調べる」の質問に、すべての取得が終わっていれば答える（ログイン情報の更新後の取り直しの結果も）
+      if (data?.origin === "mtalk_live" || data?.params?.trigger === "relogin") liveInBackground(admin, userId);
       return reply({ request: publicRequest(data) });
     }
     if (path === "/schedules/enqueue-due") {

@@ -5,12 +5,17 @@
 //   「2」           → 保存した質問・会話履歴で、今あるデータですぐ答える（ai-analyst の Q&A と同じ照合つき）
 //   「1」           → 店舗×サイトの取得依頼（agent_requests、origin = 'mtalk_live'）を登録し、「調べています。終わったらお知らせします」を返す（fetching）
 //   取得の完了/失敗 → agent-api がすべての依頼の終了を確かめて、取り直したデータで答え、M-talk（/chat-reply）へ送る（answered）。
-//                    取り直せなかったサイトは理由（例: 要再ログイン）を書いて、前回までのデータで答える
+//                    取り直せなかったサイトは理由（例: 要再ログイン）を書いて、前回までのデータで答える。
+//                    ログイン情報の問題（failure_kind = needs_relogin）は「ログイン情報を更新」のボタン（links、アプリの登録画面）を添える。
+//                    アプリで更新すると取り直し、結果を「再ログイン後の取得結果」として送る（mtalk-followups.js）。
+//                    「私は人間です」の確認（needs_human_check）はボタンを出さず、次の回に自動でやり直すことと、続くときの頼み方だけを書く
 //   20分たっても終わらない → line_report の見張り（chat_ai_analysis_live_timeouts）が「「2」を送ってください」と案内する
 //
 // あいさつ・お礼など（isChitChat）と、最新を取り直せる店舗×サイトが無いとき（ログイン情報の未登録など）は選択肢を出さずにすぐ答える。
 import { storeNameVariants } from "./review-alerts.js";
 import { SUPPORTED_SCHEDULE_SOURCES } from "./fetch-schedules.js";
+import { failureKindOf } from "./agent-requests.js";
+import { loginLinks } from "./login-help.js";
 
 export const LIVE_LIMITS = {
   choiceMinutes: 30,          // 選択待ちの期限
@@ -127,8 +132,10 @@ function storeKeys(name) {
   return [...keys];
 }
 
-/** 依頼の失敗理由を利用者向けに短く（Grok Bot の --fail の文）。 */
-export function failureReason(error) {
+/** 依頼の失敗理由を利用者向けに短く（Grok Bot の --fail の文。kind = failure_kind があればそれを優先）。 */
+export function failureReason(error, kind = null) {
+  if (kind === "needs_relogin") return "要再ログイン";
+  if (kind === "needs_human_check") return "ログインで「私は人間です」の確認を求められた";
   const s = clip(error, 300);
   if (!s) return "理由不明";
   if (/再ログイン|ログイン(?:でき|に失敗|切れ|が必要)|login|session/i.test(s)) return "要再ログイン";
@@ -138,6 +145,10 @@ export function failureReason(error) {
   if (/依頼できませんでした|依頼が多すぎ/.test(s)) return "取得を依頼できませんでした";
   return s.length > 60 ? `${s.slice(0, 60)}…` : s;
 }
+
+// ボタン（links）を添えるときの案内。パスワード・確認コードはトークに書かないよう必ず添える
+export const RELOGIN_GUIDE = "下の「ログイン情報を更新」からアプリで登録し直すと、取り直した結果をこのトークでお知らせします（パスワードはこのトークに書かないでください）。";
+export const HUMAN_CHECK_GUIDE = "サイトがログインのときに「私は人間です」の確認を求めてきました。SiteBot（Grok Bot）が次の回に自動でやり直します。何度も続くときは、Grok Bot のアプリで SiteBot に伝えてください（SiteBot のパソコンで確認を済ませます）。";
 
 /** 取得の結果（targets × agent_requests）→ 回答の冒頭に足す文と、モデルへ渡す前提。 */
 export function liveSummary(lookup, requests) {
@@ -150,7 +161,8 @@ export function liveSummary(lookup, requests) {
       ok.push(t);
       if (r.finished_at && (!fetchedAt || ms(r.finished_at) > ms(fetchedAt))) fetchedAt = r.finished_at;
     } else {
-      failed.push({ ...t, reason: failureReason(t.enqueueError ?? r?.error ?? (r ? "" : "依頼できませんでした")) });
+      const kind = t.enqueueError ? "other" : r ? failureKindOf(r) : "other";
+      failed.push({ ...t, kind, reason: failureReason(t.enqueueError ?? r?.error ?? (r ? "" : "依頼できませんでした"), t.enqueueError ? null : kind) });
     }
   }
   const lines = [`ご質問：「${excerpt(lookup?.question)}」`];
@@ -164,13 +176,16 @@ export function liveSummary(lookup, requests) {
   } else {
     lines.push(`最新のデータを取得できませんでした（${failText || "理由不明"}）。前回までに取得したデータで答えます。`);
   }
+  const links = loginLinks(failed);
+  if (links.length) lines.push(RELOGIN_GUIDE);
+  if (failed.some((f) => f.kind === "needs_human_check")) lines.push(HUMAN_CHECK_GUIDE);
   const system = [
     "この質問のために、サイトにログインしてデータを取り直しました（取り直したデータはすでに関数の結果に入っています）。",
     ok.length ? `取り直せた: ${describeTargets(ok)}${fetchedAt ? `（${jst(fetchedAt)} 日本時間）` : ""}` : "取り直せたサイトはありません。",
     failed.length ? `取り直せなかった: ${failText}（そのサイトは前回までのデータ）。` : "",
     "取得できたかどうかの説明はシステムが回答の前に書き足すので、回答では繰り返さないでください。",
   ].filter(Boolean).join("\n");
-  return { header: lines.join("\n"), system, ok, failed, fetchedAt, refreshedAny: ok.length > 0 };
+  return { header: lines.join("\n"), system, ok, failed, fetchedAt, refreshedAny: ok.length > 0, links };
 }
 
 const isExpiredChoice = (row, now) => row.status === "awaiting_choice" && ms(row.expires_at) <= now;
@@ -267,7 +282,7 @@ export async function handleMtalkTurn(store, deps, input) {
 
 /**
  * 「1」を選んだ質問のうち、取得依頼がすべて終わったものに答えて M-talk へ送る（agent-api が取得の完了・失敗・確認のたびに呼ぶ）。
- * deps: { answer({ question, history, system, lookup }) → { text }, post({ lookup, parts }) → any（409 = M-talk 側で時間切れ）, split(text) → parts, now() }
+ * deps: { answer({ question, history, system, lookup }) → { text }, post({ lookup, parts, links }) → any（links = ログイン情報を更新のボタン）（409 = M-talk 側で時間切れ）, split(text) → parts, now() }
  */
 export async function processLiveLookups(store, deps, ownerUserId) {
   const now = deps.now?.() ?? Date.now();
@@ -299,12 +314,12 @@ export async function processLiveLookups(store, deps, ownerUserId) {
       parts = deps.split(`${summary.header}\n\n${result.text}`);
     } catch {
       parts = [`${summary.header}\n\nただ、回答を作れませんでした。「2」を送ると、${summary.refreshedAny ? "取り直した" : "今ある"}データで答えます。`];
-      try { await deps.post({ lookup: row, parts }); } catch { /* 見張り（20分）に任せる */ }
+      try { await deps.post({ lookup: row, parts, links: summary.links }); } catch { /* 見張り（20分）に任せる */ }
       await store.updateLookup(row.id, ["answering"], { status: "failed", finished_at: new Date().toISOString(), error: "回答を作れませんでした" });
       out.failed++; continue;
     }
     try {
-      await deps.post({ lookup: row, parts });
+      await deps.post({ lookup: row, parts, links: summary.links });
       await store.updateLookup(row.id, ["answering"], { status: "answered", finished_at: new Date(deps.now?.() ?? Date.now()).toISOString() });
       out.answered++;
     } catch (error) {
@@ -339,7 +354,7 @@ export function supabaseLiveStore(admin) {
     insertLookup: async (row) => check(await admin.from("mtalk_live_lookups").insert(row).select(LOOKUP_COLUMNS).single()),
     openLiveLookups: async (ownerUserId) => check(await admin.from("mtalk_live_lookups").select(LOOKUP_COLUMNS)
       .eq("owner_user_id", ownerUserId).in("status", ["fetching", "answering"]).order("chosen_at").limit(20)) ?? [],
-    requestsByIds: async (ids) => (ids.length ? check(await admin.from("agent_requests").select("id,source,store_id,status,error,finished_at,origin").in("id", ids)) : []) ?? [],
+    requestsByIds: async (ids) => (ids.length ? check(await admin.from("agent_requests").select("id,source,store_id,status,error,failure_kind,finished_at,origin").in("id", ids)) : []) ?? [],
     // ログイン情報が登録された店舗×サイト（店舗名は「店舗とサイトの対応」から）
     listTargets: async (ownerUserId) => {
       const creds = check(await admin.from("credentials").select("source,store_key").eq("user_id", ownerUserId).in("source", LIVE_SOURCES)) ?? [];

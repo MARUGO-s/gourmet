@@ -86,17 +86,18 @@ Grok Bot（約5分ごと）→ agent-api /requests/claim（claimed）→ /creden
 | `/requests/pending` | `{"source"?,"origin"?}` | `{"requests":[依頼]}`（依頼中・取得中、古い順100件） |
 | `/requests/claim` | `{"agent","source"?,"origin"?,"limit"?:1〜20}` | `{"requests":[{...依頼,"claimId"}]}`。`FOR UPDATE SKIP LOCKED`で原子的に取得中へ。`origin:"mtalk_live"`（M-talk の「最新を調べる」）は指定が無くても先に取得 |
 | `/requests/complete` | `{"id","claimId","result"?:{...}}` | `{"request":{...}}`（同じ報告の再送は成功扱い） |
-| `/requests/fail` | `{"id","claimId","error":"理由","result"?}` | 同上。`claimId`不一致・期限切れは409 |
+| `/requests/fail` | `{"id","claimId","error":"理由","failureKind"?:"needs_relogin\|needs_human_check\|other","result"?}` | 同上。`claimId`不一致・期限切れは409。`failureKind`を省くと理由の文から判定（migration 020） |
 | `/schedules/enqueue-due` | `{"limit"?:1〜50（既定20）,"dryRun"?:false}` | `{"now","dryRun","enqueued":[{"scheduleId","source","storeId","requestId","dueAt","nextDueAt"}],"skipped":[{"scheduleId","source","storeId","reason":"open_request\|rate_limited\|concurrent\|invalid","nextDueAt"?}]}` |
 | `/alerts/dispatch` | `{}` | `{"claimed","sent","skipped","retry","failed","messages":["店舗: 食べログ 総合点 3.26 → 3.28 / 新着口コミ 2件"],"notConfigured"?}`。口コミ通知の送信待ちをすぐ送る（通常は`/ingest`・`/requests/pending`のたびに自動で送るので不要） |
 
-依頼の形: `{"id","source","storeId","action":"sync_now|fetch_metrics|fetch_reviews|backfill","params":{"fromMonth"?,"toMonth"?,"note"?},"status":"queued|claimed|done|failed","origin":"app|schedule|mtalk_live","requestedAt","claimedAt","finishedAt","claimedBy","attempts","result","error"}`。`backfill`は`fromMonth`〜`toMonth`（最大120か月）の過去分。取得中のまま30分を過ぎると再び`queued`になり（3回で`failed`）、24時間拾われない依頼は`failed`になります。
+依頼の形: `{"id","source","storeId","action":"sync_now|fetch_metrics|fetch_reviews|backfill","params":{"fromMonth"?,"toMonth"?,"note"?},"status":"queued|claimed|done|failed","origin":"app|schedule|mtalk_live","requestedAt","claimedAt","finishedAt","claimedBy","attempts","result","error","failureKind":"needs_relogin|needs_human_check|other|null"}`。`backfill`は`fromMonth`〜`toMonth`（最大120か月）の過去分。取得中のまま30分を過ぎると再び`queued`になり（3回で`failed`）、24時間拾われない依頼は`failed`になります。
 
 ```sh
 INGEST_TOKEN=... node scripts/agent-queue.mjs --list
 INGEST_TOKEN=... node scripts/agent-queue.mjs --claim --limit 1 --agent grok-bot          # claimId を控える
 INGEST_TOKEN=... node scripts/agent-queue.mjs --complete <id> --claim-id <claimId> --result '{"days":30,"reviews":12}'
-INGEST_TOKEN=... node scripts/agent-queue.mjs --fail <id> --claim-id <claimId> --error "追加認証が必要でした"
+INGEST_TOKEN=... node scripts/agent-queue.mjs --fail <id> --claim-id <claimId> --kind needs_relogin --error "一休: 要再ログイン（ID・パスワードが通らない）"
+INGEST_TOKEN=... node scripts/agent-queue.mjs --fail <id> --claim-id <claimId> --kind needs_human_check --error "一休: ログインで「私は人間です」の確認（画像パズル）"
 INGEST_TOKEN=... node scripts/agent-queue.mjs --enqueue-due [--limit 20] [--dry-run]      # 自動取得の設定を依頼に変える（--claim の前）
 INGEST_TOKEN=... node scripts/agent-queue.mjs --claim --origin mtalk_live --limit 6        # 日本時間 9:00〜22:59 以外: M-talk の「最新を調べる」だけ
 ```
@@ -422,6 +423,17 @@ M-talk の利用者が「AI分析」Botとの1対1に文章を書くと、数秒
 3. `agent-api`・`ai-analyst`を`--no-verify-jwt`で配置する（ai-analyst を先に配置すると、古い line_report では選択肢が文章だけで表示されます）。
 4. Grok Bot の手順を24時間（5分ごと）に変え、9:00〜22:59 以外は`--claim --origin mtalk_live`だけにする。
 
+### ログインの失敗の種類と「ログイン情報を更新」（migration 020・review-api・agent-api・line_report の`/chat-reply`の`links`・`/chat-notice`）
+
+- 失敗の種類（`agent_requests.failure_kind`）: `needs_relogin`（ID・パスワードが通らない・ログイン切れ）／`needs_human_check`（ログインで「私は人間です」の確認・画像パズル・繰り返しの確認）／`other`。Grok Bot は`--fail --kind`で報告します。`--kind`の無い報告（古い手順）と既存の失敗は、理由の文から同じ規則で判定します（`classifyFailure`・SQL の`classify_agent_failure`。「私は人間です」「captcha」→ needs_human_check、「要再ログイン」「ID・パスワード」「login」→ needs_relogin）。
+- `needs_relogin`: M-talk の回答に「ログイン情報を更新」のボタン（店舗×サイトごと）を添えます。ボタンはアプリ（`https://marugo-s.github.io/gourmet/?view=accounts&source=ikyu&store=112789&retry=<失敗した依頼>`）を開くだけで、未ログインならふつうにログインしてから、その店舗×サイトの登録欄が開きます。パスワードは M-talk には書かせず、M-talk を通りません（回答にも「パスワードはこのトークに書かないでください」と書きます）。ボタンの文と URL の確認（gourmet のアプリだけ）は line_report 側です。
+- 保存すると review-api が取り直しの依頼（`params.trigger:"relogin"`）を登録します（食べログ・一休だけ。同じ店舗×サイトの依頼が処理待ちならそれを使う）。`retry`が本人の同じ店舗×サイトの「最新を調べる」の依頼なら、`origin:"mtalk_live"`（夜間・優先でも取得）にして`mtalk_followups`に記録し、取得が終わると agent-api が「【再ログイン後の取得結果】」として元の質問に取り直したデータで答え、line_report の`POST /chat-notice`（署名つき、`notice_id`で1回だけ）でそのトークへ送ります。また取得できなければ理由と（ログイン情報の問題なら）もう一度ボタンを送ります。送れなければ3回までやり直します。
+- `needs_human_check`: ボタンは出さず、「サイトがログインのときに「私は人間です」の確認を求めてきました。SiteBot（Grok Bot）が次の回に自動でやり直します。何度も続くときは、Grok Bot のアプリで SiteBot に伝えてください（SiteBot のパソコンで確認を済ませます）。」と書きます。Grok Bot は簡単なチェックボックス（または長押し）を自分のふつうのブラウザで1回押すだけで、画像パズル・繰り返しの確認は解かずに中止して報告します（外部の解読サービスは使わない）。
+- アプリの「取得依頼」の履歴にも、`needs_relogin`の失敗には「ログイン情報を更新」のボタンが出ます。
+
+配置の順番: gourmet に`020_login_failure_kinds.sql`だけを適用 → line_report（main へのマージで`mtalk-external-post`の`links`・`/chat-notice`）→ gourmet の`agent-api`・`review-api`を`--no-verify-jwt`で配置 → GitHub Pages（gourmet main へのマージ）→ Grok Bot の手順に`--kind`を足す。新しい秘密情報はありません。
+migration だけ先に入っても、いまの agent-api（種類なしの6引数の`finish_agent_request`）はそのまま動き、種類は理由の文から決まります。古い line_report へ`links`を送っても無視されるだけです（`/chat-notice`は404になり、お知らせは3回で諦めます）。
+
 ## 配置・運用
 
 PRを作成してテスト成功後にmainへマージすると、GitHub Pagesへ配置されます。Edge Functionsは別途明示的に配置してください（上記コマンド）。
@@ -453,6 +465,8 @@ DB変更はこのプロジェクトを確認して対象SQLだけ適用します
 2026-10-01: M-talk の「AI分析」Bot への質問に答える機能を追加（migration 016 `ai_usage.mtalk_user_id`・`kind = 'mtalk'`、`ai-analyst POST /mtalk-chat`、line_report `mtalk-external-post /chat-dispatch`）。
 
 2026-10-01: M-talk「AI分析」で質問ごとに「最新を調べる／今あるデータで答える」を選べるようにした（migration 019 `agent_requests.origin`・`mtalk_live_lookups`・`claim_agent_requests(p_origin)`、`ai-analyst /mtalk-chat`、agent-api の取得完了後の回答、`agent-queue.mjs --origin`、line_report `mtalk-external-post /chat-reply`）。
+
+2026-10-01: ログインの失敗を種類つきにし（migration 020 `agent_requests.failure_kind`・`finish_agent_request(p_failure_kind)`・`mtalk_followups`、`agent-queue.mjs --fail --kind`）、M-talk の回答に「ログイン情報を更新」のボタン（アプリの登録画面へ）を追加。保存後は自動で取り直し、「再ログイン後の取得結果」をトークへ送る（line_report `/chat-reply`の`links`・`/chat-notice`）。「私は人間です」の確認は`needs_human_check`として案内だけ。
 
 ## 参考
 

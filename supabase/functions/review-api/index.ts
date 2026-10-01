@@ -17,6 +17,8 @@ import { ALL_STORES, UNASSIGNED, MAX_STORES, buildOverview, filterReviews, isMon
 import { loadOverviewInputs, loadStoreDailyInputs, loadStoreMaster } from "../_shared/store-data.js";
 import { STORE_BOTS_PATH, normalizeStoreBots, publicAlertEvent, publicAlertSettings, publicDelivery, validateAlertSettingsInput } from "../_shared/review-alerts.js";
 import { mtalkConfig, mtalkRequest } from "../_shared/mtalk-share.js";
+import { queueRefetchAfterSave } from "../_shared/mtalk-followups.js";
+import { isUuid } from "../_shared/login-help.js";
 
 // M-talk の店舗Bot（と参加しているグループのルーム）。読めなければ bots=null と理由（画面は保存済みの設定だけ出す）
 async function loadStoreBots(): Promise<{ bots: any[] | null; botsError: string | null }> {
@@ -38,7 +40,7 @@ const emptyDetails = () => ({ ranking:null, topPages:null, monthly:[], ownerRevi
 const storePath = /^\/stores\/([0-9a-f-]{36})$/;
 const sitePath = /^\/stores\/([0-9a-f-]{36})\/sites$/;
 const siteItemPath = /^\/stores\/([0-9a-f-]{36})\/sites\/([0-9a-f-]{36})$/;
-const requestColumns = "id,source,store_id,action,params,status,requested_at,claimed_at,finished_at,claimed_by,attempts,result,error";
+const requestColumns = "id,source,store_id,action,params,status,requested_at,claimed_at,finished_at,claimed_by,attempts,result,error,failure_kind";
 
 Deno.serve(async req => {
   if (req.method === "OPTIONS") return json(req, {});
@@ -135,8 +137,13 @@ Deno.serve(async req => {
       const storeKey = input.source === "ikyu" ? String(input.storeId ?? "") : (typeof input.storeKey === "string" ? input.storeKey.trim() : "");
       if(!/^[0-9A-Za-z_-]{0,40}$/.test(storeKey)) return json(req,{error:"店舗コードは英数字・_・-の40文字以内で入力してください"},400);
       if(!getSource(input.source) || !username || username.length>320 || typeof input.password!=="string" || !input.password || input.password.length>1000 || (input.label && (typeof input.label!=="string" || input.label.length>200))) return json(req,{error:input.source==="ikyu"?"店舗ID（6桁）・オペレータID・パスワードをご確認ください":"サイト・ID・パスワードをご確認ください"},400);
+      if(input.retry!=null && !isUuid(input.retry)) return json(req,{error:"取り直す依頼が不正です"},400);
       await must(admin.from("credentials").upsert({user_id:user.id,source:input.source,store_key:storeKey,label:input.label||"",username,password_enc:await encrypt(input.password),updated_at:new Date().toISOString()},{onConflict:"user_id,source,store_key"}));
-      return json(req,{ok:true});
+      // 保存したら、その店舗×サイトの取り直しを依頼する（M-talk のボタンから来たなら結果をそのトークへ）。依頼できなくても保存は成功
+      let refetch;
+      try { refetch=await queueRefetchAfterSave(admin,user.id,{source:input.source,storeKey,retry:input.retry??null}); }
+      catch { refetch={status:"failed",mtalk:false,message:"取り直しを依頼できませんでした。「取得依頼」から依頼してください"}; }
+      return json(req,{ok:true,refetch});
     }
     if (/^\/credentials\/[0-9a-f-]{36}$/.test(path) && req.method === "DELETE") {
       await must(admin.from("credentials").delete().eq("user_id",user.id).eq("id",path.split("/").at(-1)));

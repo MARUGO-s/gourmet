@@ -20,6 +20,7 @@ import IngestPanel from "./components/IngestPanel";
 import RequestsPanel from "./components/RequestsPanel";
 import SchedulesPanel from "./components/SchedulesPanel";
 import AlertsPanel from "./components/AlertsPanel";
+import { DEEP_LINK_PARAMS, parseDeepLink } from "../supabase/functions/_shared/login-help.js";
 // 一休の詳細分析は選択時だけ読み込む（初期バンドルを小さく保つ）
 const IkyuDetails = lazy(() => import("./components/IkyuDetails"));
 // AI分析も選択時だけ読み込む
@@ -31,8 +32,19 @@ const VIEW_TITLES: Record<View, [string, string | null]> = {
   dashboard: ["ダッシュボード", null], ai: ["AI分析", "AIによる質問への回答と分析レポート（OpenAI）"], requests: ["取得依頼", "Grok Botへの取得依頼と履歴"], schedules: ["自動取得の設定", "店舗×サイトごとの自動取得の周期（日本時間）"], alerts: ["口コミ通知", "新着口コミ・食べログ総合点の変化を M-talk の店舗Botからルームへ"], accounts: ["アカウント管理", "口コミサイトのアカウント（店舗×サイト）"],
 };
 
+// M-talk の「ログイン情報を更新」から開いたときの画面（?view=accounts&source=…&store=…&retry=…）。使い終わったら URL から消す
+type DeepLink = ReturnType<typeof parseDeepLink>;
+const initialDeepLink: DeepLink = typeof window === "undefined" ? null : parseDeepLink(window.location.search);
+function clearDeepLinkFromUrl() {
+  const u = new URL(window.location.href);
+  for (const k of DEEP_LINK_PARAMS) u.searchParams.delete(k);
+  window.history.replaceState(null, "", `${u.pathname}${u.search}${u.hash}`);
+}
+
 export default function App() {
   const [view, setView] = useState<View>("dashboard");
+  const [deepLink, setDeepLink] = useState<DeepLink>(initialDeepLink);
+  const [credPreset, setCredPreset] = useState<{ source: string; storeKey: string; retry: string | null } | null>(null);
   // スマートフォン幅のメニュー（ドロワー）の開閉
   const [menuOpen, setMenuOpen] = useState(false);
   const closeMenu = useCallback(() => setMenuOpen(false), []);
@@ -111,6 +123,15 @@ export default function App() {
     setScope(null);
     if (userId) saveSelection(userId, null);
   }, [userId]);
+  // 「ログイン情報を更新」のリンク: ログインして店舗を読み込んだら、その店舗のアカウント管理を開く（未ログインならログイン後に）
+  useEffect(() => {
+    if (!userId || !storesLoaded || deepLink?.kind !== "credentials") return;
+    const st = stores.find((s) => s.sites.some((x) => x.source === deepLink.source && x.siteStoreKey === deepLink.storeKey));
+    selectScope(st?.id ?? ALL_STORES);
+    setView("accounts");
+    setCredPreset({ source: deepLink.source, storeKey: deepLink.storeKey, retry: deepLink.retry });
+    setDeepLink(null);
+  }, [userId, storesLoaded, stores, deepLink, selectScope]);
   const currentStore = stores.find((s) => s.id === scope);
   const scopeKeys = useMemo(() => (scope && scope !== ALL_STORES ? keysForStore(scope, stores.flatMap((s) => s.sites)) : null), [scope, stores]);
   const defaultStoreId = currentStore?.id ?? "";
@@ -226,6 +247,9 @@ export default function App() {
         ) : null}
 
         <main className="flex flex-1 flex-col gap-5 px-4 py-5 md:px-6 md:py-6">
+          {!userId && deepLink?.kind === "credentials" ? (
+            <p className="rounded-md border border-line bg-warn-soft px-4 py-2.5 text-[12px] font-bold text-warn">右上の「ログイン」からログインすると、ログイン情報の更新画面を開きます。</p>
+          ) : null}
           {choosing ? (
             <StoreSelect stores={stores} sources={sources} loading={!storesLoaded} error={storesError} onSelect={selectScope} onManage={() => setView("stores")} onRetry={refreshStores} />
           ) : view === "overview" ? (
@@ -317,7 +341,8 @@ export default function App() {
             userId ? (
               <RequestsPanel sources={sources} credentials={credentials} requests={requests} loading={requestsLoading} busyKey={busyKey}
                 stores={stores} scopeKeys={scopeKeys} defaultStoreId={defaultStoreId} onStoresChanged={refreshStores}
-                onRequest={(source, storeId, action, params) => void onRequest(source, storeId, action, params)} onRefresh={() => void loadRequests()} />
+                onRequest={(source, storeId, action, params) => void onRequest(source, storeId, action, params)} onRefresh={() => void loadRequests()}
+                onRelogin={(source, storeKey, retry) => { setCredPreset({ source, storeKey, retry }); setView("accounts"); }} />
             ) : (
               <div className="rounded-md border border-line bg-card px-6 py-12 text-center text-[12px] font-semibold text-faint">右上の「ログイン」から開始してください</div>
             )
@@ -332,7 +357,8 @@ export default function App() {
               <div className="rounded-md border border-line bg-card px-6 py-12 text-center text-[12px] font-semibold text-faint">右上の「ログイン」から開始してください</div>
             )
           ) : (
-            <CredentialsPanel key={`${userId ?? "guest"}/${scope}`} sources={sources} onChanged={refreshAll} stores={stores} scopeKeys={scopeKeys} defaultStoreId={defaultStoreId} onStoresChanged={refreshStores} />
+            <CredentialsPanel key={`${userId ?? "guest"}/${scope}`} sources={sources} onChanged={() => { refreshAll(); void loadRequests(); }} stores={stores} scopeKeys={scopeKeys} defaultStoreId={defaultStoreId} onStoresChanged={refreshStores}
+              preset={userId ? credPreset : null} onPresetDone={() => { setCredPreset(null); clearDeepLinkFromUrl(); }} />
           )}
         </main>
       </div>
