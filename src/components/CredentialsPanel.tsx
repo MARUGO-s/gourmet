@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { deleteCredential, getCredentials, saveCredential } from "../api";
-import type { CredentialRow, SourceMeta, Store, StoreKeys } from "../types";
+import type { CredentialRow, RefetchResult, SourceMeta, Store, StoreKeys } from "../types";
 import { filterByStore, storeLabelFor } from "../../supabase/functions/_shared/stores.js";
 import StorePicker, { commitPick, emptyPick, resolvePick } from "./StorePicker";
 
@@ -12,15 +12,32 @@ type Props = {
   scopeKeys: StoreKeys | null;
   defaultStoreId: string;
   onStoresChanged: () => void;
+  // M-talk の「ログイン情報を更新」から開いたとき: その店舗×サイトで登録欄を開く（retry = 失敗した依頼）
+  preset?: { source: string; storeKey: string; retry: string | null } | null;
+  onPresetDone?: () => void;
 };
 
-export default function CredentialsPanel({ sources, onChanged, stores, scopeKeys, defaultStoreId, onStoresChanged }: Props) {
+// 店舗コード → それを割り当てた店舗（登録欄の既定）
+const storeOf = (stores: Store[], source: string, key: string) => stores.find((s) => s.sites.some((x) => x.source === source && x.siteStoreKey === key));
+
+export default function CredentialsPanel({ sources, onChanged, stores, scopeKeys, defaultStoreId, onStoresChanged, preset = null, onPresetDone }: Props) {
   const [allRows, setRows] = useState<CredentialRow[]>([]);
   const rows = filterByStore(allRows, scopeKeys);
   const allSites = stores.flatMap((s) => s.sites);
-  const [source, setSource] = useState<string>(sources[0]?.id ?? "");
+  const [source, setSource] = useState<string>(preset?.source ?? sources[0]?.id ?? "");
   const [label, setLabel] = useState("");
-  const [pick, setPick] = useState(emptyPick(defaultStoreId));
+  const [pick, setPick] = useState(() => {
+    const st = preset ? storeOf(stores, preset.source, preset.storeKey) : null;
+    return st ? { ...emptyPick(st.id), key: preset!.storeKey } : emptyPick(defaultStoreId);
+  });
+  // 開いたあとにリンクが来たとき・店舗の読み込みが後から終わったときも、リンクの店舗×サイトを選ぶ
+  useEffect(() => {
+    if (!preset) return;
+    setSource(preset.source);
+    const st = storeOf(stores, preset.source, preset.storeKey);
+    if (st) setPick({ ...emptyPick(st.id), key: preset.storeKey });
+  }, [preset, stores]);
+  const [refetch, setRefetch] = useState<RefetchResult | null>(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -55,11 +72,16 @@ export default function CredentialsPanel({ sources, onChanged, stores, scopeKeys
       }
       setSaving(true);
       setNotice(null);
+      setRefetch(null);
       try {
         // 店舗IDが未設定なら、先に店舗の割り当てに保存する（別の店舗に割り当て済みならここで止まる）
         const { key, created } = await commitPick(stores, source, pick);
         if (created) onStoresChanged();
-        await saveCredential({ source, label, username, password, ...(source === "ikyu" ? { storeId: key } : { storeKey: key }) });
+        // リンクの店舗×サイトのまま保存したときだけ、失敗した依頼（retry）を渡す（結果をその M-talk のトークへ）
+        const retry = preset && preset.source === source && preset.storeKey === key ? preset.retry : null;
+        const saved = await saveCredential({ source, label, username, password, ...(source === "ikyu" ? { storeId: key } : { storeKey: key }), ...(retry ? { retry } : {}) });
+        setRefetch(saved.refetch ?? null);
+        if (preset) onPresetDone?.();
         setLabel("");
         setPick(emptyPick(pick.storeId));
         setUsername("");
@@ -74,7 +96,7 @@ export default function CredentialsPanel({ sources, onChanged, stores, scopeKeys
         setSaving(false);
       }
     },
-    [source, label, pick, stores, username, password, refresh, onChanged, onStoresChanged],
+    [source, label, pick, stores, username, password, refresh, onChanged, onStoresChanged, preset, onPresetDone],
   );
 
   const onDelete = useCallback(
@@ -163,9 +185,17 @@ export default function CredentialsPanel({ sources, onChanged, stores, scopeKeys
 
       <form onSubmit={onSubmit} className="h-fit rounded-md border border-line bg-card">
         <header className="border-b border-line px-5 py-3.5">
-          <h2 className="text-[13px] font-bold tracking-tight">アカウントを追加</h2>
+          <h2 className="text-[13px] font-bold tracking-tight">{preset ? "ログイン情報を更新" : "アカウントを追加"}</h2>
         </header>
         <div className="flex flex-col gap-3.5 px-5 py-4">
+          {preset ? (
+            <p className="rounded bg-warn-soft px-3 py-2 text-[11px] leading-relaxed font-semibold text-warn">
+              {srcMap.get(preset.source)?.name ?? preset.source}
+              {storeOf(stores, preset.source, preset.storeKey) ? `（${storeOf(stores, preset.source, preset.storeKey)!.name}）` : ""}
+              にログインできませんでした。サイトで使っているID・パスワードを入力して保存してください。保存すると、最新の取得をGrok Botへ自動で依頼します
+              {preset.retry ? "（M-talk から開いた場合は、結果をそのトークにもお知らせします）" : ""}。
+            </p>
+          ) : null}
           <label className="flex flex-col gap-1.5">
             <span className="text-[11px] font-bold text-subtle">サイト</span>
             <select
@@ -232,6 +262,9 @@ export default function CredentialsPanel({ sources, onChanged, stores, scopeKeys
           </label>
           {notice ? (
             <p className="rounded bg-surface px-3 py-2 text-[11px] font-semibold text-subtle">{notice}</p>
+          ) : null}
+          {refetch ? (
+            <p className={`rounded px-3 py-2 text-[11px] font-semibold ${refetch.status === "failed" ? "bg-danger-soft text-danger" : refetch.status === "not_supported" ? "bg-surface text-subtle" : "bg-ok-soft text-ok"}`}>{refetch.message}</p>
           ) : null}
           <button
             type="submit"

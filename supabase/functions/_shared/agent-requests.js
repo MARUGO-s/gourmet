@@ -8,6 +8,10 @@ export const REQUEST_ORIGINS = ["app", "schedule", "mtalk_live"];
 export const ORIGIN_LABELS = { app: "アプリ", schedule: "自動取得", mtalk_live: "M-talk" };
 export const ACTION_LABELS = { sync_now: "今すぐ取得（全項目）", fetch_metrics: "PV・予約などの数値", fetch_reviews: "口コミ", backfill: "過去分の取得" };
 export const STATUS_LABELS = { queued: "依頼中", claimed: "取得中", done: "完了", failed: "失敗" };
+// 失敗の種類（migration 020）。needs_relogin だけ、M-talk・アプリに「ログイン情報を更新」のボタンを出す。
+// needs_human_check = ログインで「私は人間です」の確認を求められた（Grok Bot が次の回に自動でやり直す。ボタンは出さない）
+export const FAILURE_KINDS = ["needs_relogin", "needs_human_check", "other"];
+export const FAILURE_KIND_LABELS = { needs_relogin: "ログイン情報の更新が必要", needs_human_check: "「私は人間です」の確認が必要", other: "その他" };
 // Grok Bot の確認間隔（目安）。取得はこの間隔で拾われる。
 export const AGENT_POLL_MINUTES = 5;
 
@@ -39,12 +43,24 @@ export function validateRequestInput(input, currentMonth) {
   return { source, store_id: storeId, action, params };
 }
 
+// 失敗理由の文 → 種類（--kind の無い古い報告と、migration 020 の既存の失敗の埋め直しと同じ規則。「私は人間です」を先に見る）
+const HUMAN_CHECK_PATTERN = /私は人間|人間です|ロボットではありません|画像認証|captcha|recaptcha|turnstile|human/i;
+const RELOGIN_PATTERN = /再ログイン|ログイン(?:でき|に失敗|切れ|が必要)|パスワードが(?:通ら|違|誤)|ID・パスワード|login|session|password/i;
+export function classifyFailure(error) {
+  const s = String(error ?? "");
+  if (HUMAN_CHECK_PATTERN.test(s)) return "needs_human_check";
+  if (RELOGIN_PATTERN.test(s)) return "needs_relogin";
+  return "other";
+}
+// 行の失敗の種類（列が無い・空の古い行は理由の文から）
+export const failureKindOf = (r) => (r?.status === "failed" ? (FAILURE_KINDS.includes(r.failure_kind) ? r.failure_kind : classifyFailure(r.error)) : null);
+
 // DB行 → 画面・エージェント向け（キャメルケース）
 export function publicRequest(r) {
   return {
     id: r.id, source: r.source, storeId: r.store_id, action: r.action, params: r.params ?? {}, status: r.status, origin: r.origin ?? "app",
     requestedAt: r.requested_at, claimedAt: r.claimed_at ?? null, finishedAt: r.finished_at ?? null,
-    claimedBy: r.claimed_by ?? null, attempts: r.attempts ?? 0, result: r.result ?? null, error: r.error ?? null,
+    claimedBy: r.claimed_by ?? null, attempts: r.attempts ?? 0, result: r.result ?? null, error: r.error ?? null, failureKind: failureKindOf(r),
   };
 }
 
@@ -58,5 +74,7 @@ export function validateFinish(input, outcome) {
   }
   const error = String(input?.error ?? "").trim();
   if (!error || error.length > 1000) fail("error（失敗理由）を1〜1000文字で指定してください");
-  return { id: input.id, claimId: input.claimId, result: input.result && typeof input.result === "object" && !Array.isArray(input.result) && JSON.stringify(input.result).length <= 20000 ? input.result : null, error };
+  const kind = input?.failureKind ?? null;
+  if (kind != null && !FAILURE_KINDS.includes(kind)) fail(`failureKind は ${FAILURE_KINDS.join(" / ")} のどれかです`);
+  return { id: input.id, claimId: input.claimId, failureKind: kind ?? classifyFailure(error), result: input.result && typeof input.result === "object" && !Array.isArray(input.result) && JSON.stringify(input.result).length <= 20000 ? input.result : null, error };
 }

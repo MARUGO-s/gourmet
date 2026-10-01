@@ -158,7 +158,12 @@ export type AgentRequest = {
   attempts: number;
   result: Record<string, unknown> | null;
   error: string | null;
+  // 失敗の種類（needs_relogin = ログイン情報の更新が必要 / needs_human_check = 「私は人間です」の確認を求められた / other）。失敗以外は null
+  failureKind?: "needs_relogin" | "needs_human_check" | "other" | null;
 };
+
+// ログイン情報の保存後の取り直し（review-api が自動で依頼する）
+export type RefetchResult = { status: "queued" | "already_open" | "not_supported" | "failed"; requestId?: string; mtalk: boolean; message: string };
 
 // 自動取得の設定（fetch_schedules）。型は共通モジュールの宣言を使う
 export type { PublicSchedule as FetchSchedule, ScheduleInput, ScheduleMode } from "../supabase/functions/_shared/fetch-schedules.js";

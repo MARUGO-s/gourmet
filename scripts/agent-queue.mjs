@@ -4,12 +4,17 @@
 //   node scripts/agent-queue.mjs --claim [--source tabelog] [--origin mtalk_live] [--limit 1] [--agent grok-bot]
 //     --origin mtalk_live: M-talk の「最新を調べる」の依頼だけ（日本時間 9:00〜22:59 以外はこれだけ処理する）。指定が無くても mtalk_live が先に取得される
 //   node scripts/agent-queue.mjs --complete <id> --claim-id <claimId> [--result '{"days":30}' | --result-file r.json]
-//   node scripts/agent-queue.mjs --fail <id> --claim-id <claimId> --error "失敗の理由"
+//   node scripts/agent-queue.mjs --fail <id> --claim-id <claimId> --error "失敗の理由" [--kind needs_relogin | needs_human_check | other]
+//     --kind: 失敗の種類。needs_relogin（ID・パスワードが通らない・ログイン切れ）は M-talk・アプリに「ログイン情報を更新」のボタンが出る。
+//     needs_human_check（ログインで「私は人間です」の確認・画像パズル・繰り返しの確認）はボタンを出さず、次の回に自動でやり直すと案内する。
+//     省略すると理由の文から判定する（「要再ログイン」→ needs_relogin、「私は人間です」「captcha」→ needs_human_check、それ以外 → other）
 //   node scripts/agent-queue.mjs --enqueue-due [--limit 20] [--dry-run]   自動取得の設定のうち予定時刻を過ぎたものを取得依頼にする（--claim の前に実行）
 // 共通: INGEST_TOKEN（環境変数）または --token-file、--endpoint / AGENT_API_URL。出力はJSON（秘密情報なし）。
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs, readToken, callAgentApi, DEFAULT_ENDPOINT } from "./agent-common.mjs";
+
+export const FAILURE_KINDS = ["needs_relogin", "needs_human_check", "other"];
 
 export function queueCommand(args) {
   const one = (v) => (Array.isArray(v) ? v.at(-1) : v);
@@ -32,12 +37,15 @@ export function queueCommand(args) {
   }
   const id = one(args[mode]), claimId = one(args["claim-id"]);
   if (typeof id !== "string" || typeof claimId !== "string") throw new Error(`--${mode} <id> と --claim-id <claimId> を指定してください`);
+  if (args.kind !== undefined && mode !== "fail") throw new Error("--kind は --fail で使います");
   let result;
   if (typeof args["result-file"] === "string") result = JSON.parse(fs.readFileSync(args["result-file"], "utf8"));
   else if (typeof args.result === "string") result = JSON.parse(args.result);
   if (mode === "complete") return { path: "/requests/complete", body: { id, claimId, result: result ?? {} } };
   if (typeof args.error !== "string" || !args.error.trim()) throw new Error("--error で失敗の理由を指定してください");
-  return { path: "/requests/fail", body: { id, claimId, error: args.error, ...(result ? { result } : {}) } };
+  const kind = args.kind === undefined ? undefined : one(args.kind);
+  if (kind !== undefined && !FAILURE_KINDS.includes(kind)) throw new Error(`--kind は ${FAILURE_KINDS.join(" / ")} です`);
+  return { path: "/requests/fail", body: { id, claimId, error: args.error, ...(kind ? { failureKind: kind } : {}), ...(result ? { result } : {}) } };
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {

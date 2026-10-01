@@ -21,6 +21,7 @@ import type {
   AlertDelivery,
   AlertEvent,
   StoreBot,
+  RefetchResult,
 } from "./types";
 
 // ログイン中のセッションがあれば Supabase JWT を API リクエストに転送する。
@@ -77,13 +78,15 @@ export async function saveCredential(input: {
   password: string;
   storeId?: string;
   storeKey?: string;
+  // M-talk の「ログイン情報を更新」から来たときの失敗した依頼（保存後の取り直しの結果をそのトークへ送る）
+  retry?: string | null;
 }) {
   const headers = await authHeaders();
   return apiFetch("/api/credentials", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(input),
-  }).then((r) => json<{ ok: boolean }>(r));
+  }).then((r) => json<{ ok: boolean; refetch?: RefetchResult }>(r));
 }
 
 export async function deleteCredential(id: string) {

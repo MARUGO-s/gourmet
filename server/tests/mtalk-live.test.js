@@ -264,7 +264,7 @@ test("agent-api / ai-analyst wiring: origin filters, live answers in background 
   const api = fs.readFileSync(new URL("../../supabase/functions/agent-api/index.ts", import.meta.url), "utf8");
   assert.match(api, /p_origin: origin/);
   assert.match(api, /if \(origin\) query = query\.eq\("origin", origin\)/);
-  assert.match(api, /if \(data\?\.origin === "mtalk_live"\) liveInBackground\(admin, userId\)/);
+  assert.match(api, /if \(data\?\.origin === "mtalk_live" \|\| data\?\.params\?\.trigger === "relogin"\) liveInBackground\(admin, userId\)/);
   assert.match(api, /liveInBackground\(admin, userId\); \/\/ M-talk/);
   assert.match(api, /mtalkRequest\(mtalk, "POST", LIVE_REPLY_PATH/);
   const sched = fs.readFileSync(new URL("../../supabase/functions/_shared/fetch-schedules.js", import.meta.url), "utf8");

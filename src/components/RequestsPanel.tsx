@@ -17,13 +17,18 @@ type Props = {
   scopeKeys: StoreKeys | null;
   defaultStoreId: string;
   onStoresChanged: () => void;
+  // 失敗した依頼の「ログイン情報を更新」（アカウント管理をその店舗×サイトで開く）
+  onRelogin?: (source: string, storeId: string, requestId: string) => void;
 };
 
 const ACTIONS = Object.keys(ACTION_LABELS) as AgentRequestAction[];
 const thisMonth = () => new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Tokyo" }).format(new Date()).slice(0, 7);
 
 function resultSummary(r: AgentRequest) {
-  if (r.status === "failed") return r.error ?? "失敗しました";
+  if (r.status === "failed") {
+    const text = r.error ?? "失敗しました";
+    return r.failureKind === "needs_human_check" ? `${text}（「私は人間です」の確認。Grok Botが次の回に自動でやり直します）` : text;
+  }
   if (r.status === "done") {
     const res = r.result ?? {};
     const parts = Object.entries(res).filter(([, v]) => typeof v === "number" || typeof v === "string").slice(0, 6).map(([k, v]) => `${k}: ${v}`);
@@ -34,7 +39,7 @@ function resultSummary(r: AgentRequest) {
 }
 
 // 店舗×サイトごとの取得依頼と、依頼の履歴（依頼中 / 取得中 / 完了 / 失敗）
-export default function RequestsPanel({ sources, credentials: allCredentials, requests: allRequests, loading, busyKey, onRequest, onRefresh, stores, scopeKeys, defaultStoreId, onStoresChanged }: Props) {
+export default function RequestsPanel({ sources, credentials: allCredentials, requests: allRequests, loading, busyKey, onRequest, onRefresh, stores, scopeKeys, defaultStoreId, onStoresChanged, onRelogin }: Props) {
   // 表示中の店舗に割り当てた店舗コードのアカウント・依頼だけ（全店舗では全件）
   const credentials = filterByStore(allCredentials, scopeKeys);
   const requests = filterByStore(allRequests, scopeKeys, (r) => r.storeId);
@@ -143,6 +148,9 @@ export default function RequestsPanel({ sources, credentials: allCredentials, re
                 <div className="min-w-0 flex-1">
                   <p className="font-bold">{names.get(r.source) ?? r.source} ・ {storeLabel(r.source, r.storeId)} ・ {ACTION_LABELS[r.action]}{r.params.fromMonth ? `（${r.params.fromMonth}〜${r.params.toMonth ?? ""}）` : ""}</p>
                   <p className={`mt-0.5 text-[11px] ${r.status === "failed" ? "text-danger" : "text-subtle"}`}>{resultSummary(r)}</p>
+                  {r.status === "failed" && r.failureKind === "needs_relogin" && onRelogin ? (
+                    <button onClick={() => onRelogin(r.source, r.storeId, r.id)} className="mt-1 rounded-md border border-brand px-2.5 py-1 text-[11px] font-bold text-brand">ログイン情報を更新</button>
+                  ) : null}
                 </div>
                 <div className="text-right text-[10px] text-faint">
                   <p>依頼 {formatTime(r.requestedAt)}</p>
