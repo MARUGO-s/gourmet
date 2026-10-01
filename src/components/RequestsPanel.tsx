@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { AgentRequest, AgentRequestAction, CredentialRow, SourceMeta, Store, StoreKeys } from "../types";
 import { filterByStore, storeLabelFor } from "../../supabase/functions/_shared/stores.js";
 import StorePicker, { commitPick, emptyPick } from "./StorePicker";
+import { publicFailureLabel } from "../../supabase/functions/_shared/failure-text.js";
 import { ACTION_LABELS, AGENT_POLL_MINUTES, INGEST_NOTE, formatTime, openRequestFor, requestLabel, statusTone } from "../lib/agent-requests";
 
 type Props = {
@@ -25,9 +26,10 @@ const ACTIONS = Object.keys(ACTION_LABELS) as AgentRequestAction[];
 const thisMonth = () => new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Tokyo" }).format(new Date()).slice(0, 7);
 
 function resultSummary(r: AgentRequest) {
+  // 失敗は種類から決まった文だけ（Grok Bot が書いた理由の文は「詳細」を開いたときだけ。内部の言葉が混ざるため）
   if (r.status === "failed") {
-    const text = r.error ?? "失敗しました";
-    return r.failureKind === "needs_human_check" ? `${text}（「私は人間です」の確認。Grok Botが次の回に自動でやり直します）` : text;
+    const text = publicFailureLabel(r.failureKind);
+    return r.failureKind === "needs_human_check" ? `${text}（Grok Botが次の回に自動でやり直します）` : text;
   }
   if (r.status === "done") {
     const res = r.result ?? {};
@@ -148,6 +150,12 @@ export default function RequestsPanel({ sources, credentials: allCredentials, re
                 <div className="min-w-0 flex-1">
                   <p className="font-bold">{names.get(r.source) ?? r.source} ・ {storeLabel(r.source, r.storeId)} ・ {ACTION_LABELS[r.action]}{r.params.fromMonth ? `（${r.params.fromMonth}〜${r.params.toMonth ?? ""}）` : ""}</p>
                   <p className={`mt-0.5 text-[11px] ${r.status === "failed" ? "text-danger" : "text-subtle"}`}>{resultSummary(r)}</p>
+                  {r.status === "failed" && r.error ? (
+                    <details className="mt-0.5 text-[10px] text-faint">
+                      <summary className="cursor-pointer select-none">詳細（調査用）</summary>
+                      <p className="mt-0.5 whitespace-pre-wrap break-all">{r.error}</p>
+                    </details>
+                  ) : null}
                   {r.status === "failed" && r.failureKind === "needs_relogin" && onRelogin ? (
                     <button onClick={() => onRelogin(r.source, r.storeId, r.id)} className="mt-1 rounded-md border border-brand px-2.5 py-1 text-[11px] font-bold text-brand">ログイン情報を更新</button>
                   ) : null}

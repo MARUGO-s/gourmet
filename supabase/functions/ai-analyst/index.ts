@@ -26,6 +26,7 @@ import { loadReportFonts, renderReportPdf } from "../_shared/report-pdf.js";
 import { MTALK_CHAT_LIMITS, MTALK_CHAT_PATH, MtalkChatError, splitReply, validateMtalkChatInput, verifyMtalkRequest } from "../_shared/mtalk-chat.js";
 import { answerMtalkQuestion, mtalkOverLimit, resolveMtalkOwner } from "../_shared/mtalk-answer.js";
 import { handleMtalkTurn, supabaseLiveStore } from "../_shared/mtalk-live.js";
+import { safeParts } from "../_shared/failure-text.js";
 import * as fontModule from "../_shared/fonts/noto-sans-jp.js";
 
 const reportPath = /^\/reports\/([0-9a-f-]{36})$/;
@@ -250,12 +251,13 @@ async function mtalkChat(req: Request, admin: ReturnType<typeof service>): Promi
     });
     const extra = { mode:turn.mode, owner:owner.via, ...(turn.choice ? { choice:turn.choice, lookup_id:turn.lookup_id } : {}),
       ...(turn.live_start ? { live:turn.live_start } : {}), ...(turn.live_close ? { live_close:turn.live_close } : {}) };
-    if (turn.parts) return plainJson({ parts:turn.parts, ...extra });
-    if (turn.text) return plainJson({ parts:splitReply(turn.text), ...extra });
+    if (turn.parts) return plainJson({ parts:safeParts(turn.parts), ...extra });
+    if (turn.text) return plainJson({ parts:safeParts(splitReply(turn.text)), ...extra });
 
     // 選択肢を出さない質問（あいさつ・使い方、または最新を取り直せない店舗）はすぐ答える
     const result: any = await answer({ question:input.question, history:input.history });
-    const parts = splitReply(result.text);
+    // M-talk へ返す本文は内部の言葉（computerUse・Shell・claim など）を含む行を落とす（念のため）
+    const parts = safeParts(splitReply(result.text));
     return plainJson({ parts, model:result.model, calls:result.calls, verification:result.verification, report:result.report, ...extra });
   } catch (error) {
     if (error instanceof AiError) return plainJson({ error:error.message }, (error as AiError & { status: number }).status);
