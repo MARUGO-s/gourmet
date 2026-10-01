@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PUBLIC_FAILURE_LABELS, SCRUBBED_FALLBACK, hasInternalTerms, publicFailureLabel, publicFailureText, safeParts, scrubInternal } from "../../supabase/functions/_shared/failure-text.js";
-import { liveSummary } from "../../supabase/functions/_shared/mtalk-live.js";
+import { formatFreshness, summarizeFreshness } from "../../supabase/functions/_shared/data-freshness.js";
 import { followupMessage } from "../../supabase/functions/_shared/mtalk-followups.js";
 
 const R1 = "82e85f09-81ff-488e-a78d-ebbcce02379d";
@@ -20,36 +20,24 @@ test("fixed templates per kind × site × store", () => {
   for (const label of Object.values(PUBLIC_FAILURE_LABELS)) assert.equal(hasInternalTerms(label), false, label);
 });
 
-test("the 16:11 reply: raw --fail text never reaches M-talk (live answer + followup)", () => {
-  const lookup = { question: "今月の予約は？", targets: [
-    { source: "ikyu", storeId: "112789", storeName: "BISTRO CAVACAVA", requestId: R2 },
-    { source: "tabelog", storeId: "", storeName: "BISTRO CAVACAVA", requestId: R1 },
-  ] };
-  const s = liveSummary(lookup, [
-    { id: R2, status: "failed", error: LEAK_IKYU, failure_kind: "other" },
-    { id: R1, status: "failed", error: LEAK_TABELOG, failure_kind: null }, // 種類の無い古い行
-  ]);
-  assert.match(s.header, /最新のデータを取得できませんでした。前回までに取得したデータで答えます。/);
-  assert.match(s.header, /・一休（BISTRO CAVACAVA）：今回は取得できませんでした（こちらの不具合です。次の回にやり直します）/);
-  assert.match(s.header, /・食べログ（BISTRO CAVACAVA）：今回は取得できませんでした/);
-  for (const text of [s.header, s.system]) {
-    assert.equal(hasInternalTerms(text), false, text);
-    assert.ok(!text.includes("ブラウザ") && !text.includes("ルール上"), text);
-  }
-  assert.equal(s.links.length, 0);
+test("the 16:11 reply: raw --fail text never reaches M-talk (freshness line + followup)", () => {
+  const now = Date.parse("2026-10-01T10:00:00Z");
+  const entries = summarizeFreshness({
+    runs: [{ source: "tabelog", receivedAt: "2026-09-29T06:00:00Z", from: "2026-08-01", to: "2026-09-28" }],
+    requests: [
+      { id: R2, source: "ikyu", store_id: "112789", status: "failed", error: LEAK_IKYU, failure_kind: "other", finished_at: "2026-10-01T07:11:00Z" },
+      { id: R1, source: "tabelog", store_id: "", status: "failed", error: LEAK_TABELOG, failure_kind: null, finished_at: "2026-10-01T06:13:00Z" }, // 種類の無い古い行
+    ],
+    now,
+  });
+  const text = formatFreshness(entries, { todayYear: 2026 });
+  assert.match(text, /※一休の直近の取得：今回は取得できませんでした（こちらの不具合です。次の回にやり直します）/);
+  assert.match(text, /※食べログの直近の取得：今回は取得できませんでした/);
+  assert.equal(hasInternalTerms(text), false, text);
+  assert.ok(!text.includes("ブラウザ") && !text.includes("ルール上"), text);
   const f = followupMessage({ request: { id: R2, source: "ikyu", store_id: "112789", status: "failed", error: LEAK_IKYU, failure_kind: "other" }, storeName: "BISTRO CAVACAVA" });
   assert.equal(hasInternalTerms(f.text), false);
   assert.match(f.text, /・一休（BISTRO CAVACAVA）：今回は取得できませんでした/);
-});
-
-test("unfinished and not-queued targets get their own fixed text", () => {
-  const lookup = { question: "q", targets: [
-    { source: "ikyu", storeId: "112789", storeName: "B", requestId: R2 },
-    { source: "tabelog", storeId: "", storeName: "B", enqueueError: "取得の依頼が多すぎるため依頼できませんでした" },
-  ] };
-  const s = liveSummary(lookup, [{ id: R2, status: "claimed", error: null }]);
-  assert.match(s.header, /・一休（B）：時間内に取得が終わりませんでした/);
-  assert.match(s.header, /・食べログ（B）：今回は取得を依頼できませんでした/);
 });
 
 test("defense in depth: lines with internal terms are dropped before posting", () => {

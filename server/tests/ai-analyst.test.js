@@ -106,7 +106,8 @@ test("口コミの統計・返信状態・抜粋", () => {
 test("関数呼び出しは検証した引数で本人のデータの集計だけを返す", () => {
   const ctx = { store: CAVA, from: day(1), to: day(28) };
   const names = AI_TOOLS.map((t) => t.function.name);
-  assert.deepEqual(names, ["list_stores", "get_kpis", "get_pv_trend", "get_monthly_metrics", "get_review_stats", "get_reviews", "compare_stores"]);
+  assert.deepEqual(names, ["list_stores", "get_kpis", "get_pv_trend", "get_monthly_metrics", "get_review_stats", "get_reviews", "compare_stores",
+    "get_reservation_sales", "get_pv_breakdown", "get_site_reports", "get_data_freshness"]);
   for (const t of AI_TOOLS) assert.equal(t.function.parameters.additionalProperties, false);
   const trend = JSON.parse(runTool(ds, "get_pv_trend", JSON.stringify({ granularity: "month", source: "tabelog" }), ctx));
   assert.equal(trend.rows[0].total, 2800);

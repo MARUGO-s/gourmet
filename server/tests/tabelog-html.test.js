@@ -26,13 +26,29 @@ test("saved Tabelog owner pages convert offline to a valid ingest payload", { sk
     assert.deepEqual(result.reviews.map((r) => r.externalId), ["B100:111", "B101:222", "B200:excerpt"], "全文のある口コミの抜粋は重複させない");
     assert.equal(result.reviews[1].date, "2026-08-20");
     assert.equal(result.reports.ranking.self.rank, 2);
+    assert.deepEqual(result.reports.deviceSummary, {
+      from: "2026-08-01", to: "2026-08-31",
+      devices: { pc: { topPage: 321, allPages: 1234 }, sp: { topPage: 210, allPages: 567 }, app: { topPage: 1100, allPages: 2900 } },
+      conversion: { from: "2026-08-01", to: "2026-08-31", calls: 4, netReservations: 9, mapPrintsPc: 2 },
+    }, "マイレポートの端末別ページサマリー");
     const payload = tabelogResultToPayload(result, { storeKey: manifest.storeKey, name: manifest.name, publicUrl, runId: "fixture", capturedAt: "2026-09-29T09:00:00+09:00", today: "2026-09-29" });
     const checked = normalizeSourceIngest(payload, "2026-09-29");
     assert.equal(checked.stores[0].days.length, 59);
+    assert.deepEqual(payload.stores[0].reports.find((r) => r.kind === "device_summary")?.period, "2026-08");
     assert.equal(checked.stores[0].reviews[0].reply_text, "ご来店ありがとうございました。");
     assert.equal(checked.stores[0].rating, 3.26);
     assert.equal(checked.stores[0].public_url, "https://tabelog.com/tokyo/A1309/A130903/13245351/", "口コミ通知のリンク用");
   } finally {
     await browser.close();
   }
+});
+
+test("device summary validation rejects malformed values", async () => {
+  const { validDeviceSummary } = await import("../../scripts/tabelog/reports.js");
+  const ok = { from: "2026-08-01", to: "2026-08-31", devices: { pc: { topPage: 1, allPages: 2 } }, conversion: null };
+  assert.deepEqual(validDeviceSummary(ok), ok);
+  assert.equal(validDeviceSummary({ ...ok, from: "2026-09-01" }), null, "期間が逆");
+  assert.equal(validDeviceSummary({ ...ok, devices: { pc: { topPage: -1, allPages: 2 } } }), null);
+  assert.equal(validDeviceSummary({ ...ok, devices: { tv: { topPage: 1, allPages: 2 } } }), null);
+  assert.equal(validDeviceSummary(null), null);
 });

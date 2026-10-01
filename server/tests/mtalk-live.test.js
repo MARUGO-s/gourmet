@@ -4,16 +4,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { CHOICE_LABELS, LIVE_ACK, LIVE_LIMITS, choiceReply, describeTargets, failureReason, handleMtalkTurn, isChitChat, liveSummary, parseChoice,
-  processLiveLookups, selectTargets } from "../../supabase/functions/_shared/mtalk-live.js";
-import { splitReply } from "../../supabase/functions/_shared/mtalk-chat.js";
+import { CHOICE_RETIRED, LIVE_LIMITS, failureReason, handleMtalkTurn, isChitChat, parseChoice } from "../../supabase/functions/_shared/mtalk-live.js";
+import * as live from "../../supabase/functions/_shared/mtalk-live.js";
 import { queueCommand } from "../../scripts/agent-queue.mjs";
 
 const OWNER = "114c1410-ebc0-433a-9d30-e0e2410dec13";
 const MU = "11111111-2222-4333-8444-555555555555";
-const CAVA = [{ source: "tabelog", storeId: "", storeName: "BISTRO CAVACAVA" }, { source: "ikyu", storeId: "112789", storeName: "BISTRO CAVACAVA" }];
 
-// ---------- 選択・あいさつの判定 ----------
 test("parseChoice: digits, full-width, circled, button commands and phrases → 1/2; questions starting with numbers are not choices", () => {
   for (const s of ["1", "１", "①", " 1 ", "1.", "1：サイトにログインして最新を調べる", "1番", "1でお願いします", "1にします", "【1】", "最新を調べて", "サイトにログインして最新を調べる"]) assert.equal(parseChoice(s), 1, s);
   for (const s of ["2", "２", "②", "2：今あるデータですぐ答える", "2を選びます", "2で", "今あるデータで答えて", "いまあるデータですぐ答えて"]) assert.equal(parseChoice(s), 2, s);
@@ -25,234 +22,59 @@ test("isChitChat: greetings / thanks / acks / how-to → answered directly; data
   for (const s of ["今月のPVは？", "悪い口コミを教えて", "ありがとう、ところで先月の予約数は？", "一休の予約は増えた？"]) assert.equal(isChitChat(s), false, s);
 });
 
-test("selectTargets: defaults to all credentialed tabelog/ikyu; narrows by site or store name mentioned in the question", () => {
-  const avail = [...CAVA, { source: "google", storeId: "", storeName: "BISTRO CAVACAVA" }, { source: "tabelog", storeId: "x2", storeName: "MARUGO 2" }];
-  assert.deepEqual(selectTargets("今月の口コミは？", avail).map((t) => `${t.source}:${t.storeName}`), ["tabelog:BISTRO CAVACAVA", "ikyu:BISTRO CAVACAVA", "tabelog:MARUGO 2"], "Google は取得手順が無い");
-  assert.deepEqual(selectTargets("一休の予約は？", avail).map((t) => t.source), ["ikyu"]);
-  assert.deepEqual(selectTargets("カヴァカヴァの食べログ", avail).map((t) => `${t.source}:${t.storeId}`), ["tabelog:"]);
-  assert.deepEqual(selectTargets("マルゴセカンドの点数", avail).map((t) => t.storeName), ["MARUGO 2"]);
-  assert.deepEqual(selectTargets("ホットペッパーは？", avail).length, 3, "取得できないサイトの指定なら絞らない");
-  assert.deepEqual(selectTargets("x", []), []);
-});
-
-test("choice reply: text fallback (1/2) + structured choice for card buttons; labels exactly as specified", () => {
-  assert.equal(CHOICE_LABELS[1], "サイトにログインして最新を調べる（時間がかかります：5〜10分ほど）");
-  assert.equal(CHOICE_LABELS[2], "今あるデータですぐ答える（少し正確性が落ちることがあります）");
-  const r = choiceReply("今月のPVは？", { expiresAt: "2026-10-01T05:30:00.000Z" });
-  assert.match(r.parts[0], /1\. サイトにログインして最新を調べる（時間がかかります：5〜10分ほど）/);
-  assert.match(r.parts[0], /2\. 今あるデータですぐ答える/);
-  assert.match(r.parts[0], /30分以内/);
-  assert.deepEqual(r.choice.options.map((o) => o.value), [1, 2]);
-  assert.match(choiceReply("q", { replacedFetching: true }).parts[0], /^前の質問の「最新を調べる」は取りやめました/);
-  assert.ok(choiceReply("あ".repeat(500)).choice.question.length <= LIVE_LIMITS.questionExcerpt + 1);
-});
-
-test("failure reasons and the freshness header (all ok / partial / none)", () => {
-  // 理由の文はそのまま出さない（種類だけを判定して決まった文に）
-  assert.equal(failureReason("一休: 要再ログイン（セッション切れ）"), "今回は取得できませんでした（こちらの不具合です。次の回にやり直します）", "サイトの表示の無い「要再ログイン」は other");
-  assert.equal(failureReason("一休: サイトに「パスワードが正しくありません」と表示"), "ログイン情報の確認が必要です");
-  assert.equal(failureReason("24時間以内に取得されませんでした。もう一度依頼してください"), "今回は取得できませんでした（こちらの不具合です。次の回にやり直します）");
-  assert.equal(failureReason(""), "今回は取得できませんでした（こちらの不具合です。次の回にやり直します）");
-  const lookup = { question: "今月の予約は？", targets: [{ ...CAVA[0], requestId: "r1" }, { ...CAVA[1], requestId: "r2" }] };
-  const done = (id, at) => ({ id, status: "done", finished_at: at });
-  const all = liveSummary(lookup, [done("r1", "2026-10-01T05:03:00Z"), done("r2", "2026-10-01T05:07:00Z")]);
-  assert.match(all.header, /ご質問：「今月の予約は？」/);
-  assert.match(all.header, /サイトにログインして最新のデータを取得しました（10\/1 14:07 取得、BISTRO CAVACAVA の食べログ・一休）/);
-  assert.equal(all.failed.length, 0);
-  const part = liveSummary(lookup, [done("r1", "2026-10-01T05:03:00Z"), { id: "r2", status: "failed", error: "要再ログイン", failure_kind: "needs_relogin" }]);
-  assert.match(part.header, /10\/1 14:03 取得、BISTRO CAVACAVA の食べログ/);
-  assert.match(part.header, /次は更新できませんでした（一休は前回までに取得したデータで答えています）。\n・一休（BISTRO CAVACAVA）：ログイン情報の確認が必要です/);
-  assert.match(part.system, /取り直せなかった: 一休/);
-  const none = liveSummary({ ...lookup, targets: [{ ...CAVA[1], enqueueError: "取得の依頼が多すぎるため依頼できませんでした" }] }, []);
-  assert.match(none.header, /最新のデータを取得できませんでした。前回までに取得したデータで答えます。\n・一休（BISTRO CAVACAVA）：今回は取得を依頼できませんでした/);
-  assert.ok(!none.header.includes("多すぎる"), "依頼のエラー文も出さない");
-  assert.equal(none.refreshedAny, false);
-  assert.equal(describeTargets([{ source: "tabelog", storeName: "A" }, { source: "ikyu", storeName: "B" }]), "A の食べログ、B の一休");
-});
-
-// ---------- 状態の移り変わり（メモリ上の保存先） ----------
-function memoryStore({ targets = CAVA, enqueueFail = {} } = {}) {
-  const db = { lookups: [], requests: [], seq: 0 };
-  const pick = (r) => (r ? structuredClone(r) : null);
+// ---------- 選択の廃止（2026-10-01） ----------
+function lookupStore(rows = []) {
+  const db = rows.map((r) => ({ history: [], attempts: 0, ...r }));
   return {
     db,
-    latestLookup: async (u, g) => pick([...db.lookups].reverse().find((r) => r.mtalk_user_id === u && r.mtalk_group_id === g)),
-    updateLookup: async (id, from, patch) => { const r = db.lookups.find((x) => x.id === id && from.includes(x.status)); if (!r) return null; Object.assign(r, patch); return pick(r); },
-    insertLookup: async (row) => {
-      if (db.lookups.some((x) => x.mtalk_user_id === row.mtalk_user_id && x.mtalk_group_id === row.mtalk_group_id && ["awaiting_choice", "fetching", "answering"].includes(x.status))) throw Object.assign(new Error("dup"), { code: "23505" });
-      const r = { id: `L${++db.seq}`, created_at: new Date().toISOString(), targets: [], request_ids: [], attempts: 0, ...row }; db.lookups.push(r); return pick(r);
-    },
-    openLiveLookups: async (o) => db.lookups.filter((r) => r.owner_user_id === o && ["fetching", "answering"].includes(r.status)).map(pick),
-    requestsByIds: async (ids) => db.requests.filter((r) => ids.includes(r.id)).map(pick),
-    listTargets: async () => targets,
-    enqueueRequest: async (_o, t, lookupId) => {
-      if (enqueueFail[t.source]) throw new Error(enqueueFail[t.source]);
-      const r = { id: `R${++db.seq}`, source: t.source, store_id: t.storeId, status: "queued", origin: "mtalk_live", lookupId }; db.requests.push(r); return { id: r.id };
-    },
+    latestLookup: async () => structuredClone([...db].sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0] ?? null),
+    updateLookup: async (id, from, patch) => { const r = db.find((x) => x.id === id && from.includes(x.status)); if (!r) return null; Object.assign(r, patch); return structuredClone(r); },
   };
 }
-const base = { mtalkUserId: MU, groupId: 7, history: [{ role: "user", content: "前の話" }], ownerUserId: OWNER, liveAllowed: true };
-let msg = 100;
-const turn = (store, deps, question, extra = {}) => handleMtalkTurn(store, deps, { ...base, messageId: ++msg, question, ...extra });
-const answerSpy = () => { const calls = []; return { calls, answer: async (a) => { calls.push(a); return { text: `回答:${a.question}` }; } }; };
+const NOW = Date.parse("2026-10-01T10:00:00Z");
+const ago = (min) => new Date(NOW - min * 60_000).toISOString();
+const input = (question) => ({ mtalkUserId: MU, groupId: 7, messageId: 1, question, history: [] });
 
-test("data question → stored choice (no AI call); 「2」 → answers the stored question with stored history right away", async () => {
-  const store = memoryStore(), spy = answerSpy();
-  const deps = { answer: spy.answer, now: () => Date.now() };
-  const r = await turn(store, deps, "今月のPVは？");
-  assert.equal(r.mode, "choice");
-  assert.equal(spy.calls.length, 0, "選択肢を出すだけ（AIは呼ばない）");
-  assert.equal(store.db.lookups[0].status, "awaiting_choice");
-  assert.equal(store.db.lookups[0].question, "今月のPVは？");
-  const a = await turn(store, deps, "2：今あるデータですぐ答える", { history: [{ role: "user", content: "別" }] });
-  assert.equal(a.mode, "answer_now");
-  assert.match(a.text, /^（今あるデータでの回答です）\n回答:今月のPVは？/);
-  assert.deepEqual(spy.calls[0].history, [{ role: "user", content: "前の話" }], "保存した会話履歴を使う");
-  assert.equal(store.db.lookups[0].status, "answered");
-  assert.equal(store.db.lookups[0].choice, 2);
-  assert.equal(a.live_close, undefined);
-  assert.equal((await turn(store, deps, "2")).mode, "guide", "もう選べる質問は無い");
+test("no choice card: data questions and chit-chat both go straight to the answer", async () => {
+  const store = lookupStore([{ id: "L1", question: "前の質問", status: "awaiting_choice", created_at: ago(5) }]);
+  let answered = 0;
+  const deps = { answer: async () => { answered++; return { text: "x" }; }, now: () => NOW };
+  for (const q of ["今月のPVは？", "一休の予約は増えた？", "こんにちは", "1月の予約は？"]) {
+    assert.deepEqual(await handleMtalkTurn(store, deps, input(q)), { mode: "direct" }, q);
+  }
+  assert.equal(answered, 0, "呼び出し側（ai-analyst）がすぐ答える");
+  assert.equal(store.db[0].status, "awaiting_choice", "ふつうの質問では古い質問に触れない");
+  for (const name of ["choiceReply", "selectTargets", "processLiveLookups", "liveSummary", "CHOICE_LABELS", "LIVE_ACK", "LIVE_REPLY_PATH"]) assert.equal(name in live, false, `${name} は廃止`);
 });
 
-test("chit-chat, no credentialed sites, or owner the agent can't fetch for → answered directly without a choice", async () => {
-  const deps = { answer: async () => ({ text: "x" }) };
-  assert.equal((await turn(memoryStore(), deps, "ありがとう！")).mode, "direct");
-  assert.equal((await turn(memoryStore({ targets: [] }), deps, "今月のPVは？")).mode, "direct");
-  assert.equal((await turn(memoryStore(), deps, "今月のPVは？", { liveAllowed: false })).mode, "direct");
+test("old card buttons / bare 1・2: answer the recent stored question once; otherwise explain the change", async () => {
+  const store = lookupStore([{ id: "L1", question: "今月の予約は？", history: [{ role: "user", content: "a" }], status: "timed_out", created_at: ago(30) }]);
+  const asked = [];
+  const deps = { answer: async (q) => { asked.push(q); return { text: "予約は12件です\n\nデータ：一休 10/1 18:30取得（9/1〜9/30）", links: [] }; }, now: () => NOW };
+  const r = await handleMtalkTurn(store, deps, input("2：今あるデータですぐ答える"));
+  assert.equal(r.mode, "answer_legacy");
+  assert.equal(asked[0].question, "今月の予約は？");
+  assert.deepEqual(asked[0].history, [{ role: "user", content: "a" }]);
+  assert.match(r.result.text, /^ご質問：「今月の予約は？」\n予約は12件です/);
+  assert.match(r.result.text, /データ：一休/, "鮮度の行もそのまま");
+  assert.equal(store.db[0].status, "answered");
+  const again = await handleMtalkTurn(store, deps, input("1"));
+  assert.deepEqual(again, { mode: "guide", parts: [CHOICE_RETIRED] }, "同じ質問に2回は答えない");
+  assert.match(CHOICE_RETIRED, /番号で選ぶ必要はなくなりました/);
+  const old = lookupStore([{ id: "L2", question: "q", status: "expired", created_at: ago(LIVE_LIMITS.legacyAnswerMinutes + 1) }]);
+  assert.equal((await handleMtalkTurn(old, deps, input("1"))).mode, "guide", "2時間を過ぎた質問には答えない");
+  assert.equal((await handleMtalkTurn(lookupStore(), deps, input("②"))).mode, "guide");
+  const busy = lookupStore([{ id: "L3", question: "q", status: "answering", created_at: ago(1) }]);
+  assert.equal((await handleMtalkTurn(busy, deps, input("2"))).mode, "guide");
+  const failing = lookupStore([{ id: "L4", question: "q", status: "awaiting_choice", created_at: ago(1) }]);
+  await assert.rejects(handleMtalkTurn(failing, { answer: async () => { throw new Error("AI down"); }, now: () => NOW }, input("2")), /AI down/);
+  assert.equal(failing.db[0].status, "failed");
 });
 
-test("「1」 → mtalk_live requests per target, immediate ack + live_start; double press doesn't enqueue twice; new question replaces", async () => {
-  const store = memoryStore(), deps = { answer: async () => ({ text: "x" }), now: () => Date.now() };
-  await turn(store, deps, "今月の予約は？");
-  const r = await turn(store, deps, "1：サイトにログインして最新を調べる");
-  assert.equal(r.mode, "live_started");
-  assert.match(r.parts[0], new RegExp(`^${LIVE_ACK}。`));
-  assert.match(r.parts[0], /対象: BISTRO CAVACAVA の食べログ・一休/);
-  assert.deepEqual(r.live_start, { lookup_id: "L1", deadline_seconds: 1200 });
-  const L = store.db.lookups[0];
-  assert.equal(L.status, "fetching");
-  assert.equal(L.request_ids.length, 2);
-  assert.ok(Date.parse(L.deadline_at) - Date.parse(L.chosen_at) === 20 * 60_000);
-  assert.deepEqual(store.db.requests.map((x) => [x.source, x.origin, x.lookupId]), [["tabelog", "mtalk_live", "L1"], ["ikyu", "mtalk_live", "L1"]]);
-  const again = await turn(store, deps, "1");
-  assert.equal(again.mode, "busy");
-  assert.equal(store.db.requests.length, 2, "二重に依頼しない");
-  const next = await turn(store, deps, "先週の口コミは？");
-  assert.equal(next.mode, "choice");
-  assert.match(next.parts[0], /前の質問の「最新を調べる」は取りやめました/);
-  assert.deepEqual(next.live_close, ["L1"], "line_report の見張りを閉じる");
-  assert.equal(store.db.lookups[0].status, "replaced");
-});
-
-test("「1」 with a failed enqueue for one site → continues with the other; all failed → back to the choice with guidance", async () => {
-  const store = memoryStore({ enqueueFail: { ikyu: "取得の依頼が多すぎるため依頼できませんでした" } }), deps = { answer: async () => ({ text: "x" }) };
-  await turn(store, deps, "今月の予約は？");
-  const r = await turn(store, deps, "1");
-  assert.match(r.parts[0], /BISTRO CAVACAVA の一休 は取得を依頼できなかったため/);
-  assert.equal(store.db.lookups[0].targets.find((t) => t.source === "ikyu").enqueueError, "取得の依頼が多すぎるため依頼できませんでした");
-  const s2 = memoryStore({ enqueueFail: { ikyu: "x", tabelog: "取得の依頼が多すぎるため依頼できませんでした" } });
-  await turn(s2, deps, "今月の予約は？");
-  const r2 = await turn(s2, deps, "1");
-  assert.equal(r2.mode, "guide");
-  assert.match(r2.parts[0], /「2」を送ると今あるデータで答えます/);
-  assert.equal(s2.db.lookups[0].status, "awaiting_choice", "「2」を選べるまま");
-});
-
-test("choice expires after 30 minutes; 「2」 still works while fetching (impatient) and closes the live watch", async () => {
-  let now = Date.parse("2026-10-01T05:00:00Z");
-  const store = memoryStore(), spy = answerSpy(), deps = { answer: spy.answer, now: () => now };
-  await turn(store, deps, "今月の予約は？");
-  now += 31 * 60_000;
-  assert.equal((await turn(store, deps, "1")).mode, "guide");
-  assert.equal(store.db.lookups[0].status, "expired");
-  await turn(store, deps, "今月の予約は？");
-  await turn(store, deps, "1");
-  now += 8 * 60_000;
-  const a = await turn(store, deps, "2");
-  assert.equal(a.mode, "answer_now");
-  assert.deepEqual(a.live_close, ["L2"]);
-  assert.equal(store.db.lookups[1].status, "answered");
-  // あとから取得が終わっても、もう答えない
-  for (const r of store.db.requests) r.status = "done";
-  const posted = [];
-  const out = await processLiveLookups(store, { ...deps, post: async (x) => posted.push(x), split: splitReply }, OWNER);
-  assert.equal(out.checked, 0);
-  assert.equal(posted.length, 0);
-});
-
-test("live completion: waits until every request ends, answers once with the freshness header, M-talk timeout (409) → timed_out", async () => {
-  let now = Date.parse("2026-10-01T05:00:00Z");
-  const store = memoryStore(), spy = answerSpy();
-  const posted = [];
-  const deps = { answer: spy.answer, now: () => now, split: splitReply, post: async (x) => { posted.push(x); return { ok: true }; } };
-  await turn(store, deps, "今月の予約は？");
-  await turn(store, deps, "1");
-  const [rt, ri] = store.db.requests;
-  rt.status = "done"; rt.finished_at = "2026-10-01T05:06:00Z";
-  assert.deepEqual(await processLiveLookups(store, deps, OWNER), { checked: 1, answered: 0, waiting: 1, timedOut: 0, failed: 0, retry: 0 });
-  ri.status = "failed"; ri.error = "一休: サイトに「パスワードが正しくありません」と表示"; ri.failure_kind = "needs_relogin";
-  const out = await processLiveLookups(store, deps, OWNER);
-  assert.equal(out.answered, 1);
-  assert.equal(posted.length, 1);
-  assert.match(posted[0].parts[0], /^ご質問：「今月の予約は？」\nサイトにログインして最新のデータを取得しました（10\/1 14:06 取得、BISTRO CAVACAVA の食べログ）。\n次は更新できませんでした（一休は前回までに取得したデータで答えています）。\n・一休（BISTRO CAVACAVA）：ログイン情報の確認が必要です/);
-  assert.match(posted[0].parts[0], /回答:今月の予約は？/);
-  assert.match(spy.calls[0].system, /取り直せなかった: 一休/);
-  assert.equal(spy.calls[0].lookup.id, "L1");
-  assert.equal(store.db.lookups[0].status, "answered");
-  assert.equal((await processLiveLookups(store, deps, OWNER)).checked, 0, "1回だけ答える");
-
-  const s2 = memoryStore();
-  const d2 = { ...deps, post: async () => { throw Object.assign(new Error("timeout"), { status: 409 }); } };
-  await turn(s2, d2, "今月の予約は？"); await turn(s2, d2, "1");
-  for (const r of s2.db.requests) r.status = "done";
-  assert.equal((await processLiveLookups(s2, d2, OWNER)).timedOut, 1);
-  assert.equal(s2.db.lookups[0].status, "timed_out");
-  const late = await turn(s2, d2, "2");
-  assert.equal(late.mode, "answer_now", "時間切れの案内のあとでも「2」で答えられる");
-});
-
-test("live completion: post failure retries (bounded), answer failure posts guidance, stuck requests are cleaned up after the deadline", async () => {
-  let now = Date.parse("2026-10-01T05:00:00Z");
-  const store = memoryStore();
-  let fail = true;
-  const posted = [];
-  const deps = { answer: async () => ({ text: "ok" }), now: () => now, split: splitReply, post: async (x) => { if (fail) throw new Error("502"); posted.push(x); } };
-  await turn(store, deps, "今月の予約は？"); await turn(store, deps, "1");
-  for (const r of store.db.requests) r.status = "done";
-  assert.equal((await processLiveLookups(store, deps, OWNER)).retry, 1);
-  assert.equal(store.db.lookups[0].status, "fetching");
-  fail = false;
-  assert.equal((await processLiveLookups(store, deps, OWNER)).answered, 1);
-  assert.equal(store.db.lookups[0].attempts, 2);
-
-  // M-talk へ送れない（例: line_report が未配置）ままなら3回で止める（回答の作り直しを繰り返さない）
-  const s0 = memoryStore();
-  let answers = 0;
-  const d0 = { ...deps, answer: async () => { answers++; return { text: "ok" }; }, post: async () => { throw new Error("502"); } };
-  await turn(s0, d0, "今月の予約は？"); await turn(s0, d0, "1");
-  for (const r of s0.db.requests) r.status = "done";
-  for (let i = 0; i < 5; i++) await processLiveLookups(s0, d0, OWNER);
-  assert.equal(s0.db.lookups[0].status, "failed");
-  assert.equal(answers, 3);
-
-  const s2 = memoryStore();
-  const p2 = [];
-  const d2 = { ...deps, answer: async () => { throw new Error("openai down"); }, post: async (x) => p2.push(x) };
-  await turn(s2, d2, "今月の予約は？"); await turn(s2, d2, "1");
-  for (const r of s2.db.requests) r.status = "done";
-  assert.equal((await processLiveLookups(s2, d2, OWNER)).failed, 1);
-  assert.match(p2[0].parts[0], /回答を作れませんでした。「2」を送ると、取り直したデータで答えます/);
-
-  const s3 = memoryStore();
-  await turn(s3, deps, "今月の予約は？"); await turn(s3, deps, "1");
-  now += 31 * 60_000;
-  assert.equal((await processLiveLookups(s3, deps, OWNER)).timedOut, 1);
-  assert.equal(s3.db.lookups[0].status, "timed_out");
-
-  const s4 = memoryStore();
-  await turn(s4, deps, "今月の予約は？"); await turn(s4, deps, "1");
-  Object.assign(s4.db.lookups[0], { status: "answering", answering_at: new Date(now - 6 * 60_000).toISOString(), attempts: 3 });
-  assert.equal((await processLiveLookups(s4, deps, OWNER)).failed, 1, "止まった回答作成は3回まで");
+test("failure reasons stay fixed texts (used by the app history and relogin notices)", () => {
+  assert.equal(failureReason("一休: 要再ログイン（セッション切れ）"), "今回は取得できませんでした（こちらの不具合です。次の回にやり直します）", "サイトの表示の無い「要再ログイン」は other");
+  assert.equal(failureReason("一休: サイトに「パスワードが正しくありません」と表示"), "ログイン情報の確認が必要です");
+  assert.equal(failureReason(""), "今回は取得できませんでした（こちらの不具合です。次の回にやり直します）");
 });
 
 test("agent-queue CLI: --origin mtalk_live for --list / --claim only", () => {
@@ -262,13 +84,19 @@ test("agent-queue CLI: --origin mtalk_live for --list / --claim only", () => {
   assert.throws(() => queueCommand({ _: [], "enqueue-due": true, origin: "mtalk_live" }), /--origin/);
 });
 
-test("agent-api / ai-analyst wiring: origin filters, live answers in background after complete/fail and on pending", () => {
+test("agent-api / ai-analyst wiring: origin filters kept, followups only, no live answers or choice extras", () => {
   const api = fs.readFileSync(new URL("../../supabase/functions/agent-api/index.ts", import.meta.url), "utf8");
   assert.match(api, /p_origin: origin/);
   assert.match(api, /if \(origin\) query = query\.eq\("origin", origin\)/);
   assert.match(api, /if \(data\?\.origin === "mtalk_live" \|\| data\?\.params\?\.trigger === "relogin"\) liveInBackground\(admin, userId\)/);
   assert.match(api, /liveInBackground\(admin, userId\); \/\/ M-talk/);
-  assert.match(api, /mtalkRequest\(mtalk, "POST", LIVE_REPLY_PATH/);
+  assert.doesNotMatch(api, /processLiveLookups|LIVE_REPLY_PATH|supabaseLiveStore/);
+  assert.match(api, /if \(path === "\/pages\/ingest"\)/);
+  assert.match(api, /admin\.rpc\("save_site_page_snapshots"/);
+  const ai = fs.readFileSync(new URL("../../supabase/functions/ai-analyst/index.ts", import.meta.url), "utf8");
+  const fn = ai.slice(ai.indexOf("async function mtalkChat"));
+  assert.doesNotMatch(fn, /choice:turn\.choice|live:turn\.live_start|live_close/);
+  assert.match(ai, /answerFreshness\(result, ds, \{ todayYear \}\)/, "/ask にも鮮度");
   const sched = fs.readFileSync(new URL("../../supabase/functions/_shared/fetch-schedules.js", import.meta.url), "utf8");
   assert.match(sched, /origin: "schedule"/);
 });
@@ -332,6 +160,13 @@ test("real Postgres: origin column/backfill, claim priority and origin filter, l
     assert.equal(psql(`select extract(epoch from expires_at - created_at)::int from public.mtalk_live_lookups limit 1;`), "1800");
     // 再適用しても壊れない
     psql(fs.readFileSync(path.join(migrations, "019_mtalk_live_lookups.sql"), "utf8"));
+    // 022: 選択の廃止で進行中の質問を閉じる（表は残す）
+    psql(`update public.mtalk_live_lookups set status='replaced' where status='fetching';
+      insert into public.mtalk_live_lookups(owner_user_id, mtalk_user_id, mtalk_group_id, message_id, question, status) values ('${OWNER}', '${MU}', 8, 2, 'q', 'fetching');
+      insert into public.mtalk_live_lookups(owner_user_id, mtalk_user_id, mtalk_group_id, message_id, question, status) values ('${OWNER}', '${MU}', 9, 3, 'q', 'awaiting_choice');`);
+    psql(fs.readFileSync(path.join(migrations, "022_cache_snapshots_and_choice_removal.sql"), "utf8"));
+    assert.equal(psql(`select string_agg(status, ',' order by mtalk_group_id, status) from public.mtalk_live_lookups;`), "answered,replaced,replaced,timed_out,expired");
+    assert.equal(psql(`select count(*) from public.mtalk_live_lookups where status in ('awaiting_choice','fetching','answering');`), "0");
   } finally {
     try { run("pg_ctl", ["-D", `${dir}/data`, "-m", "immediate", "stop"]); } catch { /* 停止済み */ }
     fs.rmSync(dir, { recursive: true, force: true });

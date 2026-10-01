@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8"><title>マイレポート（合成フィクスチャ）</title></head>
+<body>
+<!-- 実際の管理画面（owner_rst/my_report）の表の形だけを写した合成データ。店舗名・数値は架空。 -->
+<div class="myreport-box-wrap clearfix">
+ <div id="myreport-access" class="myreport-box clearfix">
+  <div class="myreport-title clearfix"><h3 class="title"><a href="/owner_rst/access_report_total?display_type=daily">アクセス数レポート</a></h3>
+   <p class="period"> レポート日： 2026-08-01 - 2026-08-31 </p></div>
+  <div class="myreport-data"><table cellspacing="0">
+   <thead><tr><th scope="col">デバイス</th><th scope="col">ページ</th><th scope="col">アクセス数（PV）</th><th scope="col">日別・内訳</th></tr></thead>
+   <tbody>
+    <tr class="access-pc days"><td scope="row" rowspan="2" class="data-ttl">PC版</td><td class="pname">店舗トップ</td><td class="access">321</td><td class="more"><a href="#">日別アクセス数</a></td></tr>
+    <tr class="access-pc allsum"><td class="pname">ページ合計</td><td class="access">1,234</td><td class="more"><a href="#">アクセス数の内訳</a></td></tr>
+    <tr class="access-smartphone days"><td scope="row" rowspan="2" class="data-ttl">スマートフォン版</td><td class="pname">店舗トップ</td><td class="access">210</td><td class="more"><a href="#">日別アクセス数</a></td></tr>
+    <tr class="access-smartphone allsum"><td class="pname">ページ合計</td><td class="access">567</td><td class="more"><a href="#">アクセス数の内訳</a></td></tr>
+    <tr class="access-app days"><td scope="row" rowspan="2" class="data-ttl">アプリ版</td><td class="pname">店舗トップ</td><td class="access">1,100</td><td class="more"><a href="#">日別アクセス数</a></td></tr>
+    <tr class="access-app allsum"><td class="pname">ページ合計</td><td class="access">2,900</td><td class="more"><a href="#">アクセス数の内訳</a></td></tr>
+   </tbody></table></div>
+ </div>
+ <div id="myreport-cvr" class="myreport-box clearfix">
+  <div class="myreport-title clearfix"><h3 class="title"><a href="/owner_rst/access_report_total_conversion">来店指標（TEL数・ネット予約数など）</a></h3>
+   <p class="period"> レポート日： 2026-08-01 - 2026-08-31 </p></div>
+  <div class="myreport-data"><table cellspacing="0">
+   <thead><tr><th scope="col">指標</th><th scope="col">数値</th></tr></thead>
+   <tbody>
+    <tr class="cv-tel"><td scope="row" class="data-ttl">食べログ予約専用番号通話成立数</td><td class="cvr">4</td></tr>
+    <tr class="cv-yoyaku"><td scope="row" class="data-ttl">インターネット予約組数</td><td class="cvr">9</td></tr>
+    <tr class="cv-print"><td scope="row" class="data-ttl"><span class="access-text-brackets">【PC】</span>地図印刷ページへのアクセス数（PV）</td><td class="cvr">2</td></tr>
+   </tbody></table></div>
+ </div>
+</div>
+</body></html>

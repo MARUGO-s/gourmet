@@ -3,7 +3,8 @@ import { SOURCE_IDS } from "./sources.js";
 
 export const REQUEST_ACTIONS = ["sync_now", "fetch_metrics", "fetch_reviews", "backfill"];
 export const REQUEST_STATUSES = ["queued", "claimed", "done", "failed"];
-// 依頼の出どころ（migration 019）。mtalk_live は M-talk の「最新を調べる」（24時間処理・他より先に取得）
+// 依頼の出どころ（migration 019）。mtalk_live は M-talk の「最新を調べる」（24時間処理・他より先に取得）。
+// 選択は 2026-10-01（migration 022）に廃止。いまの mtalk_live は再ログイン後の取り直し（旧データの続き）だけ
 export const REQUEST_ORIGINS = ["app", "schedule", "mtalk_live"];
 export const ORIGIN_LABELS = { app: "アプリ", schedule: "自動取得", mtalk_live: "M-talk" };
 export const ACTION_LABELS = { sync_now: "今すぐ取得（全項目）", fetch_metrics: "PV・予約などの数値", fetch_reviews: "口コミ", backfill: "過去分の取得" };

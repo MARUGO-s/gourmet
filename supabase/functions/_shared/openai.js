@@ -110,12 +110,13 @@ export async function answerWithTools(config, { ds, messages, ctx, maxTokens = 6
   const calls = [];
   const toolResults = [];
   const scopes = [];
+  const usedSites = new Set(); // 関数の結果の sites（表示名）。答えの最後に付けるデータの鮮度に使う
   let usage = {}, model = config.model;
   let round = 0, extraRounds = 0, forcedTool = false, regenerated = false, toolChoice = "auto";
   const finish = (answer, status, issues = 0) => {
     let text = stripCitations(answer).trim();
     if (status !== "no_data") text = ensureScopeMention(labelSpeculation(text), scopes);
-    return { answer: text, calls, usage, model, verification: { status, issues } };
+    return { answer: text, calls, usage, model, verification: { status, issues }, sites: [...usedSites] };
   };
   const evidence = () => buildEvidence([...evidenceTexts, ...toolResults], { allowedText: question });
   for (;;) {
@@ -133,6 +134,7 @@ export async function answerWithTools(config, { ds, messages, ctx, maxTokens = 6
         const { text, value } = withRef(runTool(ds, t.function?.name, t.function?.arguments ?? "{}", ctx), ref);
         toolResults.push(value);
         const sc = scopeOf(value); if (sc) scopes.push(sc);
+        for (const name of Array.isArray(value?.sites) ? value.sites : []) if (typeof name === "string") usedSites.add(name);
         let args = {};
         try { args = JSON.parse(t.function?.arguments || "{}"); } catch { args = {}; }
         calls.push({ name: String(t.function?.name ?? ""), args });

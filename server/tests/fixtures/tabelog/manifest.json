@@ -15,5 +15,6 @@
    "pickup-1.html"
   ]
  },
- "public": "public.html"
+ "public": "public.html",
+ "myReport": "my-report.html"
 }

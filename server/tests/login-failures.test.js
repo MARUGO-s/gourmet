@@ -6,7 +6,8 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { FAILURE_KINDS, classifyFailure, failureKindOf, publicRequest, validateFinish } from "../../supabase/functions/_shared/agent-requests.js";
 import { DEEP_LINK_PARAMS, credentialUpdateUrl, loginLinks, parseDeepLink } from "../../supabase/functions/_shared/login-help.js";
-import { HUMAN_CHECK_GUIDE, RELOGIN_GUIDE, failureReason, liveSummary, processLiveLookups } from "../../supabase/functions/_shared/mtalk-live.js";
+import { HUMAN_CHECK_GUIDE, RELOGIN_GUIDE, failureReason } from "../../supabase/functions/_shared/mtalk-live.js";
+import { answerFreshness, formatFreshness, freshnessLinks, summarizeFreshness } from "../../supabase/functions/_shared/data-freshness.js";
 import { FOLLOWUP_TITLE, followupMessage, planRefetch, processFollowups } from "../../supabase/functions/_shared/mtalk-followups.js";
 import { queueCommand } from "../../scripts/agent-queue.mjs";
 
@@ -82,50 +83,44 @@ test("credential links: deep link to the exact store × site; parse rejects junk
 });
 
 // ---------- M-talk の回答 ----------
-const CAVA = [{ source: "tabelog", storeId: "", storeName: "BISTRO CAVACAVA", requestId: R1 }, { source: "ikyu", storeId: "112789", storeName: "BISTRO CAVACAVA", requestId: R2 }];
-test("live summary: relogin → button + guide (no password in chat); human check → retry guide, no button; legacy text still works", () => {
-  const lookup = { question: "今月の予約は？", targets: CAVA };
-  const relogin = liveSummary(lookup, [{ id: R1, status: "done", finished_at: "2026-10-01T05:03:00Z" }, { id: R2, status: "failed", error: "一休: 要再ログイン（ID・パスワードが通らない）", failure_kind: "needs_relogin" }]);
-  assert.match(relogin.header, /・一休（BISTRO CAVACAVA）：ログイン情報の確認が必要です/);
-  assert.ok(!relogin.header.includes("ID・パスワードが通らない"), "理由の文は出さない");
-  assert.ok(relogin.header.includes(RELOGIN_GUIDE));
+// 取り込みが止まっているサイト（最後の依頼が失敗し、そのあとに取り込みが無い）→ 答えの最後の※の行と「ログイン情報を更新」のボタン
+const NOW = Date.parse("2026-10-01T10:00:00Z");
+const RUNS = [{ source: "tabelog", receivedAt: "2026-10-01T06:28:00Z", from: "2026-08-01", to: "2026-09-30" }, { source: "ikyu", receivedAt: "2026-09-29T09:30:00Z", from: "2026-09-01", to: "2026-09-28" }];
+const ikyuFail = (error, failure_kind) => [{ id: R2, source: "ikyu", store_id: "112789", status: "failed", error, failure_kind, finished_at: "2026-10-01T07:00:00Z" }];
+test("freshness: relogin → button (no password in chat); human check / other → text only; legacy text still works", () => {
+  const relogin = summarizeFreshness({ runs: RUNS, requests: ikyuFail("一休: 要再ログイン（ID・パスワードが通らない）", "needs_relogin"), now: NOW });
+  const text = formatFreshness(relogin, { todayYear: 2026 });
+  assert.match(text, /※一休の直近の取得：ログイン情報の確認が必要です/);
+  assert.ok(!text.includes("ID・パスワードが通らない"), "理由の文は出さない");
+  const links = freshnessLinks(relogin, { "ikyu:112789": "BISTRO CAVACAVA" });
+  assert.equal(links.length, 1);
+  assert.equal(links[0].store_name, "BISTRO CAVACAVA");
+  assert.match(links[0].url, /source=ikyu&store=112789&retry=a9f5c78b/);
   assert.match(RELOGIN_GUIDE, /パスワードはこのトークに書かないでください/);
-  assert.equal(relogin.links.length, 1);
-  assert.match(relogin.links[0].url, /source=ikyu&store=112789&retry=a9f5c78b/);
-  const legacy = liveSummary(lookup, [{ id: R1, status: "done" }, { id: R2, status: "failed", error: "要再ログイン" }]);
-  assert.equal(legacy.links.length, 0, "failure_kind の無い「要再ログイン」だけの行にはボタンを出さない");
-  const legacySite = liveSummary(lookup, [{ id: R1, status: "done" }, { id: R2, status: "failed", error: "一休: サイトに「パスワードが正しくありません」と表示" }]);
-  assert.equal(legacySite.links.length, 1, "サイトの表示があればボタン");
-  const human = liveSummary(lookup, [{ id: R1, status: "done" }, { id: R2, status: "failed", error: "一休: ログインで「私は人間です」の確認（画像パズル）", failure_kind: "needs_human_check" }]);
-  assert.equal(human.links.length, 0, "「私は人間です」はボタンを出さない");
-  assert.ok(human.header.includes(HUMAN_CHECK_GUIDE));
+  const legacy = summarizeFreshness({ runs: RUNS, requests: ikyuFail("要再ログイン", null), now: NOW });
+  assert.equal(freshnessLinks(legacy).length, 0, "failure_kind の無い「要再ログイン」だけの行にはボタンを出さない");
+  const human = summarizeFreshness({ runs: RUNS, requests: ikyuFail("一休: ログインで「私は人間です」の確認（画像パズル）", "needs_human_check"), now: NOW });
+  assert.equal(freshnessLinks(human).length, 0, "「私は人間です」はボタンを出さない");
+  assert.match(formatFreshness(human), /※一休の直近の取得：ログインで「私は人間です」の確認を求められました/);
+  assert.ok(!formatFreshness(human).includes("画像パズル"));
   assert.match(HUMAN_CHECK_GUIDE, /私は人間です/);
   assert.match(HUMAN_CHECK_GUIDE, /次の回に自動でやり直します/);
   assert.match(HUMAN_CHECK_GUIDE, /Grok Bot のアプリで SiteBot に伝えて/);
-  assert.match(human.header, /・一休（BISTRO CAVACAVA）：ログインで「私は人間です」の確認を求められました/);
-  assert.ok(!human.header.includes("画像パズル"));
-  const other = liveSummary(lookup, [{ id: R1, status: "failed", error: "サイトの表示が変わった", failure_kind: "other" }, { id: R2, status: "done" }]);
-  assert.equal(other.links.length, 0);
-  assert.ok(!other.header.includes(RELOGIN_GUIDE) && !other.header.includes(HUMAN_CHECK_GUIDE));
-  assert.match(other.header, /・食べログ（BISTRO CAVACAVA）：今回は取得できませんでした（こちらの不具合です。次の回にやり直します）/);
-  assert.ok(!other.header.includes("サイトの表示が変わった"));
+  const ok = summarizeFreshness({ runs: RUNS, requests: [{ ...ikyuFail("x", "needs_relogin")[0], finished_at: "2026-09-29T09:00:00Z" }], now: NOW });
+  assert.equal(ok.find((e) => e.source === "ikyu").failure, null, "失敗のあとに取り込みがあれば理由を出さない");
   assert.equal(failureReason("x", "needs_relogin"), "ログイン情報の確認が必要です");
 });
 
-test("processLiveLookups posts the relogin links with the answer", async () => {
-  const row = { id: LK, owner_user_id: OWNER, mtalk_user_id: MU, mtalk_group_id: 7, question: "今月の予約は？", history: [], status: "fetching", targets: CAVA,
-    request_ids: [R1, R2], chosen_at: new Date().toISOString(), deadline_at: new Date(Date.now() + 600_000).toISOString(), attempts: 0 };
-  const store = {
-    openLiveLookups: async () => [structuredClone(row)],
-    requestsByIds: async () => [{ id: R1, status: "done", finished_at: new Date().toISOString() }, { id: R2, status: "failed", error: "要再ログイン", failure_kind: "needs_relogin" }],
-    updateLookup: async (_id, _from, patch) => Object.assign(row, patch),
-  };
-  const posts = [];
-  const out = await processLiveLookups(store, { answer: async () => ({ text: "回答" }), post: async (p) => { posts.push(p); }, split: (t) => [t], now: () => Date.now() }, OWNER);
-  assert.equal(out.answered, 1);
-  assert.equal(posts[0].links.length, 1);
-  assert.equal(posts[0].links[0].kind, "relogin");
-  assert.ok(!posts[0].parts.join("").includes("password"));
+test("answerFreshness: only answers that called tools get the line; links come with it", () => {
+  const ds = { freshness: summarizeFreshness({ runs: RUNS, requests: ikyuFail("一休: サイトに「パスワードが正しくありません」と表示", "needs_relogin"), now: NOW }),
+    stores: [{ id: "s1", name: "BISTRO CAVACAVA" }], sites: [{ store_id: "s1", source: "ikyu", site_store_key: "112789" }] };
+  assert.deepEqual(answerFreshness({ calls: [], sites: [] }, ds), { text: "", links: [] }, "あいさつには付けない");
+  const f = answerFreshness({ calls: [{ name: "get_kpis" }], sites: ["一休.comレストラン"] }, ds, { todayYear: 2026 });
+  assert.match(f.text, /^データ：一休 9\/29 18:30取得（9\/1〜9\/28）$/m);
+  assert.doesNotMatch(f.text, /食べログ/, "使ったサイトだけ");
+  assert.equal(f.links.length, 1);
+  assert.equal(f.links[0].kind, "relogin");
+  assert.equal(f.links[0].store_name, "BISTRO CAVACAVA");
 });
 
 // ---------- ログイン情報の保存後の取り直し ----------
@@ -193,7 +188,8 @@ test("wiring: review-api queues a refetch after saving credentials; agent-api pa
   assert.match(api, /p_failure_kind: finish\.failureKind/);
   assert.match(api, /processFollowups\(supabaseFollowupStore\(admin\)/);
   assert.match(api, /mtalkRequest\(mtalk, "POST", NOTICE_PATH/);
-  assert.match(api, /\.\.\.\(links\?\.length \? \{ links \} : \{\}\)/);
+  assert.match(api, /\.\.\.\(links\.length \? \{ links \} : \{\}\)/);
+  assert.doesNotMatch(api, /processLiveLookups|LIVE_REPLY_PATH|"\/chat-reply"/, "「最新を調べる」の回答の送信は廃止");
   const panel = fs.readFileSync(new URL("../../src/components/CredentialsPanel.tsx", import.meta.url), "utf8");
   assert.match(panel, /preset\.source === source && preset\.storeKey === key \? preset\.retry : null/, "リンクと同じ店舗×サイトのときだけ retry を渡す");
 });
