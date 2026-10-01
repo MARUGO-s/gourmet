@@ -5,7 +5,8 @@
 //     origin = 'mtalk_live'（夜間・優先でも取得される）にし、mtalk_followups に「結果をそのトークへ送る」を記録する。
 //   取得が終わる → agent-api が processFollowups で「再ログイン後の取得結果」を M-talk（/chat-notice）へ1回だけ送る。
 //     取得できた: 元の質問に取り直したデータで答える。できなかった: 理由と、ログインの問題ならもう一度「ログイン情報を更新」のボタン。
-import { LIVE_SOURCES, SITE_LABELS, failureReason, RELOGIN_GUIDE, HUMAN_CHECK_GUIDE } from "./mtalk-live.js";
+import { LIVE_SOURCES, SITE_LABELS, RELOGIN_GUIDE, HUMAN_CHECK_GUIDE } from "./mtalk-live.js";
+import { publicFailureText } from "./failure-text.js";
 import { failureKindOf } from "./agent-requests.js";
 import { loginLinks } from "./login-help.js";
 
@@ -47,7 +48,8 @@ export function followupMessage({ request, storeName, question }, answerText = n
     return { text: answerText ? `${lines.join("\n")}\n\n${answerText}` : lines.join("\n"), links };
   }
   const kind = failureKindOf(request);
-  lines.push(`ログイン情報の更新後も、${where}は取得できませんでした（${failureReason(request.error, kind)}）。`);
+  // 理由の文（request.error）は出さない。種類から決まった文だけ
+  lines.push("ログイン情報の更新後も、取得できませんでした。", `・${publicFailureText({ site: siteName(request.source), storeName, kind })}`);
   links = loginLinks([{ source: request.source, storeId: request.store_id, storeName, requestId: request.id, kind }]);
   if (links.length) lines.push(RELOGIN_GUIDE);
   else if (kind === "needs_human_check") lines.push(HUMAN_CHECK_GUIDE);

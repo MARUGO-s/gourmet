@@ -73,7 +73,8 @@ const CAVA = [{ source: "tabelog", storeId: "", storeName: "BISTRO CAVACAVA", re
 test("live summary: relogin → button + guide (no password in chat); human check → retry guide, no button; legacy text still works", () => {
   const lookup = { question: "今月の予約は？", targets: CAVA };
   const relogin = liveSummary(lookup, [{ id: R1, status: "done", finished_at: "2026-10-01T05:03:00Z" }, { id: R2, status: "failed", error: "一休: 要再ログイン（ID・パスワードが通らない）", failure_kind: "needs_relogin" }]);
-  assert.match(relogin.header, /一休（BISTRO CAVACAVA）: 要再ログイン のため更新できませんでした/);
+  assert.match(relogin.header, /・一休（BISTRO CAVACAVA）：ログイン情報の確認が必要です/);
+  assert.ok(!relogin.header.includes("ID・パスワードが通らない"), "理由の文は出さない");
   assert.ok(relogin.header.includes(RELOGIN_GUIDE));
   assert.match(RELOGIN_GUIDE, /パスワードはこのトークに書かないでください/);
   assert.equal(relogin.links.length, 1);
@@ -86,11 +87,14 @@ test("live summary: relogin → button + guide (no password in chat); human chec
   assert.match(HUMAN_CHECK_GUIDE, /私は人間です/);
   assert.match(HUMAN_CHECK_GUIDE, /次の回に自動でやり直します/);
   assert.match(HUMAN_CHECK_GUIDE, /Grok Bot のアプリで SiteBot に伝えて/);
-  assert.match(human.header, /一休（BISTRO CAVACAVA）: ログインで「私は人間です」の確認を求められた/);
+  assert.match(human.header, /・一休（BISTRO CAVACAVA）：ログインで「私は人間です」の確認を求められました/);
+  assert.ok(!human.header.includes("画像パズル"));
   const other = liveSummary(lookup, [{ id: R1, status: "failed", error: "サイトの表示が変わった", failure_kind: "other" }, { id: R2, status: "done" }]);
   assert.equal(other.links.length, 0);
   assert.ok(!other.header.includes(RELOGIN_GUIDE) && !other.header.includes(HUMAN_CHECK_GUIDE));
-  assert.equal(failureReason("x", "needs_relogin"), "要再ログイン");
+  assert.match(other.header, /・食べログ（BISTRO CAVACAVA）：今回は取得できませんでした（こちらの不具合です。次の回にやり直します）/);
+  assert.ok(!other.header.includes("サイトの表示が変わった"));
+  assert.equal(failureReason("x", "needs_relogin"), "ログイン情報の確認が必要です");
 });
 
 test("processLiveLookups posts the relogin links with the answer", async () => {
@@ -127,7 +131,7 @@ test("followup message: done → 再ログイン後の取得結果 + answer; fai
   assert.match(done.text, /予約は12件です$/);
   assert.equal(done.links.length, 0);
   const again = followupMessage({ request: { id: R2, source: "ikyu", store_id: "112789", status: "failed", error: "要再ログイン", failure_kind: "needs_relogin" }, storeName: "BISTRO CAVACAVA" });
-  assert.match(again.text, /ログイン情報の更新後も、一休（BISTRO CAVACAVA）は取得できませんでした（要再ログイン）/);
+  assert.match(again.text, /ログイン情報の更新後も、取得できませんでした。\n・一休（BISTRO CAVACAVA）：ログイン情報の確認が必要です/);
   assert.equal(again.links.length, 1);
   const human = followupMessage({ request: { id: R2, source: "ikyu", store_id: "112789", status: "failed", error: "私は人間です", failure_kind: "needs_human_check" }, storeName: "B" });
   assert.equal(human.links.length, 0);

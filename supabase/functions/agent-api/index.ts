@@ -18,6 +18,7 @@
 import { service, body } from "../_shared/http.ts";
 import { decrypt } from "../_shared/crypto.ts";
 import { NOTICE_PATH, processFollowups, supabaseFollowupStore } from "../_shared/mtalk-followups.js";
+import { safeParts } from "../_shared/failure-text.js";
 import { must } from "../_shared/sync-data.js";
 import { getSource } from "../_shared/sources.js";
 import { unpackIkyuUsername } from "../_shared/ikyu-login.js";
@@ -63,8 +64,9 @@ function runLive(admin: any, userId: string) {
   return processLiveLookups(supabaseLiveStore(admin), {
     answer,
     // links = 「ログイン情報を更新」のボタン（アプリの登録画面。ボタンの文と URL の確認は line_report 側）
+    // parts は safeParts で内部の言葉（computerUse・Shell・claim など）を含む行を落としてから送る（念のため）
     post: ({ lookup, parts, links }: { lookup: any; parts: string[]; links?: any[] }) => mtalkRequest(mtalk, "POST", LIVE_REPLY_PATH,
-      { lookup_id: lookup.id, mtalk_user_id: lookup.mtalk_user_id, mtalk_group_id: Number(lookup.mtalk_group_id), parts, ...(links?.length ? { links } : {}) }, { timeoutMs: 15_000 }),
+      { lookup_id: lookup.id, mtalk_user_id: lookup.mtalk_user_id, mtalk_group_id: Number(lookup.mtalk_group_id), parts: safeParts(parts), ...(links?.length ? { links } : {}) }, { timeoutMs: 15_000 }),
     split,
     now: () => Date.now(),
   }, userId).then(async (live) => {
@@ -72,7 +74,7 @@ function runLive(admin: any, userId: string) {
     const followups = await processFollowups(supabaseFollowupStore(admin), {
       answer, split, now: () => Date.now(),
       notice: ({ noticeId, lookup, parts, links }: { noticeId: string; lookup: any; parts: string[]; links: any[] }) => mtalkRequest(mtalk, "POST", NOTICE_PATH,
-        { notice_id: noticeId, mtalk_user_id: lookup.mtalk_user_id, mtalk_group_id: Number(lookup.mtalk_group_id), parts, ...(links.length ? { links } : {}) }, { timeoutMs: 15_000 }),
+        { notice_id: noticeId, mtalk_user_id: lookup.mtalk_user_id, mtalk_group_id: Number(lookup.mtalk_group_id), parts: safeParts(parts), ...(links.length ? { links } : {}) }, { timeoutMs: 15_000 }),
     }, userId);
     return { live, followups };
   });

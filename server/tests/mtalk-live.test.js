@@ -48,10 +48,10 @@ test("choice reply: text fallback (1/2) + structured choice for card buttons; la
 });
 
 test("failure reasons and the freshness header (all ok / partial / none)", () => {
-  assert.equal(failureReason("一休: 要再ログイン（セッション切れ）"), "要再ログイン");
-  assert.equal(failureReason("追加認証が必要でした"), "追加認証が必要");
-  assert.equal(failureReason("24時間以内に取得されませんでした。もう一度依頼してください"), "取得が始まりませんでした");
-  assert.equal(failureReason(""), "理由不明");
+  // 理由の文はそのまま出さない（種類だけを判定して決まった文に）
+  assert.equal(failureReason("一休: 要再ログイン（セッション切れ）"), "ログイン情報の確認が必要です");
+  assert.equal(failureReason("24時間以内に取得されませんでした。もう一度依頼してください"), "今回は取得できませんでした（こちらの不具合です。次の回にやり直します）");
+  assert.equal(failureReason(""), "今回は取得できませんでした（こちらの不具合です。次の回にやり直します）");
   const lookup = { question: "今月の予約は？", targets: [{ ...CAVA[0], requestId: "r1" }, { ...CAVA[1], requestId: "r2" }] };
   const done = (id, at) => ({ id, status: "done", finished_at: at });
   const all = liveSummary(lookup, [done("r1", "2026-10-01T05:03:00Z"), done("r2", "2026-10-01T05:07:00Z")]);
@@ -60,10 +60,11 @@ test("failure reasons and the freshness header (all ok / partial / none)", () =>
   assert.equal(all.failed.length, 0);
   const part = liveSummary(lookup, [done("r1", "2026-10-01T05:03:00Z"), { id: "r2", status: "failed", error: "要再ログイン" }]);
   assert.match(part.header, /10\/1 14:03 取得、BISTRO CAVACAVA の食べログ/);
-  assert.match(part.header, /一休（BISTRO CAVACAVA）: 要再ログイン のため更新できませんでした。一休は前回までに取得したデータで答えています/);
+  assert.match(part.header, /次は更新できませんでした（一休は前回までに取得したデータで答えています）。\n・一休（BISTRO CAVACAVA）：ログイン情報の確認が必要です/);
   assert.match(part.system, /取り直せなかった: 一休/);
   const none = liveSummary({ ...lookup, targets: [{ ...CAVA[1], enqueueError: "取得の依頼が多すぎるため依頼できませんでした" }] }, []);
-  assert.match(none.header, /最新のデータを取得できませんでした（一休（BISTRO CAVACAVA）: 取得を依頼できませんでした）。前回までに取得したデータで答えます/);
+  assert.match(none.header, /最新のデータを取得できませんでした。前回までに取得したデータで答えます。\n・一休（BISTRO CAVACAVA）：今回は取得を依頼できませんでした/);
+  assert.ok(!none.header.includes("多すぎる"), "依頼のエラー文も出さない");
   assert.equal(none.refreshedAny, false);
   assert.equal(describeTargets([{ source: "tabelog", storeName: "A" }, { source: "ikyu", storeName: "B" }]), "A の食べログ、B の一休");
 });
@@ -192,7 +193,7 @@ test("live completion: waits until every request ends, answers once with the fre
   const out = await processLiveLookups(store, deps, OWNER);
   assert.equal(out.answered, 1);
   assert.equal(posted.length, 1);
-  assert.match(posted[0].parts[0], /^ご質問：「今月の予約は？」\nサイトにログインして最新のデータを取得しました（10\/1 14:06 取得、BISTRO CAVACAVA の食べログ）。\n一休（BISTRO CAVACAVA）: 要再ログイン のため更新できませんでした/);
+  assert.match(posted[0].parts[0], /^ご質問：「今月の予約は？」\nサイトにログインして最新のデータを取得しました（10\/1 14:06 取得、BISTRO CAVACAVA の食べログ）。\n次は更新できませんでした（一休は前回までに取得したデータで答えています）。\n・一休（BISTRO CAVACAVA）：ログイン情報の確認が必要です/);
   assert.match(posted[0].parts[0], /回答:今月の予約は？/);
   assert.match(spy.calls[0].system, /取り直せなかった: 一休/);
   assert.equal(spy.calls[0].lookup.id, "L1");

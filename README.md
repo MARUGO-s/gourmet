@@ -430,6 +430,8 @@ M-talk の利用者が「AI分析」Botとの1対1に文章を書くと、数秒
 - 保存すると review-api が取り直しの依頼（`params.trigger:"relogin"`）を登録します（食べログ・一休だけ。同じ店舗×サイトの依頼が処理待ちならそれを使う）。`retry`が本人の同じ店舗×サイトの「最新を調べる」の依頼なら、`origin:"mtalk_live"`（夜間・優先でも取得）にして`mtalk_followups`に記録し、取得が終わると agent-api が「【再ログイン後の取得結果】」として元の質問に取り直したデータで答え、line_report の`POST /chat-notice`（署名つき、`notice_id`で1回だけ）でそのトークへ送ります。また取得できなければ理由と（ログイン情報の問題なら）もう一度ボタンを送ります。送れなければ3回までやり直します。
 - `needs_human_check`: ボタンは出さず、「サイトがログインのときに「私は人間です」の確認を求めてきました。SiteBot（Grok Bot）が次の回に自動でやり直します。何度も続くときは、Grok Bot のアプリで SiteBot に伝えてください（SiteBot のパソコンで確認を済ませます）。」と書きます。Grok Bot は簡単なチェックボックス（または長押し）を自分のふつうのブラウザで1回押すだけで、画像パズル・繰り返しの確認は解かずに中止して報告します（外部の解読サービスは使わない）。
 - アプリの「取得依頼」の履歴にも、`needs_relogin`の失敗には「ログイン情報を更新」のボタンが出ます。
+- 利用者に見せる失敗の文は、種類×サイト×店舗から決まった文だけで作ります（`_shared/failure-text.js`）。例:「一休（BISTRO CAVACAVA）：ログイン情報の確認が必要です」「一休（BISTRO CAVACAVA）：今回は取得できませんでした（こちらの不具合です。次の回にやり直します）」。Grok Bot が`--fail --error`で書いた理由の文は調査用で、M-talk には出しません。アプリの履歴では「詳細（調査用）」を開いたときだけ表示します。
+- 念のため、M-talk へ送る本文（ai-analyst の`/mtalk-chat`の返答・agent-api の`/chat-reply`・`/chat-notice`）は、内部の言葉（computerUse・サブエージェント・executor・Shell・claim・Playwright など）を含む行を落としてから送ります（`safeParts`）。
 
 配置の順番: gourmet に`020_login_failure_kinds.sql`だけを適用 → line_report（main へのマージで`mtalk-external-post`の`links`・`/chat-notice`）→ gourmet の`agent-api`・`review-api`を`--no-verify-jwt`で配置 → GitHub Pages（gourmet main へのマージ）→ Grok Bot の手順に`--kind`を足す。新しい秘密情報はありません。
 migration だけ先に入っても、いまの agent-api（種類なしの6引数の`finish_agent_request`）はそのまま動き、種類は理由の文から決まります。古い line_report へ`links`を送っても無視されるだけです（`/chat-notice`は404になり、お知らせは3回で諦めます）。

@@ -14,7 +14,8 @@
 // あいさつ・お礼など（isChitChat）と、最新を取り直せる店舗×サイトが無いとき（ログイン情報の未登録など）は選択肢を出さずにすぐ答える。
 import { storeNameVariants } from "./review-alerts.js";
 import { SUPPORTED_SCHEDULE_SOURCES } from "./fetch-schedules.js";
-import { failureKindOf } from "./agent-requests.js";
+import { classifyFailure, failureKindOf } from "./agent-requests.js";
+import { publicFailureLabel, publicFailureText } from "./failure-text.js";
 import { loginLinks } from "./login-help.js";
 
 export const LIVE_LIMITS = {
@@ -132,18 +133,12 @@ function storeKeys(name) {
   return [...keys];
 }
 
-/** 依頼の失敗理由を利用者向けに短く（Grok Bot の --fail の文。kind = failure_kind があればそれを優先）。 */
+/**
+ * 依頼の失敗 → 利用者向けの短い文。Grok Bot の --fail の理由の文はそのまま出さない（内部の言葉が混ざるため）。
+ * kind = failure_kind（無い古い行だけ、理由の文から種類を判定する）。文は failure-text.js の決まった文だけ。
+ */
 export function failureReason(error, kind = null) {
-  if (kind === "needs_relogin") return "要再ログイン";
-  if (kind === "needs_human_check") return "ログインで「私は人間です」の確認を求められた";
-  const s = clip(error, 300);
-  if (!s) return "理由不明";
-  if (/再ログイン|ログイン(?:でき|に失敗|切れ|が必要)|login|session/i.test(s)) return "要再ログイン";
-  if (/追加認証|二段階|2段階|認証コード|captcha/i.test(s)) return "追加認証が必要";
-  if (/24時間以内に取得されません/.test(s)) return "取得が始まりませんでした";
-  if (/完了しませんでした（3回）/.test(s)) return "取得が完了しませんでした";
-  if (/依頼できませんでした|依頼が多すぎ/.test(s)) return "取得を依頼できませんでした";
-  return s.length > 60 ? `${s.slice(0, 60)}…` : s;
+  return publicFailureLabel(kind ?? classifyFailure(error));
 }
 
 // ボタン（links）を添えるときの案内。パスワード・確認コードはトークに書かないよう必ず添える
@@ -161,20 +156,23 @@ export function liveSummary(lookup, requests) {
       ok.push(t);
       if (r.finished_at && (!fetchedAt || ms(r.finished_at) > ms(fetchedAt))) fetchedAt = r.finished_at;
     } else {
-      const kind = t.enqueueError ? "other" : r ? failureKindOf(r) : "other";
-      failed.push({ ...t, kind, reason: failureReason(t.enqueueError ?? r?.error ?? (r ? "" : "依頼できませんでした"), t.enqueueError ? null : kind) });
+      // 依頼できなかった / 時間内に終わらなかった / 失敗（種類だけを見る。理由の文は使わない）
+      const kind = t.enqueueError || !r ? "not_queued" : r.status !== "failed" ? "unfinished" : failureKindOf(r);
+      const site = SITE_LABELS[t.source] ?? t.source;
+      failed.push({ ...t, kind, reason: publicFailureLabel(kind), text: publicFailureText({ site, storeName: t.storeName, kind }) });
     }
   }
   const lines = [`ご質問：「${excerpt(lookup?.question)}」`];
-  const failText = failed.map((f) => `${SITE_LABELS[f.source] ?? f.source}（${clip(f.storeName, 100) || "店舗"}）: ${f.reason}`).join("／");
+  const failText = failed.map((f) => f.text).join("／");
+  const failLines = failed.map((f) => `・${f.text}`);
   if (ok.length) {
     lines.push(`サイトにログインして最新のデータを取得しました（${fetchedAt ? `${jst(fetchedAt)} 取得、` : ""}${describeTargets(ok)}）。`);
     if (failed.length) {
       const sites = [...new Set(failed.map((f) => SITE_LABELS[f.source] ?? f.source))].join("・");
-      lines.push(`${failText} のため更新できませんでした。${sites}は前回までに取得したデータで答えています。`);
+      lines.push(`次は更新できませんでした（${sites}は前回までに取得したデータで答えています）。`, ...failLines);
     }
   } else {
-    lines.push(`最新のデータを取得できませんでした（${failText || "理由不明"}）。前回までに取得したデータで答えます。`);
+    lines.push("最新のデータを取得できませんでした。前回までに取得したデータで答えます。", ...failLines);
   }
   const links = loginLinks(failed);
   if (links.length) lines.push(RELOGIN_GUIDE);
