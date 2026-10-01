@@ -312,8 +312,14 @@ export async function processLiveLookups(store, deps, ownerUserId) {
         await store.updateLookup(row.id, ["answering"], { status: "timed_out", finished_at: nowIso, error: "M-talk 側で時間切れの案内を送り済み" });
         out.timedOut++;
       } else {
-        await store.updateLookup(row.id, ["answering"], { status: "fetching" }); // 次の確認でやり直す（回数は attempts）
-        out.retry++;
+        // 次の確認でやり直す（回答の作り直しを含むので3回まで）
+        if ((row.attempts ?? 0) + 1 >= LIVE_LIMITS.maxAttempts) {
+          await store.updateLookup(row.id, ["answering"], { status: "failed", finished_at: nowIso, error: "M-talk へ送れませんでした（3回）" });
+          out.failed++;
+        } else {
+          await store.updateLookup(row.id, ["answering"], { status: "fetching" });
+          out.retry++;
+        }
       }
     }
   }

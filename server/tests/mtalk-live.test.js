@@ -223,6 +223,16 @@ test("live completion: post failure retries (bounded), answer failure posts guid
   assert.equal((await processLiveLookups(store, deps, OWNER)).answered, 1);
   assert.equal(store.db.lookups[0].attempts, 2);
 
+  // M-talk へ送れない（例: line_report が未配置）ままなら3回で止める（回答の作り直しを繰り返さない）
+  const s0 = memoryStore();
+  let answers = 0;
+  const d0 = { ...deps, answer: async () => { answers++; return { text: "ok" }; }, post: async () => { throw new Error("502"); } };
+  await turn(s0, d0, "今月の予約は？"); await turn(s0, d0, "1");
+  for (const r of s0.db.requests) r.status = "done";
+  for (let i = 0; i < 5; i++) await processLiveLookups(s0, d0, OWNER);
+  assert.equal(s0.db.lookups[0].status, "failed");
+  assert.equal(answers, 3);
+
   const s2 = memoryStore();
   const p2 = [];
   const d2 = { ...deps, answer: async () => { throw new Error("openai down"); }, post: async (x) => p2.push(x) };
