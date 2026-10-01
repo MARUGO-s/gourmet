@@ -375,7 +375,7 @@ INGEST_TOKEN=... node scripts/agent-ingest.mjs payload.json
 
 ### M-talk の「AI分析」Bot へ質問する（migration 016・ai-analyst `POST /mtalk-chat`・line_report の mtalk-external-post `/chat-dispatch`）
 
-M-talk の利用者が「AI分析」Botとの1対1に文章を書くと、数秒〜数十秒で Bot が答えます。回答は画面の AI分析（`/ask`）と同じモデル（`OPENAI_MODEL`、既定 gpt-6-luna）・同じ11の関数（PV・予約・売上・口コミ・詳細レポート・鮮度の集計だけ。SQLは受け取らない）で作り、チャット向けのプレーンテキスト（表・見出し記号なし、1通2000文字以内・最大3通）にします。データの質問にもすぐ答え、答えの最後にサイトごとのデータの取得日時と期間（「データ：一休 10/1 18:30取得（9/1〜9/30）」）を付けます（下の migration 022）。PDFレポートの作成はしません。
+M-talk の利用者が「AI分析」Botとの1対1に文章を書くと、数秒〜数十秒で Bot が答えます。回答は画面の AI分析（`/ask`）と同じモデル（`OPENAI_MODEL`、既定 gpt-6-luna）・同じ12の関数（PV・予約・売上・月別のコンバージョン率・口コミ・詳細レポート・鮮度の集計だけ。SQLは受け取らない）で作り、チャット向けのプレーンテキスト（表・見出し記号なし、1通2000文字以内・最大3通）にします。データの質問にもすぐ答え、答えの最後にサイトごとのデータの取得日時と期間（「データ：一休 10/1 18:30取得（9/1〜9/30）」）を付けます（下の migration 022）。PDFレポートの作成はしません。
 
 - 流れ: M-talk の`chat_messages`追加 → line_report のトリガー（pg_net）→ `mtalk-external-post /chat-dispatch` → 本関数`POST /mtalk-chat`（署名つき）→ 回答を Bot の発言として投稿。
 - 認証: JWT ではなく、gourmet→M-talk と同じ`GOURMET_MTALK_TOKEN`と HMAC 署名（`X-Mtalk-Timestamp`±5分・`X-Mtalk-Signature`、署名対象のパスは`/mtalk-chat`）。新しい秘密情報はありません。
@@ -420,7 +420,7 @@ M-talk の利用者が「AI分析」Botとの1対1に文章を書くと、数秒
 
 ### 毎日の取り込みの詳細（AIの関数）と、管理画面のページの保存HTML（migration 022・agent-api `/pages/ingest`）
 
-- AIの関数（`_shared/ai-analyst.js`、ai-data.js が本人の行だけを読む）: `get_reservation_sales`（一休: 日付別アクセスの予約状況＝**受付日ベース**の件数・合計金額・1件あたりの平均、食べログ: 来店指標のネット予約組数・通話成立数・地図印刷）、`get_pv_breakdown`（一休: ページ種別×端末、食べログ: 端末別の合計と割合・月別）、`get_site_reports`（食べログ: エリア順位・よく見られるページ・マイレポートの端末別ページサマリー`device_summary`）、`get_data_freshness`。平均・割合は関数の結果に入れ、照合（answer-verify.js）で確かめます。見込みは「（予想）」と付けた行だけで、事実の行と分けます。
+- AIの関数（`_shared/ai-analyst.js`、ai-data.js が本人の行だけを読む）: `get_reservation_sales`（一休: 日付別アクセスの予約状況＝**受付日ベース**の件数・合計金額・1件あたりの平均、食べログ: 来店指標のネット予約組数・通話成立数・地図印刷）、`get_pv_breakdown`（一休: ページ種別×端末、食べログ: 端末別の合計と割合・月別）、`get_site_reports`（食べログ: エリア順位・よく見られるページ・マイレポートの端末別ページサマリー`device_summary`）、`get_monthly_conversion`（月別のコンバージョン率＝予約÷PV×100。食べログ: 月別PVとネット予約組数、一休: 月別PVと受付日ベースの予約件数。月別の記録が無い一休の月は日別の合計。式・根拠・取り込みの無い月つき）、`get_data_freshness`。平均・割合は関数の結果に入れ、照合（answer-verify.js）で確かめます。見込みは「（予想）」と付けた行だけで、事実の行と分けます。
 - 食べログのマイレポート（`owner_rst/my_report`）の端末別ページサマリー（PC・スマホ・アプリの店舗トップ／ページ合計のPV、レポート期間、来店指標）を`agent_reports`（`kind = 'device_summary'`、期間＝レポートの終了月）へ取り込みます（`scripts/tabelog/reports.js` `readMyReportDevices`）。
 - サンプルの無いページ（分析・統計・予約・プラン）は、ルーチンがHTMLをそのまま保存します: `node scripts/page-snapshots.mjs list --source ikyu --store 112789`（保存するページとURL。当月・前月）→ `INGEST_TOKEN=... node scripts/page-snapshots.mjs send --manifest pages.json`（`POST /agent-api/pages/ingest`）。保存先`site_page_snapshots`は店舗×サイト×ページ×期間で最新1件、**service_role だけ**（RLS・ポリシー無し・anon/authenticated に付与なし）。ページの一覧は`_shared/page-snapshots.js`の`PAGE_CATALOG`（カタログに無いページ・別のホストは受け付けない。パスワード・トークンの値は保存前に消す）。HTMLが変わったページは`parsed_at`を消し、サンプルがそろってから解析を足せるようにします。
 - 予約一覧・本日の予約・実績の確認・予約実績・キャンセル料請求の履歴はお客様の個人情報を含むため`contains_pii = true`。AIの関数・アプリ・M-talk には渡しません（解析するときも件数・人数・日時・プラン・金額・状態だけ）。個人情報を含む行は120日で消します（`purge_site_page_snapshots`、pg_cron があれば毎日）。
@@ -474,6 +474,8 @@ DB変更はこのプロジェクトを確認して対象SQLだけ適用します
 2026-10-01: M-talk の「AI分析」Bot への質問に答える機能を追加（migration 016 `ai_usage.mtalk_user_id`・`kind = 'mtalk'`、`ai-analyst POST /mtalk-chat`、line_report `mtalk-external-post /chat-dispatch`）。
 
 2026-10-01: M-talk「AI分析」で質問ごとに「最新を調べる／今あるデータで答える」を選べるようにした（migration 019 `agent_requests.origin`・`mtalk_live_lookups`・`claim_agent_requests(p_origin)`、`ai-analyst /mtalk-chat`、agent-api の取得完了後の回答、`agent-queue.mjs --origin`、line_report `mtalk-external-post /chat-reply`）。
+
+2026-10-01: 月別のコンバージョン率（予約÷PV）の関数`get_monthly_conversion`を追加。鮮度の行に日別と月別の両方の期間を書くようにした（「日別8/1〜9/30・月別2019/12月〜2026/9月」。以前は日別の範囲だけで、7月の月別PVがあるのに「期間外」と扱われ「月別PVが取得できない」と答えていた）。
 
 2026-10-01: M-talk「AI分析」の選択（最新を調べる／今あるデータで答える）を廃止し、すぐ答えて鮮度（取得日時・期間、36時間超・取り込みなしの明記）を付けるようにした。一休の予約・売上、PVの内訳、食べログの端末別ページサマリーをAIの関数に追加し、サンプルの無い管理画面のページは保存HTML（`site_page_snapshots`、service_role だけ）として残す（migration 022、agent-api `/pages/ingest`、`scripts/page-snapshots.mjs`）。
 
