@@ -7,6 +7,8 @@
 // M-talk からの質問（POST /mtalk-chat）: 呼び出し元は line_report の mtalk-external-post だけ（JWTではなく GOURMET_MTALK_TOKEN + HMAC 署名）。
 // 「AI分析」Bot との1対1での質問に、/ask と同じモデル・同じ関数で答える。データの持ち主は mtalk-chat.js の resolveDataOwner で決め、
 // その user_id で絞った SELECT だけで読む。回数は ai_usage（kind='mtalk'、mtalk_user_id ごとに1時間60回）。
+// データの質問にもすぐ答える（毎日の取り込み＝確定値のキャッシュ）。「最新を調べる／今あるデータで答える」の選択は 2026-10-01 に廃止。
+// データを使った答えには、サイトごとの最後の取得日時（日本時間）と期間をサーバーが付ける（data-freshness.js）。
 import { createClient } from "npm:@supabase/supabase-js@2.116.0";
 import * as PDFLib from "npm:pdf-lib@1.17.1";
 import * as fontkit from "npm:fontkit@2.0.4";
@@ -26,6 +28,7 @@ import { loadReportFonts, renderReportPdf } from "../_shared/report-pdf.js";
 import { MTALK_CHAT_LIMITS, MTALK_CHAT_PATH, MtalkChatError, splitReply, validateMtalkChatInput, verifyMtalkRequest } from "../_shared/mtalk-chat.js";
 import { answerMtalkQuestion, mtalkOverLimit, resolveMtalkOwner } from "../_shared/mtalk-answer.js";
 import { handleMtalkTurn, supabaseLiveStore } from "../_shared/mtalk-live.js";
+import { answerFreshness, freshnessSystemMessage } from "../_shared/data-freshness.js";
 import { safeParts } from "../_shared/failure-text.js";
 import * as fontModule from "../_shared/fonts/noto-sans-jp.js";
 
@@ -75,17 +78,23 @@ Deno.serve(async req => {
       if (await overLimit("ask")) return json(req, { error:`質問は1時間に${AI_LIMITS.askPerHour}回までです。しばらくしてからお試しください` }, 429);
       const ds = await loadAnalystDataset(client, { today });
       if (input.store !== "all" && !ds.stores.some((s: any) => s.id === input.store)) return json(req, { error:"店舗が見つかりません。店舗を選び直してください" }, 404);
+      const todayYear = Number(today.slice(0, 4));
+      const freshMessage = freshnessSystemMessage(ds.freshness ?? [], { todayYear });
       const messages = [
         { role:"system", content:systemPrompt(today) },
         { role:"system", content:contextMessage(ds, input) },
+        ...(freshMessage ? [{ role:"system", content:freshMessage }] : []),
         ...input.history,
         { role:"user", content:input.question },
       ];
       // 照合の根拠はこの質問の関数の結果と画面の前提（店舗・期間）だけ。会話履歴（過去の回答）は根拠にしない
       const result: any = await answerWithTools(config, { ds, messages, ctx:{ store:input.store, from:input.from, to:input.to },
-        evidenceTexts:[contextMessage(ds, input)], question:input.question, deadlineMs:ASK_DEADLINE_MS });
+        evidenceTexts:[contextMessage(ds, input), freshMessage], question:input.question, deadlineMs:ASK_DEADLINE_MS });
       await logUsage("ask", result.model, result.usage);
-      return json(req, { answer:result.answer, model:result.model, calls:result.calls, verification:result.verification, period:{ from:input.from, to:input.to }, store:input.store });
+      // 鮮度（使ったサイトの最後の取得日時・期間、古い・無いときは※の行）は照合のあとにサーバーが付ける
+      const fresh = answerFreshness(result, ds, { todayYear });
+      const answer = fresh.text ? `${result.answer}\n\n${fresh.text.split("\n").map((l: string) => `> ${l}`).join("\n")}` : result.answer;
+      return json(req, { answer, freshness:fresh.text || null, model:result.model, calls:result.calls, verification:result.verification, period:{ from:input.from, to:input.to }, store:input.store });
     }
 
     if (path === "/reports" && req.method === "GET") {
@@ -244,21 +253,17 @@ async function mtalkChat(req: Request, admin: ReturnType<typeof service>): Promi
     const answer = ({ question, history, system }: { question: string; history: any[]; system?: string }) =>
       answerMtalkQuestion(admin, env, { mtalkUserId:input.mtalkUserId, owner, question, history, system:system ?? null });
 
-    // 「最新を調べる / 今あるデータで答える」の選択（mtalk-live.js）。取得依頼は Grok Bot（INGEST_USER_ID）が処理する持ち主のときだけ
+    // 古い「1」「2」のボタン（選択は廃止）への対応だけ mtalk-live.js が行う。それ以外の質問はすぐ答える
     const turn: any = await handleMtalkTurn(supabaseLiveStore(admin), { answer, now:() => Date.now() }, {
       mtalkUserId:input.mtalkUserId, groupId:input.groupId, messageId:input.messageId, question:input.question, history:input.history,
-      ownerUserId:owner.userId, liveAllowed:owner.userId === ingestUserId.trim(),
     });
-    const extra = { mode:turn.mode, owner:owner.via, ...(turn.choice ? { choice:turn.choice, lookup_id:turn.lookup_id } : {}),
-      ...(turn.live_start ? { live:turn.live_start } : {}), ...(turn.live_close ? { live_close:turn.live_close } : {}) };
-    if (turn.parts) return plainJson({ parts:safeParts(turn.parts), ...extra });
-    if (turn.text) return plainJson({ parts:safeParts(splitReply(turn.text)), ...extra });
-
-    // 選択肢を出さない質問（あいさつ・使い方、または最新を取り直せない店舗）はすぐ答える
-    const result: any = await answer({ question:input.question, history:input.history });
+    if (turn.parts) return plainJson({ parts:safeParts(turn.parts), mode:turn.mode, owner:owner.via });
+    // あいさつ・使い方もデータの質問もすぐ答える。links = 取り込みが「ログイン情報の確認が必要」で止まっているサイトのボタン
+    const result: any = turn.result ?? await answer({ question:input.question, history:input.history });
     // M-talk へ返す本文は内部の言葉（computerUse・Shell・claim など）を含む行を落とす（念のため）
     const parts = safeParts(splitReply(result.text));
-    return plainJson({ parts, model:result.model, calls:result.calls, verification:result.verification, report:result.report, ...extra });
+    return plainJson({ parts, mode:turn.mode, owner:owner.via, model:result.model, calls:result.calls, verification:result.verification, report:result.report,
+      ...(result.links?.length ? { links:result.links } : {}) });
   } catch (error) {
     if (error instanceof AiError) return plainJson({ error:error.message }, (error as AiError & { status: number }).status);
     if (error instanceof MtalkChatError) return plainJson({ error:error.message }, (error as MtalkChatError & { status: number }).status);

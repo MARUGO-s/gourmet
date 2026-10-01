@@ -81,8 +81,9 @@ test("report context and prompt stay within bounds and keep scope to PV/reservat
   assert.match(msg, /2026-08-01〜2026-08-31/);
   assert.match(mtalkChatPrompt(), /PV・予約・口コミ/);
   assert.match(mtalkChatPrompt(), /最新データを取り直すことはできない/);
-  assert.match(mtalkChatPrompt(), /1\. サイトにログインして最新を調べる/, "取り直しは選択肢の1で行うと案内する");
-  assert.equal(AI_TOOLS.length, 7, "same 7 safe data tools as /ask");
+  assert.match(mtalkChatPrompt(), /番号で選ぶ選択肢も無い/, "選択肢（1/2）は廃止");
+  assert.doesNotMatch(mtalkChatPrompt(), /1\. サイトにログインして最新を調べる/);
+  assert.equal(AI_TOOLS.length, 11, "same 11 safe data tools as /ask");
 });
 
 test("data owner: last sender of a report to this room, otherwise the default ingest user, otherwise none", () => {
@@ -130,7 +131,8 @@ test("ai-analyst routes /mtalk-chat before the JWT check and never returns the t
   assert.match(fn, /verifyMtalkRequest\(/);
   assert.match(fn, /mtalkOverLimit\(admin, input\.mtalkUserId\)/);
   assert.match(fn, /answerMtalkQuestion\(admin, env, \{ mtalkUserId:input\.mtalkUserId, owner,/);
-  assert.match(fn, /liveAllowed:owner\.userId === ingestUserId\.trim\(\)/, "取得依頼は Grok Bot が処理する持ち主のときだけ");
+  assert.doesNotMatch(fn, /liveAllowed|choice:turn\.choice|live_start|live_close/, "選択・取得依頼は廃止");
+  assert.match(fn, /links:result\.links/, "ログイン情報を更新のボタンは答えといっしょに返す");
   // 回答の本体（ai-analyst と agent-api で共通）: 持ち主の行だけを読み、回数は M-talk 利用者ごと
   const core = readFileSync(new URL("../../supabase/functions/_shared/mtalk-answer.js", import.meta.url), "utf8");
   assert.match(core, /scopedReadClient\(admin, owner\.userId\)/);

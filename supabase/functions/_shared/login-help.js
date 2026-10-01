@@ -4,7 +4,8 @@
 //   入力はアプリにログインした本人が行う（review-api が本人の依頼・店舗×サイトであることを確かめる）。
 // ・ボタンは failure_kind = needs_relogin のときだけ。needs_human_check（「私は人間です」の確認）は案内の文だけ（mtalk-live.js）。
 // ・ログイン情報の更新: ?view=accounts&source=<サイト>&store=<店舗コード>&retry=<失敗した依頼> → アカウント管理の登録欄をその店舗×サイトで開く。
-//   保存すると取り直しの依頼を登録する（retry が M-talk の「最新を調べる」の依頼なら、その結果をトークへ「再ログイン後の取得結果」として送る）。
+//   保存すると取り直しの依頼を登録する（retry が M-talk の旧「最新を調べる」の依頼なら、その結果をトークへ「再ログイン後の取得結果」として送る）。
+//   M-talk の答えのボタンは、取り込みがログイン情報の問題で止まっているサイトに付く（data-freshness.js の freshnessLinks）。
 import { APP_URL } from "./review-alerts.js";
 
 export const LOGIN_LINK_LABELS = { relogin: "ログイン情報を更新" };

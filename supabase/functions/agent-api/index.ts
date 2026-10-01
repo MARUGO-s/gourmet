@@ -9,7 +9,8 @@
 //   POST /agent-api/requests/claim         依頼を原子的に取得開始（FOR UPDATE SKIP LOCKED）
 //   POST /agent-api/requests/complete      取得完了を報告
 //   POST /agent-api/requests/fail          取得失敗を報告（failureKind: needs_relogin | needs_human_check | other。省略時は理由の文から判定）
-//   （/requests/pending・/requests/claim は origin（app | schedule | mtalk_live）で絞れる。Grok Bot は 9:00〜22:59 以外は mtalk_live だけ）
+//   （/requests/pending・/requests/claim は origin（app | schedule | mtalk_live）で絞れる。mtalk_live は再ログイン後の取り直しと旧データだけ。Grok Bot は 9:00〜22:59 以外は mtalk_live だけ）
+//   POST /agent-api/pages/ingest           管理画面のページの保存HTML（未解析の分析・予約・プランのページ）を site_page_snapshots へ（service_role だけが読む）
 //   POST /agent-api/schedules/enqueue-due  自動取得の設定（fetch_schedules）のうち予定時刻を過ぎたものを取得依頼にする
 //   POST /agent-api/alerts/dispatch        口コミ通知（新着口コミ・総合点の変化）の送信待ちを M-talk へ送る（結果を返す）
 // 口コミ通知は取り込み（/ingest）の直後と取得依頼の確認（/requests/pending、Grok Bot が数分ごと）のたびにバックグラウンドでも送る。
@@ -24,12 +25,12 @@ import { getSource } from "../_shared/sources.js";
 import { unpackIkyuUsername } from "../_shared/ikyu-login.js";
 import { normalizeIkyuIngest } from "../_shared/ikyu-data.js";
 import { normalizeSourceIngest } from "../_shared/source-ingest.js";
+import { normalizePageSnapshots } from "../_shared/page-snapshots.js";
 import { publicRequest, validateFinish } from "../_shared/agent-requests.js";
 import { enqueueDueSchedules, supabaseScheduleStore, ENQUEUE_LIMIT } from "../_shared/fetch-schedules.js";
 import { ALERT_LIMITS, ALERT_PATH, STORE_BOTS_PATH, dispatchReviewAlerts, normalizeStoreBots, supabaseAlertStore } from "../_shared/review-alerts.js";
 import { mtalkConfig, mtalkRequest } from "../_shared/mtalk-share.js";
 import { REQUEST_ORIGINS } from "../_shared/agent-requests.js";
-import { LIVE_REPLY_PATH, processLiveLookups, supabaseLiveStore } from "../_shared/mtalk-live.js";
 import { answerMtalkQuestion, resolveMtalkOwner } from "../_shared/mtalk-answer.js";
 import { splitReply } from "../_shared/mtalk-chat.js";
 
@@ -48,8 +49,9 @@ function alertsInBackground(admin: any, userId: string) {
   if (runtime?.waitUntil) runtime.waitUntil(work);
 }
 
-// M-talk の「最新を調べる」: 取得依頼がすべて終わった質問に、取り直したデータで答えて M-talk（/chat-reply）へ送る。
-// 取得の完了・失敗の報告と、Grok Bot の数分ごとの確認（/requests/pending）のたびにバックグラウンドで確かめる（同じ質問は1回だけ答える）
+// M-talk: ログイン情報を更新したあとの取り直しの結果（「再ログイン後の取得結果」、/chat-notice）を送る。
+// 取得の完了・失敗の報告と、Grok Bot の数分ごとの確認（/requests/pending）のたびにバックグラウンドで確かめる（同じお知らせは1回だけ）。
+// 「最新を調べる」の選択（取得後に /chat-reply で答える流れ）は 2026-10-01 に廃止。M-talk の質問は ai-analyst がすぐ答える。
 function runLive(admin: any, userId: string) {
   const mtalk = mtalkConfig((k: string) => Deno.env.get(k));
   if (!mtalk.configured) return Promise.resolve({ notConfigured: true });
@@ -61,27 +63,16 @@ function runLive(admin: any, userId: string) {
       question, history, system: system ?? null });
   };
   const split = (text: string) => splitReply(text);
-  return processLiveLookups(supabaseLiveStore(admin), {
-    answer,
-    // links = 「ログイン情報を更新」のボタン（アプリの登録画面。ボタンの文と URL の確認は line_report 側）
-    // parts は safeParts で内部の言葉（computerUse・Shell・claim など）を含む行を落としてから送る（念のため）
-    post: ({ lookup, parts, links }: { lookup: any; parts: string[]; links?: any[] }) => mtalkRequest(mtalk, "POST", LIVE_REPLY_PATH,
-      { lookup_id: lookup.id, mtalk_user_id: lookup.mtalk_user_id, mtalk_group_id: Number(lookup.mtalk_group_id), parts: safeParts(parts), ...(links?.length ? { links } : {}) }, { timeoutMs: 15_000 }),
-    split,
-    now: () => Date.now(),
-  }, userId).then(async (live) => {
-    // ログイン情報を更新したあとの取り直しの結果（「再ログイン後の取得結果」）
-    const followups = await processFollowups(supabaseFollowupStore(admin), {
-      answer, split, now: () => Date.now(),
-      notice: ({ noticeId, lookup, parts, links }: { noticeId: string; lookup: any; parts: string[]; links: any[] }) => mtalkRequest(mtalk, "POST", NOTICE_PATH,
-        { notice_id: noticeId, mtalk_user_id: lookup.mtalk_user_id, mtalk_group_id: Number(lookup.mtalk_group_id), parts: safeParts(parts), ...(links.length ? { links } : {}) }, { timeoutMs: 15_000 }),
-    }, userId);
-    return { live, followups };
-  });
+  // parts は safeParts で内部の言葉（computerUse・Shell・claim など）を含む行を落としてから送る（念のため）
+  return processFollowups(supabaseFollowupStore(admin), {
+    answer, split, now: () => Date.now(),
+    notice: ({ noticeId, lookup, parts, links }: { noticeId: string; lookup: any; parts: string[]; links: any[] }) => mtalkRequest(mtalk, "POST", NOTICE_PATH,
+      { notice_id: noticeId, mtalk_user_id: lookup.mtalk_user_id, mtalk_group_id: Number(lookup.mtalk_group_id), parts: safeParts(parts), ...(links.length ? { links } : {}) }, { timeoutMs: 15_000 }),
+  }, userId).then((followups) => ({ followups }));
 }
 
 function liveInBackground(admin: any, userId: string) {
-  const work = runLive(admin, userId).catch(() => console.warn("[agent-api] mtalk live answers failed"));
+  const work = runLive(admin, userId).catch(() => console.warn("[agent-api] mtalk followups failed"));
   const runtime = (globalThis as { EdgeRuntime?: { waitUntil(p: Promise<unknown>): void } }).EdgeRuntime;
   if (runtime?.waitUntil) runtime.waitUntil(work);
 }
@@ -131,6 +122,13 @@ Deno.serve(async (req) => {
       alertsInBackground(admin, userId);
       return reply({ ok: true, source: normalized.source, status: normalized.run.status, skippedDays: normalized.skippedDays, ...saved });
     }
+    // 管理画面のページの保存HTML（まだ解析していないページ）。カタログ（page-snapshots.js）のページだけ。HTMLは応答・ログへ出さない
+    if (path === "/pages/ingest") {
+      let rows;
+      try { rows = normalizePageSnapshots(input); } catch (error) { return invalid(error); }
+      const saved = await must(admin.rpc("save_site_page_snapshots", { p_user: userId, p_rows: rows }));
+      return reply({ ok: true, ...saved, pages: rows.map((r: any) => ({ source: r.source, storeKey: r.store_key, page: r.page, period: r.period, bytes: r.bytes })) });
+    }
     if (path === "/requests/pending") {
       const source = input?.source ?? null, origin = input?.origin ?? null;
       if (source != null && !getSource(source)) return reply({ error: "source が不正です" }, 400);
@@ -140,7 +138,7 @@ Deno.serve(async (req) => {
       if (origin) query = query.eq("origin", origin);
       const rows = await must(query);
       alertsInBackground(admin, userId); // 送れなかった通知のやり直し（数分ごとの確認に相乗り）
-      liveInBackground(admin, userId); // M-talk の「最新を調べる」で、取得が終わった質問の回答
+      liveInBackground(admin, userId); // M-talk の「再ログイン後の取得結果」（取り直しが終わったお知らせ）
       return reply({ requests: rows.map((r: any) => publicRequest(r)) });
     }
     if (path === "/requests/claim") {

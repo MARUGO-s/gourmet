@@ -2,6 +2,8 @@
 
 口コミ・評価・アクセス・予約指標のダッシュボードです。
 
+> アプリ全体の概要（目的・画面・データの流れ・DB・Edge Functions・migration・ルーチン・M-talk 連携・アンチハルシネーション・対応サイト・残課題）は **[APP_OVERVIEW.md](APP_OVERVIEW.md)** にまとめています（このフォルダの直下）。
+
 - 公開先: https://marugo-s.github.io/gourmet/
 - Supabase: `gourmet` / `ycsqfajidusuibqljjwr`
 - 構成: React/Vite → Supabase Auth + Edge Functions + PostgreSQL。データは外部エージェント（Grok Bot）が `agent-api` で取り込み
@@ -81,10 +83,11 @@ Grok Bot（約5分ごと）→ agent-api /requests/claim（claimed）→ /creden
 |---|---|---|
 | `/ingest` | 共通形式（下記）。`source:"ikyu"`は一休形式 | `{"ok":true,"source","status":"ok\|partial","run_id","stores","days","months","reviews","new_reviews","reports","skippedDays"}` |
 | `/ikyu/ingest` | 一休形式（`/ingest`と同じ処理） | 同上（`reports`なし） |
+| `/pages/ingest` | `{"schemaVersion":1,"runKey","capturedAt"?,"pages":[{"source":"ikyu\|tabelog","storeKey","page"（PAGE_CATALOG の名前）,"period":"YYYY-MM\|YYYY-MM-DD","url","html"}]}`（1回20ページ・1ページ3MB・合計7.5MBまで） | `{"ok":true,"saved","changed","pages":[{"source","storeKey","page","period","bytes"}]}`（HTMLは返さない。保存先は service_role だけ。migration 022） |
 | `/credentials/versions` | `{}` | `{"credentials":[{"source","storeKey","label","credentialsVersion","updatedAt"}]}`（秘密情報なし） |
 | `/credentials/fetch` | `{"source","storeKey","knownVersion","agent"}` | 版が同じなら`{"unchanged":true,...}`、違えば`{"credentialsVersion","updatedAt","fields":{...}}`。毎回`credential_access_log`に記録 |
 | `/requests/pending` | `{"source"?,"origin"?}` | `{"requests":[依頼]}`（依頼中・取得中、古い順100件） |
-| `/requests/claim` | `{"agent","source"?,"origin"?,"limit"?:1〜20}` | `{"requests":[{...依頼,"claimId"}]}`。`FOR UPDATE SKIP LOCKED`で原子的に取得中へ。`origin:"mtalk_live"`（M-talk の「最新を調べる」）は指定が無くても先に取得 |
+| `/requests/claim` | `{"agent","source"?,"origin"?,"limit"?:1〜20}` | `{"requests":[{...依頼,"claimId"}]}`。`FOR UPDATE SKIP LOCKED`で原子的に取得中へ。`origin:"mtalk_live"`（M-talk の旧「最新を調べる」・再ログイン後の取り直し）は指定が無くても先に取得 |
 | `/requests/complete` | `{"id","claimId","result"?:{...}}` | `{"request":{...}}`（同じ報告の再送は成功扱い） |
 | `/requests/fail` | `{"id","claimId","error":"理由","failureKind"?:"needs_relogin\|needs_human_check\|other","result"?}` | 同上。`claimId`不一致・期限切れは409。`failureKind`を省くと理由の文から判定（migration 020） |
 | `/schedules/enqueue-due` | `{"limit"?:1〜50（既定20）,"dryRun"?:false}` | `{"now","dryRun","enqueued":[{"scheduleId","source","storeId","requestId","dueAt","nextDueAt"}],"skipped":[{"scheduleId","source","storeId","reason":"open_request\|rate_limited\|concurrent\|invalid","nextDueAt"?}]}` |
@@ -372,7 +375,7 @@ INGEST_TOKEN=... node scripts/agent-ingest.mjs payload.json
 
 ### M-talk の「AI分析」Bot へ質問する（migration 016・ai-analyst `POST /mtalk-chat`・line_report の mtalk-external-post `/chat-dispatch`）
 
-M-talk の利用者が「AI分析」Botとの1対1に文章を書くと、数秒〜数十秒で Bot が答えます。回答は画面の AI分析（`/ask`）と同じモデル（`OPENAI_MODEL`、既定 gpt-6-luna）・同じ7つの関数（PV・予約・口コミの集計だけ。SQLは受け取らない）で作り、チャット向けのプレーンテキスト（表・見出し記号なし、1通2000文字以内・最大3通）にします。データの質問には、先に「1. サイトにログインして最新を調べる／2. 今あるデータですぐ答える」を選んでもらいます（下の migration 019）。PDFレポートの作成はしません。
+M-talk の利用者が「AI分析」Botとの1対1に文章を書くと、数秒〜数十秒で Bot が答えます。回答は画面の AI分析（`/ask`）と同じモデル（`OPENAI_MODEL`、既定 gpt-6-luna）・同じ11の関数（PV・予約・売上・口コミ・詳細レポート・鮮度の集計だけ。SQLは受け取らない）で作り、チャット向けのプレーンテキスト（表・見出し記号なし、1通2000文字以内・最大3通）にします。データの質問にもすぐ答え、答えの最後にサイトごとのデータの取得日時と期間（「データ：一休 10/1 18:30取得（9/1〜9/30）」）を付けます（下の migration 022）。PDFレポートの作成はしません。
 
 - 流れ: M-talk の`chat_messages`追加 → line_report のトリガー（pg_net）→ `mtalk-external-post /chat-dispatch` → 本関数`POST /mtalk-chat`（署名つき）→ 回答を Bot の発言として投稿。
 - 認証: JWT ではなく、gourmet→M-talk と同じ`GOURMET_MTALK_TOKEN`と HMAC 署名（`X-Mtalk-Timestamp`±5分・`X-Mtalk-Signature`、署名対象のパスは`/mtalk-chat`）。新しい秘密情報はありません。
@@ -404,34 +407,35 @@ M-talk の利用者が「AI分析」Botとの1対1に文章を書くと、数秒
 2. gourmet に`018_review_alerts_store_bots.sql`だけを適用する（`supabase db query --linked -f supabase/migrations/018_review_alerts_store_bots.sql`）。列の追加だけで既存の行は変えません。
 3. `agent-api`・`review-api`を`--no-verify-jwt`で配置し、PRをマージして画面を配置する。
 
-### M-talk「AI分析」の「最新を調べる／今あるデータで答える」（migration 019・ai-analyst `/mtalk-chat`・agent-api・line_report の mtalk-external-post `/chat-reply`）
+### M-talk「AI分析」はすぐ答える＋データの鮮度（migration 022。019 の選択は廃止）
 
-データの質問が届くと、Bot はすぐには答えず、次の2つを選んでもらいます（M-talk ではカードのボタン。番号「1」「2」を送っても選べます）。
-1. サイトにログインして最新を調べる（時間がかかります：5〜10分ほど）
-2. 今あるデータですぐ答える（少し正確性が落ちることがあります）
+2026-10-01 に「1. サイトにログインして最新を調べる／2. 今あるデータですぐ答える」の選択（カード）と、「1」で取得依頼を登録して取得後に答える流れ・20分の見張りを廃止しました。
 
-- 選択肢を出さない文: あいさつ・お礼・相づち・使い方（`isChitChat`、例「ありがとう」「了解」「何ができる？」）はすぐ答えます。最新を取り直せる店舗×サイトが無いとき（ログイン情報の未登録、データの持ち主が`INGEST_USER_ID`ではない＝Grok Bot が取得できない）も、選択肢を出さずにすぐ答えます。それ以外の文はすべて選択肢を出します（データの質問かどうかをAIで判定しない。迷う文で「最新を調べる」を選べないことを避けるため）。
-- 選択待ちの質問は`mtalk_live_lookups`（service_role だけ）に保存し、30分で期限切れ。同じトークに新しい質問が来たら前の質問は置き換えます（「最新を調べる」の途中なら取りやめ、その旨を書きます）。「2」は、保存した質問と、その時点の会話履歴で答えます（`/mtalk-chat`と同じ照合つきの Q&A。冒頭に「（今あるデータでの回答です）」）。
-- 「1」: 質問に出てくるサイト（食べログ・一休）・店舗名に絞り、無ければログイン情報のある店舗×サイトすべて（いまは BISTRO CAVACAVA の食べログ・一休）を`agent_requests`（`action:"sync_now"`、`origin:"mtalk_live"`、`params.trigger:"mtalk_live"`）へ登録し、「調べています。終わったらお知らせします」と返します。同じ店舗×サイトの依頼が依頼中・取得中なら、それを使います（依頼中なら`mtalk_live`に格上げ）。
-- 取得の完了・失敗（`/requests/complete`・`/requests/fail`）と Grok Bot の確認（`/requests/pending`）のたびに、agent-api がバックグラウンドで「すべての依頼が終わった質問」を探し、取り直したデータで答えて line_report の`POST /chat-reply`（署名つき）へ送ります。冒頭に「サイトにログインして最新のデータを取得しました（10/1 14:07 取得、BISTRO CAVACAVA の食べログ・一休）。」、取り直せなかったサイトは「一休（BISTRO CAVACAVA）: 要再ログイン のため更新できませんでした。一休は前回までに取得したデータで答えています。」と書きます。理由は Grok Bot の`--fail`の文から（ログイン関係は「要再ログイン」）。
-- 20分たっても答えが届かなければ、line_report の見張り（pg_cron、毎分）が「最新データの取得が20分以内に終わりませんでした…「2」を送ってください」と案内します（以後に届いた答えは送りません。gourmet 側は409を受けて`timed_out`）。時間切れのあとも2時間は「2」で答えられます。
-- 2分の見張り（`ai_chat_reply`）は「調べています」の返事で閉じるので、「1」を選んでも誤って時間切れになりません。
+- あいさつ・使い方（`isChitChat`）もデータの質問も、毎日の取り込み（Grok Bot が管理画面から保存した確定値のキャッシュ）ですぐ答えます。
+- 関数を呼んだ答えには、サーバーが照合のあとに鮮度を付けます（`_shared/data-freshness.js`）。サイトごとに「最後に取り込めた日時（日本時間）」と「その取り込みで入った期間」:
+  `データ：一休 10/1 18:30取得（9/1〜9/30）／食べログ 10/1 15:28取得（8/1〜9/30）`。最後の取り込みから36時間を超えたら「※…36時間以上たっています。最新の数値ではありません。」、取り込みが無いサイトは「※…まだ取り込まれていません（…の数値はわかりません）。」と書きます。最後の依頼が失敗していれば「※一休の直近の取得：ログイン情報の確認が必要です」のように決まった文で書き、`needs_relogin`なら返事の`links`で「ログイン情報を更新」のボタンを送ります（line_report が答えのあとに1回だけ）。アプリの AI分析（`/ask`）の答えにも同じ行が付きます。
+- 古いカードのボタン（「1：…」「2：…」）や「1」「2」だけの送信: 2時間以内の質問が`mtalk_live_lookups`に残っていれば、その質問にすぐ答えます（1回だけ）。無ければ「番号で選ぶ必要はなくなりました。質問をそのまま送ってください」と返します。
+- `mtalk_live_lookups`・`agent_requests.origin = 'mtalk_live'`・`mtalk_followups` は履歴と再ログイン後のお知らせのため残します（新しくは作りません）。migration 022 で進行中の質問を閉じます（`awaiting_choice`→`expired`、`fetching`/`answering`→`timed_out`）。
+- agent-api は「最新を調べる」の回答（`/chat-reply`）を送りません。取り直しの完了・失敗と`/requests/pending`のたびに送るのは「再ログイン後の取得結果」（`/chat-notice`）だけです。line_report の20分の見張り（`chat_ai_analysis_live_timeouts`）は何も送らない関数に置き換えます（line_report 側の migration）。
 
-配置の順番:
-1. gourmet に`019_mtalk_live_lookups.sql`だけを適用する（`supabase db query --linked -f supabase/migrations/019_mtalk_live_lookups.sql`）。`claim_agent_requests`は5引数版に置き換わり、いまの agent-api の呼び出し（名前付き4引数）もそのまま動きます。
-2. line_report（migration `chat_ai_analysis_live_timeouts`と mtalk-external-post の`/chat-reply`・選択カード）を配置する。
-3. `agent-api`・`ai-analyst`を`--no-verify-jwt`で配置する（ai-analyst を先に配置すると、古い line_report では選択肢が文章だけで表示されます）。
-4. Grok Bot の手順を24時間（5分ごと）に変え、9:00〜22:59 以外は`--claim --origin mtalk_live`だけにする。
+### 毎日の取り込みの詳細（AIの関数）と、管理画面のページの保存HTML（migration 022・agent-api `/pages/ingest`）
+
+- AIの関数（`_shared/ai-analyst.js`、ai-data.js が本人の行だけを読む）: `get_reservation_sales`（一休: 日付別アクセスの予約状況＝**受付日ベース**の件数・合計金額・1件あたりの平均、食べログ: 来店指標のネット予約組数・通話成立数・地図印刷）、`get_pv_breakdown`（一休: ページ種別×端末、食べログ: 端末別の合計と割合・月別）、`get_site_reports`（食べログ: エリア順位・よく見られるページ・マイレポートの端末別ページサマリー`device_summary`）、`get_data_freshness`。平均・割合は関数の結果に入れ、照合（answer-verify.js）で確かめます。見込みは「（予想）」と付けた行だけで、事実の行と分けます。
+- 食べログのマイレポート（`owner_rst/my_report`）の端末別ページサマリー（PC・スマホ・アプリの店舗トップ／ページ合計のPV、レポート期間、来店指標）を`agent_reports`（`kind = 'device_summary'`、期間＝レポートの終了月）へ取り込みます（`scripts/tabelog/reports.js` `readMyReportDevices`）。
+- サンプルの無いページ（分析・統計・予約・プラン）は、ルーチンがHTMLをそのまま保存します: `node scripts/page-snapshots.mjs list --source ikyu --store 112789`（保存するページとURL。当月・前月）→ `INGEST_TOKEN=... node scripts/page-snapshots.mjs send --manifest pages.json`（`POST /agent-api/pages/ingest`）。保存先`site_page_snapshots`は店舗×サイト×ページ×期間で最新1件、**service_role だけ**（RLS・ポリシー無し・anon/authenticated に付与なし）。ページの一覧は`_shared/page-snapshots.js`の`PAGE_CATALOG`（カタログに無いページ・別のホストは受け付けない。パスワード・トークンの値は保存前に消す）。HTMLが変わったページは`parsed_at`を消し、サンプルがそろってから解析を足せるようにします。
+- 予約一覧・本日の予約・実績の確認・予約実績・キャンセル料請求の履歴はお客様の個人情報を含むため`contains_pii = true`。AIの関数・アプリ・M-talk には渡しません（解析するときも件数・人数・日時・プラン・金額・状態だけ）。個人情報を含む行は120日で消します（`purge_site_page_snapshots`、pg_cron があれば毎日）。
+
+配置の順番（022）: gourmet に`022_cache_snapshots_and_choice_removal.sql`だけを適用 → `ai-analyst`・`agent-api`を`--no-verify-jwt`で配置 → PRをマージ（Pages）→ line_report をマージ（自動配置。見張りの無効化と`/chat-reply`の削除）→ Grok Bot の手順を`routine-prompt-cache`へ切り替え。新しい ai-analyst は古い line_report でも動き（`choice`を返さないので選択カードは出ない）、新しい line_report は古い gourmet の`choice`を無視します。新しい秘密情報はありません。
 
 ### ログインの失敗の種類と「ログイン情報を更新」（migration 020・review-api・agent-api・line_report の`/chat-reply`の`links`・`/chat-notice`）
 
 - 失敗の種類（`agent_requests.failure_kind`）: `needs_relogin`（**サイトの画面が ID・パスワードが違うとはっきり表示したときだけ**。例:「…パスワードが正しくありません」）／`needs_human_check`（ログインで「私は人間です」・Cloudflare の「Verify you are human」・画像パズル・繰り返しの確認・2段階認証のコード）／`other`（401・認証エラー・ログイン画面に戻された・原因不明を含む）。Grok Bot は`--fail --kind`で報告し、`needs_relogin`のときは理由の文にサイトの表示を入れます。理由の文にサイトの表示が無い`needs_relogin`は agent-api（`acceptedFailureKind`）と DB（`finish_agent_request`）が認めず、文から判定し直します（migration 021。ログイン情報が変わっていないのに「ログイン情報を更新」のボタンが出ないように）。`--kind`の無い報告と既存の失敗は、理由の文から同じ規則で判定します（`classifyFailure`・SQL の`classify_agent_failure`）。
 - `needs_relogin`: M-talk の回答に「ログイン情報を更新」のボタン（店舗×サイトごと）を添えます。ボタンはアプリ（`https://marugo-s.github.io/gourmet/?view=accounts&source=ikyu&store=112789&retry=<失敗した依頼>`）を開くだけで、未ログインならふつうにログインしてから、その店舗×サイトの登録欄が開きます。パスワードは M-talk には書かせず、M-talk を通りません（回答にも「パスワードはこのトークに書かないでください」と書きます）。ボタンの文と URL の確認（gourmet のアプリだけ）は line_report 側です。
-- 保存すると review-api が取り直しの依頼（`params.trigger:"relogin"`）を登録します（食べログ・一休だけ。同じ店舗×サイトの依頼が処理待ちならそれを使う）。`retry`が本人の同じ店舗×サイトの「最新を調べる」の依頼なら、`origin:"mtalk_live"`（夜間・優先でも取得）にして`mtalk_followups`に記録し、取得が終わると agent-api が「【再ログイン後の取得結果】」として元の質問に取り直したデータで答え、line_report の`POST /chat-notice`（署名つき、`notice_id`で1回だけ）でそのトークへ送ります。また取得できなければ理由と（ログイン情報の問題なら）もう一度ボタンを送ります。送れなければ3回までやり直します。
+- 保存すると review-api が取り直しの依頼（`params.trigger:"relogin"`）を登録します（食べログ・一休だけ。同じ店舗×サイトの依頼が処理待ちならそれを使う）。`retry`が本人の同じ店舗×サイトの旧「最新を調べる」の依頼（`origin:"mtalk_live"`。022 以降は新しく作られない）なら、`origin:"mtalk_live"`（夜間・優先でも取得）にして`mtalk_followups`に記録し、取得が終わると agent-api が「【再ログイン後の取得結果】」として元の質問に取り直したデータで答え、line_report の`POST /chat-notice`（署名つき、`notice_id`で1回だけ）でそのトークへ送ります。また取得できなければ理由と（ログイン情報の問題なら）もう一度ボタンを送ります。送れなければ3回までやり直します。
 - `needs_human_check`: ボタンは出さず、「サイトがログインのときに「私は人間です」の確認を求めてきました。SiteBot（Grok Bot）が次の回に自動でやり直します。何度も続くときは、Grok Bot のアプリで SiteBot に伝えてください（SiteBot のパソコンで確認を済ませます）。」と書きます。Grok Bot は簡単なチェックボックス（または長押し）を自分のふつうのブラウザで1回押すだけで、画像パズル・繰り返しの確認は解かずに中止して報告します（外部の解読サービスは使わない）。
 - アプリの「取得依頼」の履歴にも、`needs_relogin`の失敗には「ログイン情報を更新」のボタンが出ます。
 - 利用者に見せる失敗の文は、種類×サイト×店舗から決まった文だけで作ります（`_shared/failure-text.js`）。例:「一休（BISTRO CAVACAVA）：ログイン情報の確認が必要です」「一休（BISTRO CAVACAVA）：今回は取得できませんでした（こちらの不具合です。次の回にやり直します）」。Grok Bot が`--fail --error`で書いた理由の文は調査用で、M-talk には出しません。アプリの履歴では「詳細（調査用）」を開いたときだけ表示します。
-- 念のため、M-talk へ送る本文（ai-analyst の`/mtalk-chat`の返答・agent-api の`/chat-reply`・`/chat-notice`）は、内部の言葉（computerUse・サブエージェント・executor・Shell・claim・Playwright など）を含む行を落としてから送ります（`safeParts`）。
+- 念のため、M-talk へ送る本文（ai-analyst の`/mtalk-chat`の返答・agent-api の`/chat-notice`。`/chat-reply`は migration 022 で廃止）は、内部の言葉（computerUse・サブエージェント・executor・Shell・claim・Playwright など）を含む行を落としてから送ります（`safeParts`）。
 
 配置の順番: gourmet に`020_login_failure_kinds.sql`だけを適用 → line_report（main へのマージで`mtalk-external-post`の`links`・`/chat-notice`）→ gourmet の`agent-api`・`review-api`を`--no-verify-jwt`で配置 → GitHub Pages（gourmet main へのマージ）→ Grok Bot の手順に`--kind`を足す。新しい秘密情報はありません。
 
@@ -470,6 +474,8 @@ DB変更はこのプロジェクトを確認して対象SQLだけ適用します
 2026-10-01: M-talk の「AI分析」Bot への質問に答える機能を追加（migration 016 `ai_usage.mtalk_user_id`・`kind = 'mtalk'`、`ai-analyst POST /mtalk-chat`、line_report `mtalk-external-post /chat-dispatch`）。
 
 2026-10-01: M-talk「AI分析」で質問ごとに「最新を調べる／今あるデータで答える」を選べるようにした（migration 019 `agent_requests.origin`・`mtalk_live_lookups`・`claim_agent_requests(p_origin)`、`ai-analyst /mtalk-chat`、agent-api の取得完了後の回答、`agent-queue.mjs --origin`、line_report `mtalk-external-post /chat-reply`）。
+
+2026-10-01: M-talk「AI分析」の選択（最新を調べる／今あるデータで答える）を廃止し、すぐ答えて鮮度（取得日時・期間、36時間超・取り込みなしの明記）を付けるようにした。一休の予約・売上、PVの内訳、食べログの端末別ページサマリーをAIの関数に追加し、サンプルの無い管理画面のページは保存HTML（`site_page_snapshots`、service_role だけ）として残す（migration 022、agent-api `/pages/ingest`、`scripts/page-snapshots.mjs`）。
 
 2026-10-01: ログインの失敗を種類つきにし（migration 020 `agent_requests.failure_kind`・`finish_agent_request(p_failure_kind)`・`mtalk_followups`、`agent-queue.mjs --fail --kind`）、M-talk の回答に「ログイン情報を更新」のボタン（アプリの登録画面へ）を追加。保存後は自動で取り直し、「再ログイン後の取得結果」をトークへ送る（line_report `/chat-reply`の`links`・`/chat-notice`）。「私は人間です」の確認は`needs_human_check`として案内だけ。
 

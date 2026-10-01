@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { decodeHtml } from "../ikyu/html-lite.js";
 import { readOwnerDailyTable, readOwnerReviews, mergeOwnerReviews, readOwnerPageTotals, readOwnerPublicUrl } from "./owner.js";
-import { readConversionTable, readRanking, buildRanking, readTopPages } from "./reports.js";
+import { readConversionTable, readRanking, buildRanking, readTopPages, readMyReportDevices, validDeviceSummary } from "./reports.js";
 import { readTabelogPublicDocument } from "./public.js";
 import { collectTabelogMetrics } from "./result.js";
 
@@ -64,7 +64,8 @@ export async function readSavedTabelog(manifest, baseDir, { browser, today, onPr
         const full = manifest.accessRanking ? await reader.read(file(manifest.accessRanking), `${OWNER}/owner_rst/access_ranking`, readRanking) : null;
         // よく見られるページはグラフ（JavaScript）の値のため、保存HTMLからは読めない。ブラウザで readTopPages した JSON を渡す。
         const topPages = manifest.topPages ? JSON.parse(fs.readFileSync(file(manifest.topPages), "utf8")) : null;
-        return { topPages, ranking: buildRanking(summary, full, name) };
+        const deviceSummary = manifest.myReport ? validDeviceSummary(await reader.read(file(manifest.myReport), `${OWNER}/owner_rst/my_report/`, readMyReportDevices)) : null;
+        return { topPages, ranking: buildRanking(summary, full, name), ...(deviceSummary ? { deviceSummary } : {}) };
       },
     };
     if (manifest.reviews) collectors.ownerReviews = async () => mergeOwnerReviews(await reviewList(manifest.reviews.reply, "/owner_rst/reply_top"), await reviewList(manifest.reviews.pickup, "/owner_rst/rstupreview_entry"));

@@ -22,6 +22,7 @@ export function tabelogResultToPayload(result, { storeKey, name = null, publicUr
   const r = result.reports ?? {};
   if (r.ranking) reports.push({ kind: "area_ranking", period: r.ranking.updatedAt ?? captureDay, data: r.ranking });
   if (r.topPages) reports.push({ kind: "top_pages", period: r.topPages.month, data: r.topPages });
+  if (r.deviceSummary) reports.push({ kind: "device_summary", period: r.deviceSummary.to.slice(0, 7), data: r.deviceSummary });
   if (r.ownerReviews) reports.push({ kind: "owner_reviews", period: captureDay, data: r.ownerReviews });
   if (r.pageHistory) reports.push({ kind: "page_history", period: `${r.pageHistory.first}-${r.pageHistory.last}`, data: r.pageHistory });
   const store = {

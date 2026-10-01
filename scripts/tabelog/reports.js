@@ -105,6 +105,41 @@ export function readRanking() {
   };
 }
 
+// ---------- 食べログ: マイレポートの端末別ページサマリーと来店指標（#myreport-access / #myreport-cvr） ----------
+// 端末（PC版・スマートフォン版・アプリ版）ごとの「店舗トップ」と「ページ合計」のPV、レポート日の期間、来店指標の3つの値。
+// page.evaluate に渡すため外部変数を参照しないこと。表が無ければ null。
+export function readMyReportDevices() {
+  const clean = (el) => (el?.textContent ?? "").replace(/\s+/g, " ").trim();
+  const digits = (s) => (/\d/.test(s) ? Number(s.replace(/[^\d]/g, "")) : null);
+  const box = document.querySelector("#myreport-access");
+  if (!box) return null;
+  const period = clean(box.querySelector(".period")).match(/(\d{4}-\d{2}-\d{2})\s*-\s*(\d{4}-\d{2}-\d{2})/);
+  const devices = {};
+  for (const [key, cls] of [["pc", "access-pc"], ["sp", "access-smartphone"], ["app", "access-app"]]) {
+    const top = box.querySelector(`tr.${cls}.days .access`), all = box.querySelector(`tr.${cls}.allsum .access`);
+    if (top || all) devices[key] = { topPage: top ? digits(clean(top)) : null, allPages: all ? digits(clean(all)) : null };
+  }
+  if (!Object.keys(devices).length) return null;
+  const cvr = document.querySelector("#myreport-cvr");
+  const value = (cls) => { const el = cvr?.querySelector(`tr.${cls} .cvr`); return el ? digits(clean(el)) : null; };
+  const cvrPeriod = clean(cvr?.querySelector(".period")).match(/(\d{4}-\d{2}-\d{2})\s*-\s*(\d{4}-\d{2}-\d{2})/);
+  return {
+    from: period?.[1] ?? null, to: period?.[2] ?? null, devices,
+    conversion: cvr ? { from: cvrPeriod?.[1] ?? null, to: cvrPeriod?.[2] ?? null, calls: value("cv-tel"), netReservations: value("cv-yoyaku"), mapPrintsPc: value("cv-print") } : null,
+  };
+}
+
+// マイレポートの端末別ページサマリーの検証（数値は0以上の整数、期間は YYYY-MM-DD）。不正なら null（取り込まない）。
+export function validDeviceSummary(v) {
+  const count = (x) => x == null || (Number.isSafeInteger(x) && x >= 0);
+  const day = (x) => typeof x === "string" && /^\d{4}-\d{2}-\d{2}$/.test(x);
+  if (!v || !day(v.from) || !day(v.to) || v.from > v.to || !v.devices || typeof v.devices !== "object") return null;
+  const keys = Object.keys(v.devices);
+  if (!keys.length || keys.some((k) => !["pc", "sp", "app"].includes(k) || !count(v.devices[k]?.topPage) || !count(v.devices[k]?.allPages))) return null;
+  if (v.conversion && ![v.conversion.calls, v.conversion.netReservations, v.conversion.mapPrintsPc].every(count)) return null;
+  return v;
+}
+
 // 全件ページ（自店の順位を含む）を優先し、取れなければマイレポートの上位5件を使う。
 export function buildRanking(summary, full, fallbackName) {
   const base = full?.entries?.length ? full : summary;
