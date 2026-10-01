@@ -49,7 +49,8 @@ test("choice reply: text fallback (1/2) + structured choice for card buttons; la
 
 test("failure reasons and the freshness header (all ok / partial / none)", () => {
   // 理由の文はそのまま出さない（種類だけを判定して決まった文に）
-  assert.equal(failureReason("一休: 要再ログイン（セッション切れ）"), "ログイン情報の確認が必要です");
+  assert.equal(failureReason("一休: 要再ログイン（セッション切れ）"), "今回は取得できませんでした（こちらの不具合です。次の回にやり直します）", "サイトの表示の無い「要再ログイン」は other");
+  assert.equal(failureReason("一休: サイトに「パスワードが正しくありません」と表示"), "ログイン情報の確認が必要です");
   assert.equal(failureReason("24時間以内に取得されませんでした。もう一度依頼してください"), "今回は取得できませんでした（こちらの不具合です。次の回にやり直します）");
   assert.equal(failureReason(""), "今回は取得できませんでした（こちらの不具合です。次の回にやり直します）");
   const lookup = { question: "今月の予約は？", targets: [{ ...CAVA[0], requestId: "r1" }, { ...CAVA[1], requestId: "r2" }] };
@@ -58,7 +59,7 @@ test("failure reasons and the freshness header (all ok / partial / none)", () =>
   assert.match(all.header, /ご質問：「今月の予約は？」/);
   assert.match(all.header, /サイトにログインして最新のデータを取得しました（10\/1 14:07 取得、BISTRO CAVACAVA の食べログ・一休）/);
   assert.equal(all.failed.length, 0);
-  const part = liveSummary(lookup, [done("r1", "2026-10-01T05:03:00Z"), { id: "r2", status: "failed", error: "要再ログイン" }]);
+  const part = liveSummary(lookup, [done("r1", "2026-10-01T05:03:00Z"), { id: "r2", status: "failed", error: "要再ログイン", failure_kind: "needs_relogin" }]);
   assert.match(part.header, /10\/1 14:03 取得、BISTRO CAVACAVA の食べログ/);
   assert.match(part.header, /次は更新できませんでした（一休は前回までに取得したデータで答えています）。\n・一休（BISTRO CAVACAVA）：ログイン情報の確認が必要です/);
   assert.match(part.system, /取り直せなかった: 一休/);
@@ -189,7 +190,7 @@ test("live completion: waits until every request ends, answers once with the fre
   const [rt, ri] = store.db.requests;
   rt.status = "done"; rt.finished_at = "2026-10-01T05:06:00Z";
   assert.deepEqual(await processLiveLookups(store, deps, OWNER), { checked: 1, answered: 0, waiting: 1, timedOut: 0, failed: 0, retry: 0 });
-  ri.status = "failed"; ri.error = "一休: 要再ログイン";
+  ri.status = "failed"; ri.error = "一休: サイトに「パスワードが正しくありません」と表示"; ri.failure_kind = "needs_relogin";
   const out = await processLiveLookups(store, deps, OWNER);
   assert.equal(out.answered, 1);
   assert.equal(posted.length, 1);

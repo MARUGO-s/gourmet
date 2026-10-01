@@ -5,9 +5,11 @@
 //     --origin mtalk_live: M-talk の「最新を調べる」の依頼だけ（日本時間 9:00〜22:59 以外はこれだけ処理する）。指定が無くても mtalk_live が先に取得される
 //   node scripts/agent-queue.mjs --complete <id> --claim-id <claimId> [--result '{"days":30}' | --result-file r.json]
 //   node scripts/agent-queue.mjs --fail <id> --claim-id <claimId> --error "失敗の理由" [--kind needs_relogin | needs_human_check | other]
-//     --kind: 失敗の種類。needs_relogin（ID・パスワードが通らない・ログイン切れ）は M-talk・アプリに「ログイン情報を更新」のボタンが出る。
-//     needs_human_check（ログインで「私は人間です」の確認・画像パズル・繰り返しの確認）はボタンを出さず、次の回に自動でやり直すと案内する。
-//     省略すると理由の文から判定する（「要再ログイン」→ needs_relogin、「私は人間です」「captcha」→ needs_human_check、それ以外 → other）
+//     --kind: 失敗の種類。needs_relogin は、ブラウザの画面でサイトが「ID・パスワードが正しくありません」のようにはっきり表示したときだけ。
+//       理由の文にそのサイトの表示を入れる（無いと agent-api が needs_relogin を認めず other にする）。M-talk・アプリに「ログイン情報を更新」のボタンが出る。
+//     needs_human_check（「私は人間です」・Cloudflare の確認・画像パズル・2段階認証のコード）はボタンを出さず、次の回に自動でやり直すと案内する。
+//     401・認証エラー・ログイン画面に戻された・原因不明は other。
+//     省略すると理由の文から判定する（サイトの「正しくありません」→ needs_relogin、「私は人間です」「captcha」「認証コード」→ needs_human_check、それ以外 → other）
 //   node scripts/agent-queue.mjs --enqueue-due [--limit 20] [--dry-run]   自動取得の設定のうち予定時刻を過ぎたものを取得依頼にする（--claim の前に実行）
 // 共通: INGEST_TOKEN（環境変数）または --token-file、--endpoint / AGENT_API_URL。出力はJSON（秘密情報なし）。
 import fs from "node:fs";
