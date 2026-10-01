@@ -192,6 +192,6 @@ export function supabaseScheduleStore(admin, userId) {
       q = s.next_due_at == null ? q.is("next_due_at", null) : q.eq("next_due_at", s.next_due_at);
       return check(await q.select("id")).length === 1;
     },
-    insertRequest: async (row) => check(await admin.from("agent_requests").insert({ ...row, user_id: userId }).select("id").single()),
+    insertRequest: async (row) => check(await admin.from("agent_requests").insert({ ...row, origin: "schedule", user_id: userId }).select("id").single()),
   };
 }

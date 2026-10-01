@@ -83,14 +83,14 @@ Grok Bot（約5分ごと）→ agent-api /requests/claim（claimed）→ /creden
 | `/ikyu/ingest` | 一休形式（`/ingest`と同じ処理） | 同上（`reports`なし） |
 | `/credentials/versions` | `{}` | `{"credentials":[{"source","storeKey","label","credentialsVersion","updatedAt"}]}`（秘密情報なし） |
 | `/credentials/fetch` | `{"source","storeKey","knownVersion","agent"}` | 版が同じなら`{"unchanged":true,...}`、違えば`{"credentialsVersion","updatedAt","fields":{...}}`。毎回`credential_access_log`に記録 |
-| `/requests/pending` | `{"source"?}` | `{"requests":[依頼]}`（依頼中・取得中、古い順100件） |
-| `/requests/claim` | `{"agent","source"?,"limit"?:1〜20}` | `{"requests":[{...依頼,"claimId"}]}`。`FOR UPDATE SKIP LOCKED`で原子的に取得中へ |
+| `/requests/pending` | `{"source"?,"origin"?}` | `{"requests":[依頼]}`（依頼中・取得中、古い順100件） |
+| `/requests/claim` | `{"agent","source"?,"origin"?,"limit"?:1〜20}` | `{"requests":[{...依頼,"claimId"}]}`。`FOR UPDATE SKIP LOCKED`で原子的に取得中へ。`origin:"mtalk_live"`（M-talk の「最新を調べる」）は指定が無くても先に取得 |
 | `/requests/complete` | `{"id","claimId","result"?:{...}}` | `{"request":{...}}`（同じ報告の再送は成功扱い） |
 | `/requests/fail` | `{"id","claimId","error":"理由","result"?}` | 同上。`claimId`不一致・期限切れは409 |
 | `/schedules/enqueue-due` | `{"limit"?:1〜50（既定20）,"dryRun"?:false}` | `{"now","dryRun","enqueued":[{"scheduleId","source","storeId","requestId","dueAt","nextDueAt"}],"skipped":[{"scheduleId","source","storeId","reason":"open_request\|rate_limited\|concurrent\|invalid","nextDueAt"?}]}` |
 | `/alerts/dispatch` | `{}` | `{"claimed","sent","skipped","retry","failed","messages":["店舗: 食べログ 総合点 3.26 → 3.28 / 新着口コミ 2件"],"notConfigured"?}`。口コミ通知の送信待ちをすぐ送る（通常は`/ingest`・`/requests/pending`のたびに自動で送るので不要） |
 
-依頼の形: `{"id","source","storeId","action":"sync_now|fetch_metrics|fetch_reviews|backfill","params":{"fromMonth"?,"toMonth"?,"note"?},"status":"queued|claimed|done|failed","requestedAt","claimedAt","finishedAt","claimedBy","attempts","result","error"}`。`backfill`は`fromMonth`〜`toMonth`（最大120か月）の過去分。取得中のまま30分を過ぎると再び`queued`になり（3回で`failed`）、24時間拾われない依頼は`failed`になります。
+依頼の形: `{"id","source","storeId","action":"sync_now|fetch_metrics|fetch_reviews|backfill","params":{"fromMonth"?,"toMonth"?,"note"?},"status":"queued|claimed|done|failed","origin":"app|schedule|mtalk_live","requestedAt","claimedAt","finishedAt","claimedBy","attempts","result","error"}`。`backfill`は`fromMonth`〜`toMonth`（最大120か月）の過去分。取得中のまま30分を過ぎると再び`queued`になり（3回で`failed`）、24時間拾われない依頼は`failed`になります。
 
 ```sh
 INGEST_TOKEN=... node scripts/agent-queue.mjs --list
@@ -98,12 +98,13 @@ INGEST_TOKEN=... node scripts/agent-queue.mjs --claim --limit 1 --agent grok-bot
 INGEST_TOKEN=... node scripts/agent-queue.mjs --complete <id> --claim-id <claimId> --result '{"days":30,"reviews":12}'
 INGEST_TOKEN=... node scripts/agent-queue.mjs --fail <id> --claim-id <claimId> --error "追加認証が必要でした"
 INGEST_TOKEN=... node scripts/agent-queue.mjs --enqueue-due [--limit 20] [--dry-run]      # 自動取得の設定を依頼に変える（--claim の前）
+INGEST_TOKEN=... node scripts/agent-queue.mjs --claim --origin mtalk_live --limit 6        # 日本時間 9:00〜22:59 以外: M-talk の「最新を調べる」だけ
 ```
 
 ### 自動取得の設定（店舗×サイト、migration 012）
 
 - 画面「自動取得の設定」で、店舗×サイトごとに周期（オフ／○時間ごと／毎日○時／毎週○曜○時、日本時間）を保存します。保存は`review-api` `POST /schedules`（JWT検証後、本人の`user_id`に限定）、表は`fetch_schedules`（ブラウザは本人の行のSELECTのみ）。一休・食べログ以外（ホットペッパー／トレタ／Google）は「準備中」と表示しますが、保存はできます。
-- Grok Botは稼働時間（日本時間 9:00〜22:59）の各確認で、`--claim`の前に`--enqueue-due`を呼びます。`next_due_at`を過ぎた有効な設定ごとに`agent_requests`（`action:"sync_now"`、`params:{"trigger":"schedule","scheduleId","dueAt"}`）を登録し、`last_enqueued_at`・`last_request_id`と次の`next_due_at`を保存します。稼働時間外の予定は、次の稼働開始時に1回だけ依頼されます（溜まった回数分は依頼しません）。
+- Grok Botは5分ごとに24時間確認します。通常の取得（`--enqueue-due`とすべての依頼）は稼働時間（日本時間 9:00〜22:59）だけで、それ以外の時間は M-talk の「最新を調べる」（`origin = 'mtalk_live'`）の依頼だけを処理します。稼働時間の各確認では、`--claim`の前に`--enqueue-due`を呼びます。`next_due_at`を過ぎた有効な設定ごとに`agent_requests`（`action:"sync_now"`、`params:{"trigger":"schedule","scheduleId","dueAt"}`）を登録し、`last_enqueued_at`・`last_request_id`と次の`next_due_at`を保存します。稼働時間外の予定は、次の稼働開始時に1回だけ依頼されます（溜まった回数分は依頼しません）。
 - 同じ店舗×サイトの依頼が依頼中・取得中なら新たに依頼せず、次回予定だけ進めます（`open_request`）。依頼の件数制限（1時間30件・未完了20件）に達したら予定を戻して終了し、次の確認で再度依頼します（`rate_limited`）。次回予定は`next_due_at`が変わっていない場合だけ更新するため、複数のエージェントが同時に呼んでも二重に依頼しません（`concurrent`）。
 - 次回予定の計算は`supabase/functions/_shared/fetch-schedules.js`（Node/Edge/ブラウザ共通、テストあり）。○時間ごとは前回の予定時刻から数え、毎日・毎週はその時刻より後の最初の日本時間の時刻です。
 
@@ -370,7 +371,7 @@ INGEST_TOKEN=... node scripts/agent-ingest.mjs payload.json
 
 ### M-talk の「AI分析」Bot へ質問する（migration 016・ai-analyst `POST /mtalk-chat`・line_report の mtalk-external-post `/chat-dispatch`）
 
-M-talk の利用者が「AI分析」Botとの1対1に文章を書くと、数秒〜数十秒で Bot が答えます。回答は画面の AI分析（`/ask`）と同じモデル（`OPENAI_MODEL`、既定 gpt-6-luna）・同じ7つの関数（PV・予約・口コミの集計だけ。SQLは受け取らない）で作り、チャット向けのプレーンテキスト（表・見出し記号なし、1通2000文字以内・最大3通）にします。再取得（スクレイピング）やPDFレポートの作成はしません。
+M-talk の利用者が「AI分析」Botとの1対1に文章を書くと、数秒〜数十秒で Bot が答えます。回答は画面の AI分析（`/ask`）と同じモデル（`OPENAI_MODEL`、既定 gpt-6-luna）・同じ7つの関数（PV・予約・口コミの集計だけ。SQLは受け取らない）で作り、チャット向けのプレーンテキスト（表・見出し記号なし、1通2000文字以内・最大3通）にします。データの質問には、先に「1. サイトにログインして最新を調べる／2. 今あるデータですぐ答える」を選んでもらいます（下の migration 019）。PDFレポートの作成はしません。
 
 - 流れ: M-talk の`chat_messages`追加 → line_report のトリガー（pg_net）→ `mtalk-external-post /chat-dispatch` → 本関数`POST /mtalk-chat`（署名つき）→ 回答を Bot の発言として投稿。
 - 認証: JWT ではなく、gourmet→M-talk と同じ`GOURMET_MTALK_TOKEN`と HMAC 署名（`X-Mtalk-Timestamp`±5分・`X-Mtalk-Signature`、署名対象のパスは`/mtalk-chat`）。新しい秘密情報はありません。
@@ -402,6 +403,25 @@ M-talk の利用者が「AI分析」Botとの1対1に文章を書くと、数秒
 2. gourmet に`018_review_alerts_store_bots.sql`だけを適用する（`supabase db query --linked -f supabase/migrations/018_review_alerts_store_bots.sql`）。列の追加だけで既存の行は変えません。
 3. `agent-api`・`review-api`を`--no-verify-jwt`で配置し、PRをマージして画面を配置する。
 
+### M-talk「AI分析」の「最新を調べる／今あるデータで答える」（migration 019・ai-analyst `/mtalk-chat`・agent-api・line_report の mtalk-external-post `/chat-reply`）
+
+データの質問が届くと、Bot はすぐには答えず、次の2つを選んでもらいます（M-talk ではカードのボタン。番号「1」「2」を送っても選べます）。
+1. サイトにログインして最新を調べる（時間がかかります：5〜10分ほど）
+2. 今あるデータですぐ答える（少し正確性が落ちることがあります）
+
+- 選択肢を出さない文: あいさつ・お礼・相づち・使い方（`isChitChat`、例「ありがとう」「了解」「何ができる？」）はすぐ答えます。最新を取り直せる店舗×サイトが無いとき（ログイン情報の未登録、データの持ち主が`INGEST_USER_ID`ではない＝Grok Bot が取得できない）も、選択肢を出さずにすぐ答えます。それ以外の文はすべて選択肢を出します（データの質問かどうかをAIで判定しない。迷う文で「最新を調べる」を選べないことを避けるため）。
+- 選択待ちの質問は`mtalk_live_lookups`（service_role だけ）に保存し、30分で期限切れ。同じトークに新しい質問が来たら前の質問は置き換えます（「最新を調べる」の途中なら取りやめ、その旨を書きます）。「2」は、保存した質問と、その時点の会話履歴で答えます（`/mtalk-chat`と同じ照合つきの Q&A。冒頭に「（今あるデータでの回答です）」）。
+- 「1」: 質問に出てくるサイト（食べログ・一休）・店舗名に絞り、無ければログイン情報のある店舗×サイトすべて（いまは BISTRO CAVACAVA の食べログ・一休）を`agent_requests`（`action:"sync_now"`、`origin:"mtalk_live"`、`params.trigger:"mtalk_live"`）へ登録し、「調べています。終わったらお知らせします」と返します。同じ店舗×サイトの依頼が依頼中・取得中なら、それを使います（依頼中なら`mtalk_live`に格上げ）。
+- 取得の完了・失敗（`/requests/complete`・`/requests/fail`）と Grok Bot の確認（`/requests/pending`）のたびに、agent-api がバックグラウンドで「すべての依頼が終わった質問」を探し、取り直したデータで答えて line_report の`POST /chat-reply`（署名つき）へ送ります。冒頭に「サイトにログインして最新のデータを取得しました（10/1 14:07 取得、BISTRO CAVACAVA の食べログ・一休）。」、取り直せなかったサイトは「一休（BISTRO CAVACAVA）: 要再ログイン のため更新できませんでした。一休は前回までに取得したデータで答えています。」と書きます。理由は Grok Bot の`--fail`の文から（ログイン関係は「要再ログイン」）。
+- 20分たっても答えが届かなければ、line_report の見張り（pg_cron、毎分）が「最新データの取得が20分以内に終わりませんでした…「2」を送ってください」と案内します（以後に届いた答えは送りません。gourmet 側は409を受けて`timed_out`）。時間切れのあとも2時間は「2」で答えられます。
+- 2分の見張り（`ai_chat_reply`）は「調べています」の返事で閉じるので、「1」を選んでも誤って時間切れになりません。
+
+配置の順番:
+1. gourmet に`019_mtalk_live_lookups.sql`だけを適用する（`supabase db query --linked -f supabase/migrations/019_mtalk_live_lookups.sql`）。`claim_agent_requests`は5引数版に置き換わり、いまの agent-api の呼び出し（名前付き4引数）もそのまま動きます。
+2. line_report（migration `chat_ai_analysis_live_timeouts`と mtalk-external-post の`/chat-reply`・選択カード）を配置する。
+3. `agent-api`・`ai-analyst`を`--no-verify-jwt`で配置する（ai-analyst を先に配置すると、古い line_report では選択肢が文章だけで表示されます）。
+4. Grok Bot の手順を24時間（5分ごと）に変え、9:00〜22:59 以外は`--claim --origin mtalk_live`だけにする。
+
 ## 配置・運用
 
 PRを作成してテスト成功後にmainへマージすると、GitHub Pagesへ配置されます。Edge Functionsは別途明示的に配置してください（上記コマンド）。
@@ -431,6 +451,8 @@ DB変更はこのプロジェクトを確認して対象SQLだけ適用します
 2026-10-01: AI分析レポートを M-talk の利用者へ送る機能を追加（migration 015 `ai_report_shares`、`ai-analyst /mtalk-recipients`・`/reports/:id/share-mtalk`・`/shares`、PDFの生成、line_report `mtalk-external-post`）。
 
 2026-10-01: M-talk の「AI分析」Bot への質問に答える機能を追加（migration 016 `ai_usage.mtalk_user_id`・`kind = 'mtalk'`、`ai-analyst POST /mtalk-chat`、line_report `mtalk-external-post /chat-dispatch`）。
+
+2026-10-01: M-talk「AI分析」で質問ごとに「最新を調べる／今あるデータで答える」を選べるようにした（migration 019 `agent_requests.origin`・`mtalk_live_lookups`・`claim_agent_requests(p_origin)`、`ai-analyst /mtalk-chat`、agent-api の取得完了後の回答、`agent-queue.mjs --origin`、line_report `mtalk-external-post /chat-reply`）。
 
 ## 参考
 

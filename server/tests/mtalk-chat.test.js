@@ -80,7 +80,8 @@ test("report context and prompt stay within bounds and keep scope to PV/reservat
   assert.ok(msg.length < MTALK_CHAT_LIMITS.reportChars + 500);
   assert.match(msg, /2026-08-01〜2026-08-31/);
   assert.match(mtalkChatPrompt(), /PV・予約・口コミ/);
-  assert.match(mtalkChatPrompt(), /再取得/);
+  assert.match(mtalkChatPrompt(), /最新データを取り直すことはできない/);
+  assert.match(mtalkChatPrompt(), /1\. サイトにログインして最新を調べる/, "取り直しは選択肢の1で行うと案内する");
   assert.equal(AI_TOOLS.length, 7, "same 7 safe data tools as /ask");
 });
 
@@ -127,8 +128,15 @@ test("ai-analyst routes /mtalk-chat before the JWT check and never returns the t
   assert.ok(route > 0 && route < jwt);
   const fn = src.slice(src.indexOf("async function mtalkChat"));
   assert.match(fn, /verifyMtalkRequest\(/);
-  assert.match(fn, /scopedReadClient\(admin, owner\.userId\)/);
-  assert.match(fn, /eq\("kind", "mtalk"\)\.eq\("mtalk_user_id", input\.mtalkUserId\)/);
+  assert.match(fn, /mtalkOverLimit\(admin, input\.mtalkUserId\)/);
+  assert.match(fn, /answerMtalkQuestion\(admin, env, \{ mtalkUserId:input\.mtalkUserId, owner,/);
+  assert.match(fn, /liveAllowed:owner\.userId === ingestUserId\.trim\(\)/, "取得依頼は Grok Bot が処理する持ち主のときだけ");
+  // 回答の本体（ai-analyst と agent-api で共通）: 持ち主の行だけを読み、回数は M-talk 利用者ごと
+  const core = readFileSync(new URL("../../supabase/functions/_shared/mtalk-answer.js", import.meta.url), "utf8");
+  assert.match(core, /scopedReadClient\(admin, owner\.userId\)/);
+  assert.match(core, /eq\("kind", "mtalk"\)\.eq\("mtalk_user_id", mtalkUserId\)/);
+  assert.match(core, /answerWithTools\(config, \{ ds, messages, ctx: ask, maxTokens: 4000,\s+evidenceTexts:/, "同じ照合つきの Q&A");
+  assert.doesNotMatch(core, /console\.\w+\([^)]*(token|apiKey|question)/i);
   assert.doesNotMatch(fn, /Access-Control-Allow-Origin/);
   assert.doesNotMatch(fn.slice(0, fn.indexOf("function publicReport")), /console\.\w+\([^)]*(token|apiKey|bodyText|question)/i, "no secrets or questions in logs");
   const mig = readFileSync(new URL("../../supabase/migrations/016_ai_usage_mtalk.sql", import.meta.url), "utf8");

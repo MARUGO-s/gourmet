@@ -9,6 +9,7 @@
 //   POST /agent-api/requests/claim         依頼を原子的に取得開始（FOR UPDATE SKIP LOCKED）
 //   POST /agent-api/requests/complete      取得完了を報告
 //   POST /agent-api/requests/fail          取得失敗を報告
+//   （/requests/pending・/requests/claim は origin（app | schedule | mtalk_live）で絞れる。Grok Bot は 9:00〜22:59 以外は mtalk_live だけ）
 //   POST /agent-api/schedules/enqueue-due  自動取得の設定（fetch_schedules）のうち予定時刻を過ぎたものを取得依頼にする
 //   POST /agent-api/alerts/dispatch        口コミ通知（新着口コミ・総合点の変化）の送信待ちを M-talk へ送る（結果を返す）
 // 口コミ通知は取り込み（/ingest）の直後と取得依頼の確認（/requests/pending、Grok Bot が数分ごと）のたびにバックグラウンドでも送る。
@@ -25,6 +26,10 @@ import { publicRequest, validateFinish } from "../_shared/agent-requests.js";
 import { enqueueDueSchedules, supabaseScheduleStore, ENQUEUE_LIMIT } from "../_shared/fetch-schedules.js";
 import { ALERT_LIMITS, ALERT_PATH, STORE_BOTS_PATH, dispatchReviewAlerts, normalizeStoreBots, supabaseAlertStore } from "../_shared/review-alerts.js";
 import { mtalkConfig, mtalkRequest } from "../_shared/mtalk-share.js";
+import { REQUEST_ORIGINS } from "../_shared/agent-requests.js";
+import { LIVE_REPLY_PATH, processLiveLookups, supabaseLiveStore } from "../_shared/mtalk-live.js";
+import { answerMtalkQuestion, resolveMtalkOwner } from "../_shared/mtalk-answer.js";
+import { splitReply } from "../_shared/mtalk-chat.js";
 
 // 口コミ通知の送信（同時に2つ走っても claim_review_alert_events が1回だけ確保する）。失敗しても取り込みの応答には影響させない
 function runAlerts(admin: any, userId: string) {
@@ -37,6 +42,31 @@ function runAlerts(admin: any, userId: string) {
 }
 function alertsInBackground(admin: any, userId: string) {
   const work = runAlerts(admin, userId).catch(() => console.warn("[agent-api] review alerts dispatch failed"));
+  const runtime = (globalThis as { EdgeRuntime?: { waitUntil(p: Promise<unknown>): void } }).EdgeRuntime;
+  if (runtime?.waitUntil) runtime.waitUntil(work);
+}
+
+// M-talk の「最新を調べる」: 取得依頼がすべて終わった質問に、取り直したデータで答えて M-talk（/chat-reply）へ送る。
+// 取得の完了・失敗の報告と、Grok Bot の数分ごとの確認（/requests/pending）のたびにバックグラウンドで確かめる（同じ質問は1回だけ答える）
+function runLive(admin: any, userId: string) {
+  const mtalk = mtalkConfig((k: string) => Deno.env.get(k));
+  if (!mtalk.configured) return Promise.resolve({ notConfigured: true });
+  const env = (k: string) => Deno.env.get(k);
+  return processLiveLookups(supabaseLiveStore(admin), {
+    // 質問したときと同じ前提（そのトークへ最後に届いたレポート）で答える。持ち主は依頼を処理した INGEST_USER_ID に限る
+    answer: async ({ question, history, system, lookup }: { question: string; history: any[]; system?: string; lookup: any }) => {
+      const owner = await resolveMtalkOwner(admin, lookup.mtalk_user_id, Number(lookup.mtalk_group_id), userId);
+      return answerMtalkQuestion(admin, env, { mtalkUserId: lookup.mtalk_user_id, owner: owner?.userId === userId ? owner : { userId, reportId: null },
+        question, history, system: system ?? null });
+    },
+    post: ({ lookup, parts }: { lookup: any; parts: string[] }) => mtalkRequest(mtalk, "POST", LIVE_REPLY_PATH,
+      { lookup_id: lookup.id, mtalk_user_id: lookup.mtalk_user_id, mtalk_group_id: Number(lookup.mtalk_group_id), parts }, { timeoutMs: 15_000 }),
+    split: (text: string) => splitReply(text),
+    now: () => Date.now(),
+  }, userId);
+}
+function liveInBackground(admin: any, userId: string) {
+  const work = runLive(admin, userId).catch(() => console.warn("[agent-api] mtalk live answers failed"));
   const runtime = (globalThis as { EdgeRuntime?: { waitUntil(p: Promise<unknown>): void } }).EdgeRuntime;
   if (runtime?.waitUntil) runtime.waitUntil(work);
 }
@@ -87,19 +117,24 @@ Deno.serve(async (req) => {
       return reply({ ok: true, source: normalized.source, status: normalized.run.status, skippedDays: normalized.skippedDays, ...saved });
     }
     if (path === "/requests/pending") {
-      const source = input?.source ?? null;
+      const source = input?.source ?? null, origin = input?.origin ?? null;
       if (source != null && !getSource(source)) return reply({ error: "source が不正です" }, 400);
+      if (origin != null && !REQUEST_ORIGINS.includes(origin)) return reply({ error: "origin が不正です" }, 400);
       let query = admin.from("agent_requests").select("*").eq("user_id", userId).in("status", ["queued", "claimed"]).order("requested_at").limit(100);
       if (source) query = query.eq("source", source);
+      if (origin) query = query.eq("origin", origin);
       const rows = await must(query);
       alertsInBackground(admin, userId); // 送れなかった通知のやり直し（数分ごとの確認に相乗り）
+      liveInBackground(admin, userId); // M-talk の「最新を調べる」で、取得が終わった質問の回答
       return reply({ requests: rows.map((r: any) => publicRequest(r)) });
     }
     if (path === "/requests/claim") {
-      const source = input?.source ?? null, limit = input?.limit ?? 1;
+      const source = input?.source ?? null, limit = input?.limit ?? 1, origin = input?.origin ?? null;
       const agent = typeof input?.agent === "string" ? input.agent.slice(0, 100) : "";
       if ((source != null && !getSource(source)) || !Number.isSafeInteger(limit) || limit < 1 || limit > 20) return reply({ error: "source / limit（1〜20）が不正です" }, 400);
-      const rows = await must(admin.rpc("claim_agent_requests", { p_user: userId, p_agent: agent, p_limit: limit, p_source: source }));
+      if (origin != null && !REQUEST_ORIGINS.includes(origin)) return reply({ error: "origin が不正です" }, 400);
+      // origin を指定したときだけ渡す（mtalk_live は指定が無くても他の依頼より先に取得される）
+      const rows = await must(admin.rpc("claim_agent_requests", { p_user: userId, p_agent: agent, p_limit: limit, p_source: source, ...(origin ? { p_origin: origin } : {}) }));
       // claimId は完了・失敗の報告に必要（このエージェントだけが知る）
       return reply({ requests: (rows ?? []).map((r: any) => ({ ...publicRequest(r), claimId: r.claim_id })) });
     }
@@ -109,6 +144,7 @@ Deno.serve(async (req) => {
       try { finish = validateFinish(input, outcome); } catch (error) { return invalid(error); }
       const { data, error } = await admin.rpc("finish_agent_request", { p_user: userId, p_id: finish.id, p_claim: finish.claimId, p_status: outcome, p_result: finish.result, p_error: finish.error });
       if (error) return error.message.includes("Invalid claim") ? reply({ error: "取得中の依頼が見つかりません（claimId不一致・期限切れ・他の状態で終了済み）" }, 409) : reply({ error: "処理を完了できませんでした" }, 500);
+      if (data?.origin === "mtalk_live") liveInBackground(admin, userId); // 「最新を調べる」の質問に、すべての取得が終わっていれば答える
       return reply({ request: publicRequest(data) });
     }
     if (path === "/schedules/enqueue-due") {

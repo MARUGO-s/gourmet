@@ -3,6 +3,9 @@ import { SOURCE_IDS } from "./sources.js";
 
 export const REQUEST_ACTIONS = ["sync_now", "fetch_metrics", "fetch_reviews", "backfill"];
 export const REQUEST_STATUSES = ["queued", "claimed", "done", "failed"];
+// 依頼の出どころ（migration 019）。mtalk_live は M-talk の「最新を調べる」（24時間処理・他より先に取得）
+export const REQUEST_ORIGINS = ["app", "schedule", "mtalk_live"];
+export const ORIGIN_LABELS = { app: "アプリ", schedule: "自動取得", mtalk_live: "M-talk" };
 export const ACTION_LABELS = { sync_now: "今すぐ取得（全項目）", fetch_metrics: "PV・予約などの数値", fetch_reviews: "口コミ", backfill: "過去分の取得" };
 export const STATUS_LABELS = { queued: "依頼中", claimed: "取得中", done: "完了", failed: "失敗" };
 // Grok Bot の確認間隔（目安）。取得はこの間隔で拾われる。
@@ -39,7 +42,7 @@ export function validateRequestInput(input, currentMonth) {
 // DB行 → 画面・エージェント向け（キャメルケース）
 export function publicRequest(r) {
   return {
-    id: r.id, source: r.source, storeId: r.store_id, action: r.action, params: r.params ?? {}, status: r.status,
+    id: r.id, source: r.source, storeId: r.store_id, action: r.action, params: r.params ?? {}, status: r.status, origin: r.origin ?? "app",
     requestedAt: r.requested_at, claimedAt: r.claimed_at ?? null, finishedAt: r.finished_at ?? null,
     claimedBy: r.claimed_by ?? null, attempts: r.attempts ?? 0, result: r.result ?? null, error: r.error ?? null,
   };
