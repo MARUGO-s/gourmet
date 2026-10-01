@@ -425,7 +425,7 @@ M-talk の利用者が「AI分析」Botとの1対1に文章を書くと、数秒
 
 ### ログインの失敗の種類と「ログイン情報を更新」（migration 020・review-api・agent-api・line_report の`/chat-reply`の`links`・`/chat-notice`）
 
-- 失敗の種類（`agent_requests.failure_kind`）: `needs_relogin`（ID・パスワードが通らない・ログイン切れ）／`needs_human_check`（ログインで「私は人間です」の確認・画像パズル・繰り返しの確認）／`other`。Grok Bot は`--fail --kind`で報告します。`--kind`の無い報告（古い手順）と既存の失敗は、理由の文から同じ規則で判定します（`classifyFailure`・SQL の`classify_agent_failure`。「私は人間です」「captcha」→ needs_human_check、「要再ログイン」「ID・パスワード」「login」→ needs_relogin）。
+- 失敗の種類（`agent_requests.failure_kind`）: `needs_relogin`（**サイトの画面が ID・パスワードが違うとはっきり表示したときだけ**。例:「…パスワードが正しくありません」）／`needs_human_check`（ログインで「私は人間です」・Cloudflare の「Verify you are human」・画像パズル・繰り返しの確認・2段階認証のコード）／`other`（401・認証エラー・ログイン画面に戻された・原因不明を含む）。Grok Bot は`--fail --kind`で報告し、`needs_relogin`のときは理由の文にサイトの表示を入れます。理由の文にサイトの表示が無い`needs_relogin`は agent-api（`acceptedFailureKind`）と DB（`finish_agent_request`）が認めず、文から判定し直します（migration 021。ログイン情報が変わっていないのに「ログイン情報を更新」のボタンが出ないように）。`--kind`の無い報告と既存の失敗は、理由の文から同じ規則で判定します（`classifyFailure`・SQL の`classify_agent_failure`）。
 - `needs_relogin`: M-talk の回答に「ログイン情報を更新」のボタン（店舗×サイトごと）を添えます。ボタンはアプリ（`https://marugo-s.github.io/gourmet/?view=accounts&source=ikyu&store=112789&retry=<失敗した依頼>`）を開くだけで、未ログインならふつうにログインしてから、その店舗×サイトの登録欄が開きます。パスワードは M-talk には書かせず、M-talk を通りません（回答にも「パスワードはこのトークに書かないでください」と書きます）。ボタンの文と URL の確認（gourmet のアプリだけ）は line_report 側です。
 - 保存すると review-api が取り直しの依頼（`params.trigger:"relogin"`）を登録します（食べログ・一休だけ。同じ店舗×サイトの依頼が処理待ちならそれを使う）。`retry`が本人の同じ店舗×サイトの「最新を調べる」の依頼なら、`origin:"mtalk_live"`（夜間・優先でも取得）にして`mtalk_followups`に記録し、取得が終わると agent-api が「【再ログイン後の取得結果】」として元の質問に取り直したデータで答え、line_report の`POST /chat-notice`（署名つき、`notice_id`で1回だけ）でそのトークへ送ります。また取得できなければ理由と（ログイン情報の問題なら）もう一度ボタンを送ります。送れなければ3回までやり直します。
 - `needs_human_check`: ボタンは出さず、「サイトがログインのときに「私は人間です」の確認を求めてきました。SiteBot（Grok Bot）が次の回に自動でやり直します。何度も続くときは、Grok Bot のアプリで SiteBot に伝えてください（SiteBot のパソコンで確認を済ませます）。」と書きます。Grok Bot は簡単なチェックボックス（または長押し）を自分のふつうのブラウザで1回押すだけで、画像パズル・繰り返しの確認は解かずに中止して報告します（外部の解読サービスは使わない）。
@@ -434,6 +434,9 @@ M-talk の利用者が「AI分析」Botとの1対1に文章を書くと、数秒
 - 念のため、M-talk へ送る本文（ai-analyst の`/mtalk-chat`の返答・agent-api の`/chat-reply`・`/chat-notice`）は、内部の言葉（computerUse・サブエージェント・executor・Shell・claim・Playwright など）を含む行を落としてから送ります（`safeParts`）。
 
 配置の順番: gourmet に`020_login_failure_kinds.sql`だけを適用 → line_report（main へのマージで`mtalk-external-post`の`links`・`/chat-notice`）→ gourmet の`agent-api`・`review-api`を`--no-verify-jwt`で配置 → GitHub Pages（gourmet main へのマージ）→ Grok Bot の手順に`--kind`を足す。新しい秘密情報はありません。
+
+021 の配置: `021_relogin_only_when_site_says.sql`だけを適用 → `agent-api`を`--no-verify-jwt`で再配置（画面の変更なし）→ Grok Bot の手順を更新。
+
 migration だけ先に入っても、いまの agent-api（種類なしの6引数の`finish_agent_request`）はそのまま動き、種類は理由の文から決まります。古い line_report へ`links`を送っても無視されるだけです（`/chat-notice`は404になり、お知らせは3回で諦めます）。
 
 ## 配置・運用

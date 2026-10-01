@@ -19,19 +19,32 @@ const LK = "42338654-ea1b-4a6e-a8c4-c5b8a0428eaa";
 // ---------- 失敗の種類 ----------
 test("failure kinds: explicit kind wins; legacy free text is classified (human check before relogin)", () => {
   assert.deepEqual(FAILURE_KINDS, ["needs_relogin", "needs_human_check", "other"]);
-  assert.equal(classifyFailure("一休: 要再ログイン（ID・パスワードが通らない）"), "needs_relogin");
-  assert.equal(classifyFailure("食べログ: ログインに失敗"), "needs_relogin");
-  assert.equal(classifyFailure("session expired"), "needs_relogin");
+  // needs_relogin はサイトの画面が ID・パスワードが違うと表示したときだけ（10/1 16:54 の一休の誤ったボタンの再発防止）
+  assert.equal(classifyFailure("一休: 要再ログイン（ID・パスワードが通らない）"), "other");
+  assert.equal(classifyFailure("一休: 認証エラー（401）"), "other");
+  assert.equal(classifyFailure("食べログ: ログインに失敗"), "other");
+  assert.equal(classifyFailure("session expired"), "other");
+  assert.equal(classifyFailure("一休: ログイン画面に戻された（E-RS-C20008）"), "other");
+  assert.equal(classifyFailure("食べログ: サイトに「ログインIDまたはパスワードが正しくありません」と表示"), "needs_relogin");
+  assert.equal(classifyFailure("Tabelog: incorrect password"), "needs_relogin");
+  assert.equal(classifyFailure("一休: ログインで Cloudflare の「Verify you are human」が出た"), "needs_human_check");
+  assert.equal(classifyFailure("一休: 2段階認証の認証コードを求められた"), "needs_human_check");
   assert.equal(classifyFailure("一休: ログイン画面で「私は人間です」の確認が出た"), "needs_human_check");
   assert.equal(classifyFailure("reCAPTCHA の画像パズルが出たため中止（再ログイン不可）"), "needs_human_check");
   assert.equal(classifyFailure("食べログ: 実行サブエージェントにcomputerUseが無く、ブラウザ取得できませんでした"), "other");
   assert.equal(classifyFailure("24時間以内に取得されませんでした。もう一度依頼してください"), "other");
   const id = R1;
-  assert.equal(validateFinish({ id, claimId: id, error: "要再ログイン" }, "failed").failureKind, "needs_relogin", "--kind の無い古い報告");
+  assert.equal(validateFinish({ id, claimId: id, error: "要再ログイン" }, "failed").failureKind, "other", "--kind の無い古い報告");
+  assert.equal(validateFinish({ id, claimId: id, error: "一休: 要再ログイン（ID・パスワードが通らない）", failureKind: "needs_relogin" }, "failed").failureKind, "other",
+    "サイトの表示が理由に無い needs_relogin は認めない");
+  assert.equal(validateFinish({ id, claimId: id, error: "一休: ログインで「私は人間です」の確認", failureKind: "needs_relogin" }, "failed").failureKind, "needs_human_check");
+  assert.equal(validateFinish({ id, claimId: id, error: "食べログ: サイトに「パスワードが正しくありません」と表示", failureKind: "needs_relogin" }, "failed").failureKind, "needs_relogin");
+  assert.equal(validateFinish({ id, claimId: id, error: "一休: 認証エラー（401）", failureKind: "other" }, "failed").failureKind, "other");
   assert.equal(validateFinish({ id, claimId: id, error: "x", failureKind: "needs_human_check" }, "failed").failureKind, "needs_human_check");
   assert.throws(() => validateFinish({ id, claimId: id, error: "x", failureKind: "needs_verification_code" }, "failed"), /failureKind/);
   assert.equal(validateFinish({ id, claimId: id, result: {} }, "done").failureKind, undefined);
-  assert.equal(publicRequest({ id, status: "failed", error: "要再ログイン", failure_kind: null }).failureKind, "needs_relogin", "列が空の古い行は文から");
+  assert.equal(publicRequest({ id, status: "failed", error: "要再ログイン", failure_kind: null }).failureKind, "other", "列が空の古い行は文から");
+  assert.equal(publicRequest({ id, status: "failed", error: "要再ログイン", failure_kind: "needs_relogin" }).failureKind, "needs_relogin", "列の値はそのまま（直すのは migration 021）");
   assert.equal(publicRequest({ id, status: "failed", error: "要再ログイン", failure_kind: "other" }).failureKind, "other", "列があればそれを使う");
   assert.equal(publicRequest({ id, status: "done" }).failureKind, null);
   assert.equal(failureKindOf({ status: "queued", error: "要再ログイン" }), null);
@@ -80,7 +93,9 @@ test("live summary: relogin → button + guide (no password in chat); human chec
   assert.equal(relogin.links.length, 1);
   assert.match(relogin.links[0].url, /source=ikyu&store=112789&retry=a9f5c78b/);
   const legacy = liveSummary(lookup, [{ id: R1, status: "done" }, { id: R2, status: "failed", error: "要再ログイン" }]);
-  assert.equal(legacy.links.length, 1, "failure_kind の無い古い行も文から判定してボタンを出す");
+  assert.equal(legacy.links.length, 0, "failure_kind の無い「要再ログイン」だけの行にはボタンを出さない");
+  const legacySite = liveSummary(lookup, [{ id: R1, status: "done" }, { id: R2, status: "failed", error: "一休: サイトに「パスワードが正しくありません」と表示" }]);
+  assert.equal(legacySite.links.length, 1, "サイトの表示があればボタン");
   const human = liveSummary(lookup, [{ id: R1, status: "done" }, { id: R2, status: "failed", error: "一休: ログインで「私は人間です」の確認（画像パズル）", failure_kind: "needs_human_check" }]);
   assert.equal(human.links.length, 0, "「私は人間です」はボタンを出さない");
   assert.ok(human.header.includes(HUMAN_CHECK_GUIDE));
@@ -214,14 +229,23 @@ test("real Postgres: failure_kind backfill/check, finish with and without kind (
     psql(`insert into auth.users(id) values ('${OWNER}');
       insert into public.agent_requests(user_id, source, store_id, action, status, error) values
         ('${OWNER}', 'ikyu', '112789', 'sync_now', 'queued', null), ('${OWNER}', 'tabelog', '', 'fetch_reviews', 'queued', null), ('${OWNER}', 'tabelog', '', 'backfill', 'queued', null);
-      update public.agent_requests set status='failed', error=case action when 'sync_now' then '一休: 要再ログイン（ID・パスワードが通らない）' when 'fetch_reviews' then 'ログインで「私は人間です」の確認' else 'サイトの表示が変わった' end;`);
-    for (const f of files.filter((f) => f >= "020")) psql(fs.readFileSync(path.join(migrations, f), "utf8"));
-    assert.equal(psql(`select string_agg(action || ':' || failure_kind, ',' order by action) from public.agent_requests;`), "backfill:other,fetch_reviews:needs_human_check,sync_now:needs_relogin");
+      insert into public.agent_requests(user_id, source, store_id, action, status, error) values ('${OWNER}', 'tabelog', '', 'fetch_metrics', 'queued', null);
+      update public.agent_requests set status='failed', error=case action when 'sync_now' then '一休: 要再ログイン（ID・パスワードが通らない）' when 'fetch_reviews' then 'ログインで「私は人間です」の確認'
+        when 'fetch_metrics' then '食べログ: サイトに「パスワードが正しくありません」と表示' else 'サイトの表示が変わった' end;`);
+    psql(fs.readFileSync(path.join(migrations, "020_login_failure_kinds.sql"), "utf8"));
+    assert.equal(psql(`select failure_kind from public.agent_requests where action='sync_now';`), "needs_relogin", "020 の古い規則では needs_relogin だった");
+    for (const f of files.filter((f) => f > "020")) psql(fs.readFileSync(path.join(migrations, f), "utf8"));
+    assert.equal(psql(`select string_agg(action || ':' || failure_kind, ',' order by action) from public.agent_requests;`),
+      "backfill:other,fetch_metrics:other,fetch_reviews:needs_human_check,sync_now:other", "021 は「要再ログイン」だけの needs_relogin を直す（other・needs_human_check の行には触れない）");
     assert.throws(() => psql(`update public.agent_requests set failure_kind='needs_verification_code';`), /failure_kind_check/);
     const claim = () => psql(`insert into public.agent_requests(user_id, source, store_id, action) values ('${OWNER}', 'ikyu', '112789', 'fetch_metrics');
       select id || ' ' || claim_id from public.claim_agent_requests('${OWNER}', 'grok-bot', 1);`).split("\n").at(-1).split(" ");
     let [id, cl] = claim();
-    assert.equal(psql(`select failure_kind from public.finish_agent_request(p_user => '${OWNER}', p_id => '${id}', p_claim => '${cl}', p_status => 'failed', p_result => null, p_error => '要再ログイン');`), "needs_relogin", "古い6引数の呼び出し（種類なし）も動き、文から判定する");
+    assert.equal(psql(`select failure_kind from public.finish_agent_request(p_user => '${OWNER}', p_id => '${id}', p_claim => '${cl}', p_status => 'failed', p_result => null, p_error => '要再ログイン');`), "other", "古い6引数の呼び出し（種類なし）も動き、文から判定する");
+    [id, cl] = claim();
+    assert.equal(psql(`select failure_kind from public.finish_agent_request('${OWNER}', '${id}', '${cl}', 'failed', null, '一休: 認証エラー（401）', 'needs_relogin');`), "other", "サイトの表示の無い needs_relogin は DB でも認めない");
+    [id, cl] = claim();
+    assert.equal(psql(`select failure_kind from public.finish_agent_request('${OWNER}', '${id}', '${cl}', 'failed', null, '食べログ: サイトに「パスワードが正しくありません」と表示', 'needs_relogin');`), "needs_relogin");
     [id, cl] = claim();
     assert.equal(psql(`select failure_kind from public.finish_agent_request('${OWNER}', '${id}', '${cl}', 'failed', null, '私は人間です', 'needs_human_check');`), "needs_human_check");
     [id, cl] = claim();
@@ -233,7 +257,7 @@ test("real Postgres: failure_kind backfill/check, finish with and without kind (
     assert.equal(psql(`select relrowsecurity from pg_class where relname='mtalk_followups';`), "t");
     assert.equal(psql(`select has_table_privilege('authenticated', 'public.mtalk_followups', 'select');`), "f");
     assert.equal(psql(`select count(*) from pg_class where relname = 'agent_verification_codes';`), "0", "確認コードの保存先は作らない");
-    psql(fs.readFileSync(path.join(migrations, "020_login_failure_kinds.sql"), "utf8"));
+    psql(fs.readFileSync(path.join(migrations, "021_relogin_only_when_site_says.sql"), "utf8"));
   } finally {
     try { run("pg_ctl", ["-D", `${dir}/data`, "-m", "immediate", "stop"]); } catch { /* 停止済み */ }
     fs.rmSync(dir, { recursive: true, force: true });

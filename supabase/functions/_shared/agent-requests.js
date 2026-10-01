@@ -43,14 +43,27 @@ export function validateRequestInput(input, currentMonth) {
   return { source, store_id: storeId, action, params };
 }
 
-// 失敗理由の文 → 種類（--kind の無い古い報告と、migration 020 の既存の失敗の埋め直しと同じ規則。「私は人間です」を先に見る）
-const HUMAN_CHECK_PATTERN = /私は人間|人間です|ロボットではありません|画像認証|captcha|recaptcha|turnstile|human/i;
-const RELOGIN_PATTERN = /再ログイン|ログイン(?:でき|に失敗|切れ|が必要)|パスワードが(?:通ら|違|誤)|ID・パスワード|login|session|password/i;
+// 失敗理由の文 → 種類（--kind の無い報告・migration 020/021 の埋め直しと同じ規則。SQL の classify_agent_failure と一致させる）
+//   needs_human_check: 「私は人間です」・Cloudflare の確認・captcha・2段階認証のコードなど、人の操作が要る確認（先に見る）
+//   needs_relogin:     サイトの画面が ID・パスワードが違うとはっきり表示したときだけ（「…が正しくありません」など）。
+//                      「要再ログイン」「401」「認証エラー」「ログイン画面に戻された」「ログイン切れ」だけでは needs_relogin にしない（other）。
+//                      ログイン情報が変わっていないのにボタンが出て、利用者を迷わせないため
+export const HUMAN_CHECK_PATTERN = /私は人間|人間です|ロボットではありません|画像認証|captcha|recaptcha|turnstile|verify you are human|cloudflare|human|二段階|2段階|２段階|認証コード|確認コード|ワンタイム/i;
+export const SITE_SAYS_WRONG_PATTERN = /正しくありません|誤りがあります|間違っています|一致しません|incorrect|wrong password|invalid (?:id|user|password|credential)/i;
 export function classifyFailure(error) {
   const s = String(error ?? "");
   if (HUMAN_CHECK_PATTERN.test(s)) return "needs_human_check";
-  if (RELOGIN_PATTERN.test(s)) return "needs_relogin";
+  if (SITE_SAYS_WRONG_PATTERN.test(s)) return "needs_relogin";
   return "other";
+}
+/**
+ * 報告された種類 → 保存する種類。needs_relogin は理由の文にサイトの表示（「…が正しくありません」など）が無ければ認めず、文から判定し直す。
+ * （ブラウザの画面で確かめずに「要再ログイン」と報告されたときに「ログイン情報を更新」のボタンを出さないため）
+ */
+export function acceptedFailureKind(kind, error) {
+  if (kind == null) return classifyFailure(error);
+  if (kind === "needs_relogin" && !SITE_SAYS_WRONG_PATTERN.test(String(error ?? ""))) return classifyFailure(error);
+  return kind;
 }
 // 行の失敗の種類（列が無い・空の古い行は理由の文から）
 export const failureKindOf = (r) => (r?.status === "failed" ? (FAILURE_KINDS.includes(r.failure_kind) ? r.failure_kind : classifyFailure(r.error)) : null);
@@ -76,5 +89,5 @@ export function validateFinish(input, outcome) {
   if (!error || error.length > 1000) fail("error（失敗理由）を1〜1000文字で指定してください");
   const kind = input?.failureKind ?? null;
   if (kind != null && !FAILURE_KINDS.includes(kind)) fail(`failureKind は ${FAILURE_KINDS.join(" / ")} のどれかです`);
-  return { id: input.id, claimId: input.claimId, failureKind: kind ?? classifyFailure(error), result: input.result && typeof input.result === "object" && !Array.isArray(input.result) && JSON.stringify(input.result).length <= 20000 ? input.result : null, error };
+  return { id: input.id, claimId: input.claimId, failureKind: acceptedFailureKind(kind, error), result: input.result && typeof input.result === "object" && !Array.isArray(input.result) && JSON.stringify(input.result).length <= 20000 ? input.result : null, error };
 }
