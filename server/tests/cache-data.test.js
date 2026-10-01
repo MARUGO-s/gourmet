@@ -31,7 +31,7 @@ test("freshness line: per site last ingest (JST) + covered period; stale >36h an
   ].join("\n"));
   const missing = summarizeFreshness({ runs: [], now: NOW });
   assert.match(formatFreshness(missing), /^データ：一休 取り込みなし／食べログ 取り込みなし\n※一休のデータはまだ取り込まれていません（一休の数値はわかりません）。/);
-  assert.match(freshnessSystemMessage(entries, { todayYear: 2026 }), /この期間の外の日付・月の数値は取り込まれていないため「わかりません」/);
+  assert.match(freshnessSystemMessage(entries, { todayYear: 2026 }), /関数の結果に無い日付・月だけを「わかりません」/);
   assert.deepEqual(sitesForAnswer(["一休.comレストラン"], entries).map((e) => e.source), ["ikyu"]);
   assert.deepEqual(sitesForAnswer([], entries).map((e) => e.source), ["ikyu", "tabelog"], "分からなければデータのあるサイト全部");
 });

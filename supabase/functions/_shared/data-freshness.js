@@ -1,5 +1,6 @@
 // データの鮮度（Node/Deno 共通）。AI分析の答え（アプリの /ask・M-talk の /mtalk-chat）に、使ったサイトごとの
 // 「最後に取り込めた日時（日本時間）」と「入っている期間」を付ける。例: 「データ：一休 10/1 18:30取得（9/1〜9/30）」
+// 同じ取り込みに日別と月別の両方があれば両方の期間を書く。例: 「食べログ 10/1 15:28取得（日別8/1〜9/30・月別2019/12月〜2026/9月）」
 //
 // ・取り込み = Grok Bot の毎日の取得（ログインして管理画面のHTMLを保存）→ ingest。答えはこの取り込み済みの確定値だけで作る。
 // ・最後の取り込みから36時間を超えたら「古い」、取り込みが1回も無いサイトは「データなし」とはっきり書く。
@@ -30,13 +31,14 @@ export function periodLabel(from, to, todayYear = null) {
   const one = (m, withYear) => `${withYear ? `${m[1]}/` : ""}${Number(m[2])}${m[3] ? `/${Number(m[3])}` : "月"}`;
   const year = todayYear ?? Number(t[1]);
   const withYear = Number(f[1]) !== year || Number(t[1]) !== year;
+  if (f[0] === t[0]) return one(f, withYear); // 同じ日・同じ月は1つだけ（「9月〜9月」と書かない）
   return `${one(f, withYear)}〜${one(t, withYear)}`;
 }
 
 /**
- * サイトごとの鮮度。runs = 取り込み [{ source, receivedAt, from, to }]（from/to はその取り込みで入った日付の範囲）、
+ * サイトごとの鮮度。runs = 取り込み [{ source, receivedAt, from, to, monthFrom?, monthTo? }]（from/to はその取り込みで入った日別の範囲、monthFrom/monthTo は月別の範囲）、
  * requests = 最近の取得依頼 [{ id, source, store_id, status, failure_kind, finished_at }]。
- * 返り値: [{ source, label, lastIngestAt, from, to, ageHours, stale, missing, failure: { kind, label, at, storeId, requestId } | null }]
+ * 返り値: [{ source, label, lastIngestAt, from, to, monthFrom, monthTo, ageHours, stale, missing, failure: { kind, label, at, storeId, requestId } | null }]
  */
 export function summarizeFreshness({ runs = [], requests = [], sources = FRESHNESS_SOURCES, now = Date.now() } = {}) {
   const out = [];
@@ -53,6 +55,7 @@ export function summarizeFreshness({ runs = [], requests = [], sources = FRESHNE
     out.push({
       source, label: FRESHNESS_LABELS[source] ?? source,
       lastIngestAt: last?.receivedAt ?? null, from: last?.from ?? null, to: last?.to ?? null,
+      monthFrom: last?.monthFrom ?? null, monthTo: last?.monthTo ?? null,
       ageHours: ageHours == null ? null : Math.round(ageHours * 10) / 10,
       stale: ageHours != null && ageHours > FRESHNESS.staleHours,
       missing: !last,
@@ -60,6 +63,14 @@ export function summarizeFreshness({ runs = [], requests = [], sources = FRESHNE
     });
   }
   return out;
+}
+
+/** 入っている期間の文。日別だけ「9/1〜9/30」、月別だけ「8月〜9月」、両方「日別8/1〜9/30・月別2019/12月〜2026/9月」 */
+export function coveredLabel(e, todayYear = null) {
+  const daily = periodLabel(e?.from, e?.to, todayYear);
+  const monthly = periodLabel(e?.monthFrom, e?.monthTo, todayYear);
+  if (daily && monthly) return `日別${daily}・月別${monthly}`;
+  return daily || monthly;
 }
 
 /**
@@ -73,7 +84,7 @@ export function formatFreshness(entries, { todayYear = null } = {}) {
   if (!list.length) return "";
   const heads = list.map((e) => {
     if (e.missing) return `${e.label} 取り込みなし`;
-    const period = periodLabel(e.from, e.to, todayYear);
+    const period = coveredLabel(e, todayYear);
     return `${e.label} ${jstShort(e.lastIngestAt)}取得${period ? `（${period}）` : ""}`;
   });
   const notes = [];
@@ -93,7 +104,7 @@ export function freshnessSystemMessage(entries, { todayYear = null } = {}) {
   return [
     "取り込み済みデータの鮮度（サイトごとの最後の取得日時・入っている期間）:",
     text,
-    "この期間の外の日付・月の数値は取り込まれていないため「わかりません」と答える。鮮度の行はシステムが回答の最後に付けるので、回答では繰り返さなくてよい。",
+    "期間は最後の取り込みで入った範囲（日別・月別は別。月別の記録は日別の範囲より前の月にもある）。数値の有無は関数の結果で確かめ、関数の結果に無い日付・月だけを「わかりません」と答える。鮮度の行はシステムが回答の最後に付けるので、回答では繰り返さなくてよい。",
   ].join("\n");
 }
 
@@ -135,17 +146,18 @@ export function answerFreshness(result, ds, { todayYear = null } = {}) {
 const rows = async (q) => { try { const { data, error } = await q; return error ? [] : (data ?? []); } catch { return []; } };
 const day = (v) => (v ? String(v).slice(0, 10) : null);
 
+// 日別の範囲は PV のある行だけ（当日の空行＝まだ数値の無い日を「入っている」と書かない）
 async function rangeOf(client, table, runId, extra = (q) => q) {
   const [first, last] = await Promise.all([
-    rows(extra(client.from(table).select("date").eq("run_id", runId)).order("date", { ascending: true }).limit(1)),
-    rows(extra(client.from(table).select("date").eq("run_id", runId)).order("date", { ascending: false }).limit(1)),
+    rows(extra(client.from(table).select("date").eq("run_id", runId).not("pv", "is", null)).order("date", { ascending: true }).limit(1)),
+    rows(extra(client.from(table).select("date").eq("run_id", runId).not("pv", "is", null)).order("date", { ascending: false }).limit(1)),
   ]);
   return { from: day(first[0]?.date), to: day(last[0]?.date) };
 }
 async function monthRangeOf(client, table, runId, extra = (q) => q) {
   const [first, last] = await Promise.all([
-    rows(extra(client.from(table).select("month").eq("run_id", runId)).order("month", { ascending: true }).limit(1)),
-    rows(extra(client.from(table).select("month").eq("run_id", runId)).order("month", { ascending: false }).limit(1)),
+    rows(extra(client.from(table).select("month").eq("run_id", runId).not("pv", "is", null)).order("month", { ascending: true }).limit(1)),
+    rows(extra(client.from(table).select("month").eq("run_id", runId).not("pv", "is", null)).order("month", { ascending: false }).limit(1)),
   ]);
   return { from: first[0]?.month ?? null, to: last[0]?.month ?? null };
 }
@@ -163,18 +175,16 @@ async function loadFreshnessRows(client, { now, sources }) {
   ]);
   const runs = [];
   if (ikyuRuns[0]) {
-    let r = await rangeOf(client, "ikyu_daily_pageviews", ikyuRuns[0].id);
-    if (!r.from) r = await monthRangeOf(client, "ikyu_monthly_pageviews", ikyuRuns[0].id);
-    runs.push({ source: "ikyu", receivedAt: ikyuRuns[0].received_at, ...r });
+    const [r, m] = await Promise.all([rangeOf(client, "ikyu_daily_pageviews", ikyuRuns[0].id), monthRangeOf(client, "ikyu_monthly_pageviews", ikyuRuns[0].id)]);
+    runs.push({ source: "ikyu", receivedAt: ikyuRuns[0].received_at, ...r, monthFrom: m.from, monthTo: m.to });
   }
   const seen = new Set();
   for (const run of agentRuns) {
     if (seen.has(run.source) || run.source === "ikyu") continue;
     seen.add(run.source);
     const bySource = (q) => q.eq("source", run.source);
-    let r = await rangeOf(client, "source_daily_metrics", run.id, bySource);
-    if (!r.from) r = await monthRangeOf(client, "source_monthly_metrics", run.id, bySource);
-    runs.push({ source: run.source, receivedAt: run.received_at, ...r });
+    const [r, m] = await Promise.all([rangeOf(client, "source_daily_metrics", run.id, bySource), monthRangeOf(client, "source_monthly_metrics", run.id, bySource)]);
+    runs.push({ source: run.source, receivedAt: run.received_at, ...r, monthFrom: m.from, monthTo: m.to });
   }
   const all = [...new Set([...sources, ...runs.map((r) => r.source)])];
   return summarizeFreshness({ runs, requests, sources: all, now });

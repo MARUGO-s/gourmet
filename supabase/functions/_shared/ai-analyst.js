@@ -415,10 +415,67 @@ export function siteReports(ds, scope, sources, kind = "all") {
   const reports = [...latest.values()].map((r) => ({ kind: r.kind, title: label[r.kind], period: r.period, fetchedAt: r.updatedAt, data: r.data }));
   return { reports, ...(reports.length ? {} : { note: "食べログの詳細レポートの取り込みはありません" }) };
 }
+/**
+ * 月別のコンバージョン率（get_monthly_conversion）。コンバージョン率（%）＝ 予約 ÷ PV × 100（小数第2位で四捨五入）。
+ * 食べログ: 月別の記録（source_monthly_metrics）の PV（アクセス数レポートの月別・全端末）と来店指標のネット予約組数。
+ * 一休: 月別の記録（ikyu_monthly_pageviews）の PV と予約件数（受付日ベース）。月別の記録が無い月は日別の合計（日数つき）。
+ * 割り算はサーバーで行い、結果に入れる（照合できるように。モデルに計算させない）。
+ */
+export const CONVERSION_FORMULA = "コンバージョン率（%）＝ 予約 ÷ PV × 100（小数第2位で四捨五入）";
+export const CONVERSION_BASIS = {
+  tabelog: "PV＝アクセス数レポートの月別PV（PC・スマホ・アプリの合計）、予約＝来店指標のネット予約組数（電話の予約は含まない。予約専用番号の通話成立数は calls に別に示す）",
+  ikyu: "PV＝日付別アクセスのPVの月合計、予約＝その月に入った予約の件数（受付日ベース・プラン数。来店日ではない）",
+};
+const conversionPct = (reservations, pv) => (reservations != null && pv != null && pv > 0 ? round2((reservations / pv) * 100) : null);
+const daysInMonth = (month) => { const [y, m] = month.split("-").map(Number); return new Date(Date.UTC(y, m, 0)).getUTCDate(); };
+export function monthlyConversion(ds, scope, sources, fromMonth, toMonth) {
+  const months = monthsBetween(fromMonth, toMonth);
+  const currentMonth = String(ds.today ?? "").slice(0, 7);
+  const bySite = {};
+  const notes = [];
+  const finish = (rows) => {
+    const have = new Set(rows.map((r) => r.month));
+    const missingMonths = months.filter((m) => !have.has(m));
+    const usable = rows.filter((r) => r.pv != null && r.reservations != null);
+    const pv = usable.length ? usable.reduce((a, r) => a + r.pv, 0) : null, reservations = usable.length ? usable.reduce((a, r) => a + r.reservations, 0) : null;
+    return { total: { months: usable.length, pv, reservations, conversionPct: conversionPct(reservations, pv) },
+      ...(missingMonths.length ? { missingMonths, missingNote: "この月の PV・予約は取り込まれていません（わかりません）" } : {}) };
+  };
+  if (sources.includes("tabelog")) {
+    const rows = tabelogMonths(ds, scope, `${fromMonth}-01`, `${toMonth}-01`)
+      .filter((m) => m.pv != null || m.netReservations != null)
+      .map((m) => ({ month: m.month, complete: m.complete && m.month < currentMonth, pv: m.pv, reservations: m.netReservations, conversionPct: conversionPct(m.netReservations, m.pv), calls: m.calls }));
+    if (rows.length) bySite[sourceName("tabelog")] = { basis: CONVERSION_BASIS.tabelog, rows, ...finish(rows) };
+    else notes.push(`${sourceName("tabelog")}: ${fromMonth}〜${toMonth} の月別のPV・予約の記録はありません`);
+  }
+  if (sources.includes("ikyu")) {
+    const rows = [];
+    for (const month of months) {
+      const monthly = (ds.ikyuMonthly ?? []).filter((r) => r.month === month && inScope(scope.keys, "ikyu", r.key ?? ""));
+      const fromMonthly = monthly.filter((r) => r.pv != null || r.reservations != null);
+      if (fromMonthly.length) {
+        const pv = sumOf(fromMonthly, "pv"), reservations = sumOf(fromMonthly, "reservations");
+        rows.push({ month, complete: fromMonthly.every((r) => r.complete) && month < currentMonth, pv, reservations, conversionPct: conversionPct(reservations, pv), basis: "月別の記録" });
+        continue;
+      }
+      const daily = (ds.ikyuDaily ?? []).filter((r) => r.date.slice(0, 7) === month && inScope(scope.keys, "ikyu", r.key ?? ""));
+      if (!daily.length) continue;
+      const days = new Set(daily.map((r) => r.date)).size;
+      const pv = sumOf(daily, "pv"), reservations = sumOf(daily, "reservations");
+      rows.push({ month, complete: days >= daysInMonth(month) && month < currentMonth, days, pv, reservations, conversionPct: conversionPct(reservations, pv), basis: "日別の合計" });
+    }
+    if (rows.length) bySite[sourceName("ikyu")] = { basis: CONVERSION_BASIS.ikyu, rows, ...finish(rows) };
+    else notes.push(`${sourceName("ikyu")}: ${fromMonth}〜${toMonth} の月別のPV・予約の記録はありません`);
+  }
+  const other = sources.filter((src) => !DETAIL_SITES.includes(src));
+  if (other.length) notes.push(`${other.map(sourceName).join("・")}: コンバージョン率は計算していません`);
+  return { formula: CONVERSION_FORMULA, fromMonth, toMonth, bySite,
+    note: "conversionPct は予約÷PV×100（%）。PVが0・未取得の月は null。complete=false は集計途中の月（当月など）", ...(notes.length ? { notes } : {}) };
+}
 /** 鮮度（get_data_freshness）。 */
 export function freshnessResult(ds) {
   const list = Array.isArray(ds.freshness) ? ds.freshness : [];
-  return { staleAfterHours: 36, sites: list.map((e) => e.label), bySite: list.map((e) => ({ site: e.label, lastFetchedAt: e.lastIngestAt, coveredFrom: e.from, coveredTo: e.to,
+  return { staleAfterHours: 36, sites: list.map((e) => e.label), bySite: list.map((e) => ({ site: e.label, lastFetchedAt: e.lastIngestAt, coveredFrom: e.from, coveredTo: e.to, coveredMonthFrom: e.monthFrom ?? null, coveredMonthTo: e.monthTo ?? null,
     ageHours: e.ageHours, stale: e.stale, missing: e.missing, lastFailure: e.failure ? e.failure.label : null })), timezone: "日時はUTC（回答では日本時間で書く）" };
 }
 
@@ -430,8 +487,8 @@ const fn = (name, description, properties, required = []) => ({ type: "function"
 export const AI_TOOLS = [
   fn("list_stores", "登録されている店舗の一覧（店舗名・割り当てたサイト・データの有無）", {}),
   fn("get_kpis", "期間のKPI（サイト別・合計のPV、直前の同じ日数との比較、予約、期間内の新着口コミ数と平均評価、最新の評価・口コミ数、未返信数）", { store: storeParam, source: sourceParam, from: dateParam("開始日"), to: dateParam("終了日") }),
-  fn("get_pv_trend", "PV（ページビュー）の推移。日別・週別（月曜始まり）・月別に集計（日別PVの合計）", { store: storeParam, source: sourceParam, from: dateParam("開始日"), to: dateParam("終了日"), granularity: { type: "string", enum: ["day", "week", "month"] } }, ["granularity"]),
-  fn("get_monthly_metrics", "月別の記録（PV・予約件数）。サイト別", { store: storeParam, source: sourceParam, from_month: { type: "string", description: "開始月 YYYY-MM" }, to_month: { type: "string", description: "終了月 YYYY-MM" } }),
+  fn("get_pv_trend", "PV（ページビュー）の推移。日別・週別（月曜始まり）・月別に集計（日別PVの合計。日別が無い月は入らない。月別の値は get_monthly_metrics）", { store: storeParam, source: sourceParam, from: dateParam("開始日"), to: dateParam("終了日"), granularity: { type: "string", enum: ["day", "week", "month"] } }, ["granularity"]),
+  fn("get_monthly_metrics", "月別の記録（PV・予約件数）。サイト別。日別のデータが無い過去の月も入っている（食べログは2019年以降の月別PV・ネット予約組数）", { store: storeParam, source: sourceParam, from_month: { type: "string", description: "開始月 YYYY-MM" }, to_month: { type: "string", description: "終了月 YYYY-MM" } }),
   fn("get_review_stats", "口コミの統計（件数・平均評価・評価の区分・評価3.0以下の件数・本文の有無・返信済み/未返信・サイト別の最新の投稿日・月別）。all_time=true で全期間", { store: storeParam, source: sourceParam, from: dateParam("開始日（投稿日）"), to: dateParam("終了日（投稿日）"),
     all_time: { type: "boolean", description: "true なら期間を無視して全期間（最新の口コミ・悪い口コミ全体などを聞かれたとき）" } }),
   fn("get_reviews", "口コミの一覧（サイト・投稿日・評価・本文の有無・本文の抜粋。最大20件）。matched は条件に合う件数、returned は返した件数。all_time=true で全期間", { store: storeParam, source: sourceParam, from: dateParam("開始日（投稿日）"), to: dateParam("終了日（投稿日）"),
@@ -442,6 +499,7 @@ export const AI_TOOLS = [
   fn("get_reservation_sales", "予約と売上（毎日取り込んだ管理画面の確定値）。一休: その日に入った予約（受付日ベース）の件数と合計金額（円）・1件あたりの平均金額（日別・月別）。食べログ: 月別のネット予約組数・予約専用番号の通話成立数・地図印刷数", { store: storeParam, source: { type: "string", enum: ["all", "ikyu", "tabelog"], description: "ikyu=一休, tabelog=食べログ, all=両方" }, from: dateParam("開始日"), to: dateParam("終了日"), granularity: { type: "string", enum: ["day", "month"] } }),
   fn("get_pv_breakdown", "PVの内訳（毎日取り込んだ管理画面の確定値）。一休: ページ種別（店舗ガイド・プラン・その他）×端末（スマホ・PC）。食べログ: 端末別（PC・スマホ・アプリ）の合計と割合、月別の端末別PV", { store: storeParam, source: { type: "string", enum: ["all", "ikyu", "tabelog"], description: "ikyu=一休, tabelog=食べログ, all=両方" }, from: dateParam("開始日"), to: dateParam("終了日") }),
   fn("get_site_reports", "食べログの詳細レポート（最新の取り込み）: エリア内のアクセス順位、よく見られるページ、端末別のページサマリー（レポート期間・端末ごとのトップページ/全ページPV・来店指標）", { store: storeParam, kind: { type: "string", enum: ["all", "area_ranking", "top_pages", "device_summary"] } }),
+  fn("get_monthly_conversion", "月別のコンバージョン率（予約 ÷ PV × 100、%）。サイト別・月別の PV・予約・率と期間の合計（サーバーで計算済み。式と根拠つき）。食べログ: 月別PVとネット予約組数、一休: 月別PVと予約件数（受付日ベース）", { store: storeParam, source: { type: "string", enum: ["all", "ikyu", "tabelog"], description: "ikyu=一休, tabelog=食べログ, all=両方" }, from_month: { type: "string", description: "開始月 YYYY-MM" }, to_month: { type: "string", description: "終了月 YYYY-MM" } }),
   fn("get_data_freshness", "取り込み済みデータの鮮度（サイトごとの最後の取得日時・入っている期間・36時間を超えて古いか・直近の取得の失敗理由）", {}),
 ];
 
@@ -452,6 +510,15 @@ function toolPeriod(args, ctx) {
   if (from > to) fail("開始日は終了日以前にしてください");
   if (daysBetween(from, to) > AI_LIMITS.maxPeriodDays) fail("期間は2年以内で指定してください");
   return { from, to };
+}
+// 月の範囲（最大36か月）。省略時は画面・会話の期間の月
+function toolMonths(args, ctx) {
+  const toMonth = optMonth(args.to_month, "終了月") ?? ctx.to.slice(0, 7);
+  let fromMonth = optMonth(args.from_month, "開始月") ?? ctx.from.slice(0, 7);
+  if (fromMonth > toMonth) fail("開始月は終了月以前にしてください");
+  const floor = (() => { let m = toMonth; for (let i = 0; i < 35; i++) m = previousMonth(m); return m; })();
+  if (fromMonth < floor) fromMonth = floor;
+  return { fromMonth, toMonth };
 }
 export function limitJson(value, max = AI_LIMITS.toolResultChars) {
   const text = JSON.stringify(value);
@@ -476,15 +543,16 @@ export function runTool(ds, name, rawArgs, ctx) {
       const p = toolPeriod(args, ctx);
       const g = ["day", "week", "month"].includes(args.granularity) ? args.granularity : "day";
       const rows = groupPv(dailyPv(ds, scope, sources, p.from, p.to), g);
+      const monthlyNote = g === "month" ? "日別PVの合計です。日別のデータが無い月は入りません。月別の値（過去の月を含む）は get_monthly_metrics、予約÷PVは get_monthly_conversion" : undefined;
       return limitJson({ ...head, ...p, granularity: g, rows: rows.map((r) => ({ ...r, bySource: Object.fromEntries(Object.entries(r.bySource).map(([k, v]) => [sourceName(k), v])) })),
-        note: rows.length ? undefined : "この期間の日別PVはありません" });
+        note: rows.length ? monthlyNote : `この期間の日別PVはありません${g === "month" ? "。月別の値は get_monthly_metrics" : ""}` });
+    }
+    if (name === "get_monthly_conversion") {
+      const { fromMonth, toMonth } = toolMonths(args, ctx);
+      return limitJson({ ...head, ...monthlyConversion(ds, scope, sources, fromMonth, toMonth) });
     }
     if (name === "get_monthly_metrics") {
-      const toMonth = optMonth(args.to_month, "終了月") ?? ctx.to.slice(0, 7);
-      let fromMonth = optMonth(args.from_month, "開始月") ?? ctx.from.slice(0, 7);
-      if (fromMonth > toMonth) fail("開始月は終了月以前にしてください");
-      const floor = (() => { let m = toMonth; for (let i = 0; i < 35; i++) m = previousMonth(m); return m; })();
-      if (fromMonth < floor) fromMonth = floor;
+      const { fromMonth, toMonth } = toolMonths(args, ctx);
       const rows = monthlyMetrics(ds, scope, sources, fromMonth, toMonth).filter((r) => r.pv != null || r.reservations != null)
         .map((r) => ({ ...r, bySource: Object.fromEntries(Object.entries(r.bySource).map(([k, v]) => [sourceName(k), v])) }));
       return limitJson({ ...head, fromMonth, toMonth, rows, note: rows.length ? undefined : "この期間の月別の記録はありません" });
@@ -543,6 +611,7 @@ export function systemPrompt(today) {
     "- データに無いこと・確認できないことは「わかりません」「データでは確認できません」とはっきり書く。穴埋めの推測はしない。",
     "- 推測・解釈・可能性を述べるときは、その文に必ず「（推測）」と付け、事実の文と分ける。見込み・予想（今月の着地など）は「（予想）」と付け、計算の前提（どの確定値から出したか）を書く。予想の数値を事実として書かない。",
     "- データは Grok Bot が毎日サイトの管理画面から取り込んだ確定値（キャッシュ）。最新を取り直す選択肢はない。鮮度（最後の取得日時・期間）はシステムが回答の最後に付ける。期間の外・取り込みの無い項目は「わかりません」と書く。",
+    "- 月別のPV・予約は get_monthly_metrics（日別のデータが無い過去の月も入っている）。コンバージョン率・予約率（予約÷PV）は必ず get_monthly_conversion を使い、結果の conversionPct と式（予約÷PV×100）をそのまま書く。率を自分で割り算しない。get_pv_trend の月別は日別の合計なので、日別が無い月を「PVが無い」と言わない。",
     "- 予約・売上は get_reservation_sales、PVの内訳（ページ種別・端末）は get_pv_breakdown、食べログのエリア順位・よく見られるページは get_site_reports で確かめる。一休の予約は受付日ベース（来店日ではない）とはっきり書く。",
     "- 予約者の氏名・電話番号・メールアドレス・住所などの個人情報は扱わない・書かない（関数の結果にも含まれない）。",
     "- 口コミ・PV・予約などデータに関する質問には、必ず関数を呼んでから答える。質問に期間の指定が無く「最新」「悪い口コミ」など全体を聞かれたら、口コミの関数は all_time=true を使う。",
