@@ -9,6 +9,7 @@ type Props = {
   credentials: CredentialRow[];
   requests: AgentRequest[];
   busyKey: string | null;
+  onFilter: (source: string) => void;
   onRequest: (source: string, storeId: string) => void;
   onRequests: () => void;
   onAccounts: () => void;
@@ -17,7 +18,7 @@ type Props = {
 };
 
 // ダッシュボード上部: 取り込み元（Grok Bot）と最終更新、店舗ごとの「今すぐ取得を依頼」
-export default function IngestPanel({ filter, signedIn, sources, credentials, requests, busyKey, onRequest, onRequests, onAccounts, stores }: Props) {
+export default function IngestPanel({ filter, signedIn, sources, credentials, requests, busyKey, onFilter, onRequest, onRequests, onAccounts, stores }: Props) {
   const allSites = stores.flatMap((s) => s.sites);
   const storeName = (c: CredentialRow) => `${storeLabelFor(stores, allSites, c.source, c.storeKey)}${c.label ? `（${c.label}）` : ""}`;
   const shown = filter === "all" ? sources : sources.filter((s) => s.id === filter);
@@ -42,11 +43,21 @@ export default function IngestPanel({ filter, signedIn, sources, credentials, re
           <p className="rounded bg-surface px-3 py-2 text-[12px] text-subtle">右上の「ログイン」から開始してください（未ログイン時はデモ表示）</p>
         )}
       </div>
+      <p className="mt-3 text-[11px] text-subtle">サイトのカードを選ぶと、そのサイトのダッシュボードに切り替わります。</p>
       <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
         {shown.map((s) => {
           const stores = credentials.filter((c) => c.source === s.id);
           return (
-            <div key={s.id} className="rounded border border-line px-3 py-2.5">
+            <div key={s.id} className={`relative rounded border px-3 py-2.5 transition hover:border-brand ${filter === s.id ? "border-brand bg-brand-soft" : "border-line"}`}>
+              <button
+                type="button"
+                aria-label={`${s.name}のダッシュボードを表示`}
+                aria-pressed={filter === s.id}
+                onClick={() => onFilter(s.id)}
+                className="absolute inset-0 rounded cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+              />
+              {/* 選択ボタンと取得依頼は兄弟要素。カードの空白・本文は選択、依頼ボタンだけは独立して操作する。 */}
+              <div className="pointer-events-none relative">
               <div className="flex items-center gap-2">
                 <span className="h-2 w-2 rounded-full" style={{ background: s.color }} />
                 <span className="text-[12px] font-bold">{s.name}</span>
@@ -67,7 +78,7 @@ export default function IngestPanel({ filter, signedIn, sources, credentials, re
                           ) : open ? (
                             <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${statusTone(open.status)}`} title={`依頼 ${formatTime(open.requestedAt)}`}>{requestLabel(open.status)}</span>
                           ) : (
-                            <button onClick={() => onRequest(s.id, c.storeKey)} disabled={busyKey === key} className="rounded bg-brand px-2 py-1 text-[10px] font-bold text-white disabled:opacity-50">
+                            <button type="button" onClick={() => onRequest(s.id, c.storeKey)} disabled={busyKey === key} className="pointer-events-auto rounded bg-brand px-2 py-1 text-[10px] font-bold text-white disabled:opacity-50">
                               {busyKey === key ? "送信中…" : "今すぐ取得を依頼"}
                             </button>
                           )}
@@ -79,6 +90,7 @@ export default function IngestPanel({ filter, signedIn, sources, credentials, re
                   <p className="mt-2 text-[11px] text-faint">店舗のアカウントが未登録です（「取得依頼」から店舗を選んで依頼することもできます）</p>
                 )
               ) : null}
+              </div>
             </div>
           );
         })}
