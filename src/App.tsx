@@ -264,9 +264,10 @@ export default function App() {
             userId ? <StoreManager stores={stores} sources={sources} onChanged={refreshStores} /> : signInFirst
           ) : view === "dashboard" ? (
             <>
-              <nav className="flex flex-wrap items-center gap-1.5">
+              <nav className="flex flex-wrap items-center gap-1.5" aria-label="表示するグルメサイト">
                 <button
                   onClick={() => setFilter("all")}
+                  aria-pressed={filter === "all"}
                   className={`rounded-md border px-3 py-1.5 text-[12px] font-bold transition ${
                     filter === "all"
                       ? "border-brand bg-brand-soft text-brand"
@@ -279,6 +280,7 @@ export default function App() {
                   <button
                     key={s.id}
                     onClick={() => setFilter(s.id)}
+                    aria-pressed={filter === s.id}
                     title={s.hasCredential ? "" : "アカウント未登録"}
                     className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[12px] font-bold transition ${
                       filter === s.id
@@ -296,6 +298,7 @@ export default function App() {
               </nav>
 
               <IngestPanel filter={filter} signedIn={!!userId} sources={sources} credentials={scopedCredentials} requests={scopedRequests} busyKey={busyKey} stores={stores}
+                onFilter={setFilter}
                 onRequest={(source, storeId) => void onRequest(source, storeId)} onRequests={() => setView("requests")} onAccounts={() => setView("accounts")} />
 
               {loading ? (
