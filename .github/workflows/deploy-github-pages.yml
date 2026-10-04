@@ -22,6 +22,8 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
+        env:
+          VITE_GOOGLE_AUTH_ENABLED: "true"
       - uses: actions/upload-pages-artifact@v4
         if: github.ref == 'refs/heads/main'
         with:
