@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { supabase, authRedirect } from "../lib/supabase";
+import { supabase, authRedirect, googleAuthEnabled } from "../lib/supabase";
+import { googleLoginOptions, readGoogleCallbackError } from "../lib/google-auth";
 
 export default function LoginDialog() {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -10,6 +11,12 @@ export default function LoginDialog() {
   const [busy, setBusy] = useState(false);
   const [signedInEmail, setSignedInEmail] = useState<string | null>(null);
   useEffect(() => {
+    const callbackError = readGoogleCallbackError(window.location.href);
+    if (callbackError) {
+      window.history.replaceState(null, "", callbackError.cleanUrl);
+      setMessage(callbackError.message);
+      if (!dialog.current?.open) dialog.current?.showModal();
+    }
     void supabase.auth.getSession().then(({ data }) => setSignedInEmail(data.session?.user.email ?? null));
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSignedInEmail(session?.user.email ?? null);
@@ -18,6 +25,18 @@ export default function LoginDialog() {
     return () => subscription.unsubscribe();
   }, []);
   const title = { login: "ログイン", signup: "新規登録", reset: "パスワード再設定", password: "新しいパスワード" }[mode];
+  const googleLogin = async () => {
+    if (busy || !googleAuthEnabled) return;
+    setBusy(true); setMessage("");
+    try {
+      const { data, error } = await supabase.auth.signInWithOAuth(googleLoginOptions(authRedirect()));
+      if (error || !data.url) throw new Error("oauth_start_failed");
+      window.location.assign(data.url);
+    } catch {
+      setMessage("Googleログインを開始できませんでした。時間をおいてもう一度お試しください。");
+      setBusy(false);
+    }
+  };
   const submit = async (event: React.FormEvent) => {
     event.preventDefault(); setBusy(true); setMessage("");
     try {
@@ -54,6 +73,10 @@ export default function LoginDialog() {
       <form onSubmit={submit} className="flex flex-col gap-4">
         <div className="flex justify-between"><h2 className="font-bold">{title}</h2><button type="button" aria-label="閉じる" onClick={() => dialog.current?.close()}>×</button></div>
         <p className="text-xs leading-relaxed text-subtle">gourmet専用アカウントです。旧サービスのログインは引き継がれません。食べログのIDは、ログイン後の「アカウント設定」に登録します。</p>
+        {googleAuthEnabled && (mode === "login" || mode === "signup") && <>
+          <button type="button" disabled={busy} onClick={() => void googleLogin()} className="rounded border border-line bg-surface p-2 font-bold disabled:opacity-50">Googleで続ける</button>
+          <p className="text-center text-xs text-subtle">またはメールアドレスで続ける</p>
+        </>}
         {mode !== "password" && <label className="text-sm">メールアドレス<input type="email" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} className="mt-1 w-full rounded border border-line bg-surface p-2" /></label>}
         {mode !== "reset" && <label className="text-sm">パスワード<input type="password" minLength={mode === "login" ? 1 : 8} maxLength={128} autoComplete={mode === "login" ? "current-password" : "new-password"} required value={password} onChange={e => setPassword(e.target.value)} className="mt-1 w-full rounded border border-line bg-surface p-2" /><span className="text-xs text-faint">新規登録・再設定は8文字以上</span></label>}
         {message && <p role="status" className="text-sm leading-relaxed">{message}</p>}
