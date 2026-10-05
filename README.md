@@ -228,6 +228,16 @@ INGEST_TOKEN=... node scripts/agent-ingest.mjs payload.json
 
 manifest（パスはmanifestの場所基準）: `{"storeKey":"13245351","name":"店名","daily":["日別PVの各月のHTML"...],"conversion":"来店指標（全期間を選択）.html","myReport":"マイレポート.html","accessRanking":"アクセスランキング.html","reviews":{"reply":["口コミ返信一覧の各ページ"...],"pickup":["ピックアップの各ページ"...]},"public":"自店舗の公開ページ.html","pageHistory":{"first":"YYYYMM","last":"YYYYMM","pc":"...","sp":"...","app":"..."},"topPages":"top-pages.json（任意）"}`。「よく見られるページ」はグラフ（JavaScript）の値なので、ブラウザで`readTopPages`した結果をJSONで渡します。口コミは全ページが必要です（件数が揃わない場合は停止）。合成フィクスチャ: `server/tests/fixtures/tabelog/`。
 
+### 食べログ週報 HTML（既定テンプレート）
+
+週報の **既定テンプレート** は `scripts/tabelog/weekly-report.js`（サンプル週報と同じ UI。内容ルールは青写真＝未取得は「未取得」、事実と推測を分離、PII 禁止）。詳細は [docs/tabelog-weekly-report.md](docs/tabelog-weekly-report.md)。
+
+```sh
+node scripts/tabelog-weekly-report.mjs --input weekly-input.json --out weekly-report.html
+```
+
+`--input` は `assembleWeeklyReportInput` 向け JSON（`storeKey` / `storeName` / `asOf` 必須）。アプリ実行環境では使わず、エージェント／ローカル用です。
+
 ### 一休.comレストラン
 
 一休は管理画面の構成（ページ種別×端末のPV、当日予約、予約番号単位の口コミ）が異なるため専用の表（`ikyu_*`）と形式を使います。`/ingest`に`"source":"ikyu"`を付けるか`/ikyu/ingest`へ送ります。
