@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 
-type ViewId = "overview" | "dashboard" | "ai" | "requests" | "schedules" | "alerts" | "accounts" | "stores";
+type ViewId = "overview" | "dashboard" | "ai" | "requests" | "schedules" | "alerts" | "accounts" | "stores" | "members";
 type Props = {
   // null = 店舗の選択画面
   view: ViewId | null;
@@ -13,6 +13,8 @@ type Props = {
   onClose?: () => void;
   // 店舗の選択画面に戻る（ドロワー内の「店舗を選び直す」）
   onReselect?: () => void;
+  // チームの役割で出さない画面（メンバーはアカウント管理・店舗管理・メンバー管理、承認前はすべて）
+  hidden?: ViewId[];
 };
 
 function NavIcon({ name }: { name: string }) {
@@ -81,6 +83,16 @@ function NavIcon({ name }: { name: string }) {
       </svg>
     );
   }
+  if (name === "members") {
+    return (
+      <svg {...common}>
+        <circle cx="9" cy="8" r="3.5" />
+        <path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" />
+        <circle cx="17" cy="9" r="2.5" />
+        <path d="M16 14.2c3 .2 5.5 2.2 5.5 5.3" />
+      </svg>
+    );
+  }
   if (name === "schedules") {
     return (
       <svg {...common}>
@@ -108,9 +120,10 @@ const ITEMS: { id: ViewId; label: string; signedIn?: boolean }[] = [
   { id: "alerts", label: "口コミ通知", signedIn: true },
   { id: "accounts", label: "アカウント管理" },
   { id: "stores", label: "店舗管理", signedIn: true },
+  { id: "members", label: "メンバー管理", signedIn: true },
 ];
 
-export default function Sidebar({ view, onView, signedIn, storeName, mobileOpen = false, onClose, onReselect }: Props) {
+export default function Sidebar({ view, onView, signedIn, storeName, mobileOpen = false, onClose, onReselect, hidden = [] }: Props) {
   const closeButton = useRef<HTMLButtonElement>(null);
 
   // スマートフォン幅のメニュー（ドロワー）: 開いている間は背景のスクロールを止め、Escapeで閉じる
@@ -139,7 +152,7 @@ export default function Sidebar({ view, onView, signedIn, storeName, mobileOpen 
   return (
     <>
       <aside className="no-print hidden w-[232px] shrink-0 flex-col border-r border-line bg-card md:flex">
-        <SidebarContent view={view} onView={onView} signedIn={signedIn} storeName={storeName} />
+        <SidebarContent hidden={hidden} view={view} onView={onView} signedIn={signedIn} storeName={storeName} />
       </aside>
 
       {/* スマートフォン幅: 左から開くメニュー（ドロワー）と暗い背景 */}
@@ -156,7 +169,7 @@ export default function Sidebar({ view, onView, signedIn, storeName, mobileOpen 
           aria-label="メニュー"
           className={`absolute inset-y-0 left-0 flex w-[272px] max-w-[85vw] flex-col overflow-y-auto bg-card shadow-xl transition-transform duration-200 ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}
         >
-          <SidebarContent
+          <SidebarContent hidden={hidden}
             view={view}
             onView={choose}
             signedIn={signedIn}
@@ -183,7 +196,7 @@ export default function Sidebar({ view, onView, signedIn, storeName, mobileOpen 
   );
 }
 
-function SidebarContent({ view, onView, signedIn, storeName, onReselect, closeButton }: Pick<Props, "view" | "onView" | "signedIn" | "storeName" | "onReselect"> & { closeButton?: ReactNode }) {
+function SidebarContent({ view, onView, signedIn, storeName, onReselect, closeButton, hidden = [] }: Pick<Props, "view" | "onView" | "signedIn" | "storeName" | "onReselect" | "hidden"> & { closeButton?: ReactNode }) {
   return (
     <>
       <div className="px-5 pt-6 pb-5">
@@ -220,7 +233,7 @@ function SidebarContent({ view, onView, signedIn, storeName, onReselect, closeBu
         </div>
       ) : null}
       <nav className="flex flex-col gap-1 border-t border-line px-3 py-4" aria-label="メインメニュー">
-        {ITEMS.filter((it) => signedIn || !it.signedIn).map((it) => {
+        {ITEMS.filter((it) => (signedIn || !it.signedIn) && !hidden.includes(it.id)).map((it) => {
           const active = view === it.id;
           return (
             <button

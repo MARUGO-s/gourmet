@@ -6,19 +6,22 @@ import { keyLabel, siteKeysOf } from "../lib/store-selection";
 // 店舗（店舗マスタ）の選択と、そのサイトの店舗ID。店舗IDは「店舗管理」の割り当てを使い、未設定ならその場で入力して割り当てに保存する。
 export type StorePick = { storeId: string; key: string; typed: string };
 export const emptyPick = (storeId = ""): StorePick => ({ storeId, key: "", typed: "" });
+const NOT_ASSIGNED = "この店舗にはこのサイトの店舗IDが設定されていません。持ち主・管理者に「店舗管理」での設定を依頼してください";
 
-export function resolvePick(stores: Store[], source: string, pick: StorePick): { key: string; isNew: boolean; error: string | null } {
+// canAssign=false（チームのメンバー）: 未設定の店舗IDをその場で割り当てない（店舗管理は持ち主・管理者だけ）
+export function resolvePick(stores: Store[], source: string, pick: StorePick, { canAssign = true }: { canAssign?: boolean } = {}): { key: string; isNew: boolean; error: string | null } {
   const store = stores.find((s) => s.id === pick.storeId);
   if (!store) return { key: "", isNew: false, error: "店舗を選択してください" };
   const keys = siteKeysOf(store, source);
   if (keys.length) return { key: keys.includes(pick.key) ? pick.key : keys[0], isNew: false, error: null };
+  if (!canAssign) return { key: "", isNew: false, error: NOT_ASSIGNED };
   const key = pick.typed.trim();
   return { key, isNew: true, error: siteKeyError(source, key) };
 }
 
 // 未設定の店舗IDを店舗の割り当てに保存してから、その店舗コードを返す（保存できなければ例外）
-export async function commitPick(stores: Store[], source: string, pick: StorePick): Promise<{ key: string; created: boolean }> {
-  const r = resolvePick(stores, source, pick);
+export async function commitPick(stores: Store[], source: string, pick: StorePick, options: { canAssign?: boolean } = {}): Promise<{ key: string; created: boolean }> {
+  const r = resolvePick(stores, source, pick, options);
   if (r.error) throw new Error(r.error);
   if (r.isNew) await addStoreSite(pick.storeId, { source, siteStoreKey: r.key });
   return { key: r.key, created: r.isNew };
@@ -31,9 +34,10 @@ type Props = {
   value: StorePick;
   onChange: (v: StorePick) => void;
   compact?: boolean;
+  canAssign?: boolean;
 };
 
-export default function StorePicker({ stores, source, sourceName, value, onChange, compact }: Props) {
+export default function StorePicker({ stores, source, sourceName, value, onChange, compact, canAssign = true }: Props) {
   const store = stores.find((s) => s.id === value.storeId);
   const keys = siteKeysOf(store, source);
   const box = compact ? "rounded border border-line bg-card px-2 py-1.5 font-normal text-ink" : "rounded-md border border-line bg-card px-3 py-2 text-[12px] font-semibold focus:border-brand focus:outline-none";
@@ -55,6 +59,8 @@ export default function StorePicker({ stores, source, sourceName, value, onChang
           </label>
         ) : keys.length === 1 ? (
           <p className={compact ? "self-end pb-1.5 text-[11px] text-subtle" : "text-[11px] text-subtle"}>{sourceName}：{keyLabel(source, keys[0])}<span className="ml-1 text-faint">（店舗管理で設定）</span></p>
+        ) : !canAssign ? (
+          <p className={compact ? "self-end pb-1.5 text-[11px] text-warn" : "text-[11px] text-warn"}>{NOT_ASSIGNED}</p>
         ) : (
           <label className={label}>{sourceName}の{source === "ikyu" ? "店舗ID（6桁・未設定）" : "店舗コード（未設定）"}
             <input value={value.typed} onChange={(e) => onChange({ ...value, typed: e.target.value.replace(source === "ikyu" ? /\D/g : /[^0-9A-Za-z_-]/g, "").slice(0, source === "ikyu" ? 6 : 40) })}

@@ -151,6 +151,17 @@ INGEST_TOKEN=... node scripts/agent-queue.mjs --claim --origin mtalk_live --limi
 | `GET /overview?month=YYYY-MM` | 任意の対象月 | `{"overview":{"month","prevMonth","sources":[...],"stores":[{"id","name","sortOrder","sites":{"<source>":{"keys":[{"key","name"}],"pv","prevPv","pvChange","pvChangePct","reservations","prevReservations","rating","reviewCount","unreplied","lastUpdatedAt"}},"totals":{...同じ項目,"ratingSites"}}],"unassigned":{同じ形,"id":"unassigned","name":"未割り当て"}\|null,"totals":{...,"sites":{"<source>":{...}}}}}` |
 | `GET /dashboard?source=&store=` | `store`=`all`（既定）/店舗ID/`unassigned` | 従来の形＋`"store"`。店舗IDが無ければ404 |
 
+### チーム（店舗の管理者が担当店舗だけを見る、migration 024）
+
+データの持ち主は1人（Grok Bot の取り込み先 `INGEST_USER_ID`。`TEAM_OWNER_ID` で上書き可）で、ほかの人は持ち主が承認したメンバーとして同じデータを見ます。
+
+- ログインした人は「参加申請」（お名前）を送ります。承認されるまでは何も見えません。持ち主・管理者が「メンバー管理」で承認し、役割と担当店舗を決めます。停止・再開・削除もできます。
+- **管理者**: 持ち主の全店舗・すべての操作（ログイン情報、店舗管理、メンバー管理、M-talk へのレポート送信を含む）。ただし、管理者の行の変更・管理者への昇格・自分自身の変更は持ち主だけです。
+- **メンバー**: 担当店舗に割り当てたサイトの店舗コードの行だけを見ます（ダッシュボード・全店舗の比較・AI分析・取得依頼・自動取得・口コミ通知）。ログイン情報・店舗管理・メンバー管理・M-talk 送信はできません。店舗IDの割り当ても持ち主・管理者だけです（別の店舗の店舗IDを割り当てて見られないようにするため）。
+- 見える範囲は DB の RLS で決まります（既存の持ち主の policy は変えず、承認済みメンバーの SELECT の policy を追加）。書き込みは review-api・ai-analyst が役割と担当店舗を確かめてから、持ち主の `user_id` で保存します。取得依頼は持ち主の依頼として登録し、依頼した人を `agent_requests.requested_by` に残します（件数の制限は持ち主ごと：1時間30件・未完了20件）。
+- AI分析のレポート・利用回数は作った本人のものです。M-talk の「AI分析」Bot は、管理者が送ったレポートのトークでは持ち主のデータで答えます。
+- RLS の確認: 使い捨てのローカルDB（001〜024 を適用）で `supabase/tests/024_team_rls.sql` を実行します（最後に rollback）。
+
 ### 資格情報（店舗×サイト）
 
 - 「アカウント管理」で店舗ごとに登録します。一休は店舗ID（6桁）・オペレータID・パスワード（1店舗=1ログイン、同じ店舗IDは上書き）。他サイトは店舗コード（食べログは店舗ID推奨）ごとに複数登録でき、未入力は既定の1件です。取り込みの`storeKey`・依頼の`storeId`には同じ店舗コードを使います。
@@ -367,6 +378,13 @@ INGEST_TOKEN=... node scripts/agent-ingest.mjs payload.json
 3. 初期データ（任意・再実行可）: SQLエディタまたは`psql`で`supabase/seed/013_seed_stores.sql`を1回実行する。データを持つ既存の利用者ごとに24店舗（表示順1〜24）を作り、`BISTRO CAVACAVA`に一休`112789`・食べログ`13245351`を設定します。食べログの既定の店舗コード`''`（店舗コードなしの資格情報・旧データ）は、`''`のデータがあり、`13245351`以外の食べログの店舗コードが無い利用者だけ`BISTRO CAVACAVA`に設定します。同名の店舗・設定済みの店舗IDは変更しません。最後の`select`で利用者ごとの店舗数と`BISTRO CAVACAVA`の設定を確認する。
 4. PRをmainへマージし、GitHub Pagesでログイン後に店舗の選択画面が出ること、「全店舗」で比較表が出ることを確認する。
 
+### チーム（migration 024）の配置
+
+1. `supabase/migrations/024_team_members.sql` を本番（`ycsqfajidusuibqljjwr`）に適用する（表 `team_members`・`team_member_stores`、`agent_requests.requested_by`、承認済みメンバーの SELECT の policy）。
+2. review-api と ai-analyst を配置する（`supabase functions deploy review-api ai-analyst --project-ref ycsqfajidusuibqljjwr`）。持ち主は `INGEST_USER_ID`（別の人にするなら secret `TEAM_OWNER_ID`）。
+3. GitHub Pages（main へのマージ）。新しい画面は `/team/me` を使うので、1・2 の後にマージする。
+4. 持ち主でログインし「メンバー管理」が表示されること、別のアカウントでログインすると「参加申請」だけが表示されることを確かめる。
+
 ### AI分析（migration 014・ai-analyst）の配置
 
 1. `014_ai_reports.sql`だけを適用する（`supabase db query --linked -f supabase/migrations/014_ai_reports.sql`、または`migration list`と`db push --dry-run`で014だけと確認できた場合に限り`db push`）。新しい表`ai_reports`（保存レポート）と`ai_usage`（1時間あたりの回数制限）を作るだけで、既存の表・行は変更しません。
@@ -510,6 +528,7 @@ DB変更はこのプロジェクトを確認して対象SQLだけ適用します
 2026-10-05: アプリの AI分析（`/ask`）は、口コミも画面で選択中の期間で答えるようにした。以前は「悪い口コミ」など期間を書かない質問で `all_time`（全期間）を使い、直近90日を選んでも2020〜2024年の低評価9件を分析していた（選択期間は0件）。全期間は質問が「全期間」「これまで」などとはっきり求めたとき（直前の質問を含む）だけで、それ以外は選択期間の結果と、参考の全期間の件数（`allTimeReference`、口コミの中身は返さない）を返す。M-talk（画面の期間が無い）は従来どおり。鮮度の行の期間を、最後の1回の取り込みの範囲から取り込み済みの範囲に変え、日別の数値を使った答えでは期間の日別データの欠けを※の行で書くようにした。
 
 2026-10-05: AI分析の質問への回答に「PDFをダウンロード」を追加（ai-analyst `POST /answer-pdf`。画面に表示した回答の本文を受け取り、レポートと同じ日本語フォントでPDFにする。保存はしない）。
+2026-10-05: チーム（migration 024）を追加。ログインした人は参加申請し、持ち主・管理者が「メンバー管理」で承認・役割（管理者＝全店舗、メンバー＝担当店舗だけ）・担当店舗・停止を決める。見える範囲は RLS（承認済みメンバーの SELECT の policy を追加。持ち主の policy は変えない）、書き込みは役割と担当店舗を確かめてから持ち主の user_id。
 
 ## 参考
 

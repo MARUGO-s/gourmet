@@ -21,8 +21,9 @@
 | 取得依頼 | 店舗×サイトごとの「今すぐ取得を依頼」と履歴（依頼中→取得中→完了／失敗）。ログイン情報の問題なら「ログイン情報を更新」ボタン |
 | 自動取得の設定 | 店舗×サイトごとの定期取得（`fetch_schedules`） |
 | 口コミ通知 | 新着口コミ・食べログ総合点の変化を M-talk の店舗 Bot で送る設定と送信履歴 |
-| アカウント管理 | 店舗×サイトのログイン情報の登録（暗号化して保存。ブラウザからは読み返せない） |
-| 店舗管理 | 店舗名・表示順・各サイトの店舗 ID |
+| アカウント管理 | 店舗×サイトのログイン情報の登録（暗号化して保存。ブラウザからは読み返せない。持ち主・管理者だけ） |
+| 店舗管理 | 店舗名・表示順・各サイトの店舗 ID（持ち主・管理者だけ） |
+| メンバー管理 | 参加申請の承認、役割（管理者＝全店舗／メンバー＝担当店舗だけ）、担当店舗、停止・削除（持ち主・管理者だけ）。承認前の人には「参加申請」の画面だけが出る |
 
 ## 3. データの流れ
 
@@ -54,6 +55,7 @@ AI は **キャッシュ（取り込み済みの DB）だけ** で答え、質�
 | 保存HTML（022） | `site_page_snapshots`（店舗×サイト×ページ×期間で最新1件。service_role だけ。予約者の個人情報を含むページは `contains_pii`・120日で削除） |
 | 取得依頼・自動取得 | `agent_requests`（`origin`・`failure_kind`）、`fetch_schedules` |
 | 店舗 | `stores`、`store_sites` |
+| チーム（024） | `team_members`（参加申請・役割・状態）、`team_member_stores`（メンバーの担当店舗）。見える範囲は RLS（承認済みメンバーの SELECT の policy） |
 | AI | `ai_reports`、`ai_usage`（回数制限。M-talk は `kind='mtalk'`）、`ai_report_shares` |
 | M-talk | `mtalk_live_lookups`（旧「最新を調べる」の記録。022 以降は新しく作らない）、`mtalk_followups`（再ログイン後のお知らせ） |
 | 口コミ通知 | `review_alert_settings`、`review_alert_events`、`review_alert_deliveries` |

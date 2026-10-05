@@ -20,7 +20,12 @@ export async function resolveMtalkOwner(admin, mtalkUserId, groupId, fallbackUse
     .eq("recipient_user_id", mtalkUserId).eq("mtalk_group_id", groupId).eq("status", "sent")
     .order("sent_at", { ascending: false }).limit(1);
   if (error) throw error;
-  return resolveDataOwner(shares?.[0] ?? null, fallbackUserId);
+  const owner = resolveDataOwner(shares?.[0] ?? null, fallbackUserId);
+  if (!owner || owner.via !== "share") return owner;
+  // 送ったのがチームの管理者なら、データの持ち主はチームの持ち主（レポートは送った本人のもの）
+  const { data: team, error: teamError } = await admin.from("team_members").select("owner_id").eq("user_id", owner.userId).eq("status", "active").eq("role", "admin").limit(1);
+  if (teamError) throw teamError;
+  return team?.[0] ? { ...owner, userId: String(team[0].owner_id), reportUserId: owner.userId } : owner;
 }
 
 /** 1時間あたりの回数（ai_usage kind='mtalk'）を超えていれば true。 @param {any} admin @param {string} mtalkUserId */
@@ -37,7 +42,7 @@ export async function mtalkOverLimit(admin, mtalkUserId) {
  * 返り値の links = 取り込みがログイン情報の問題で止まっているサイトの「ログイン情報を更新」ボタン（line_report が答えのあとに送る）。
  * @param {any} admin
  * @param {(k: string) => string | undefined} env
- * @param {{ mtalkUserId: string, owner: { userId: string, reportId: string | null }, question: string, history: any[], system?: string | null, deadlineMs?: number }} input
+ * @param {{ mtalkUserId: string, owner: { userId: string, reportId: string | null, reportUserId?: string }, question: string, history: any[], system?: string | null, deadlineMs?: number }} input
  */
 export async function answerMtalkQuestion(admin, env, input) {
   const config = openAiConfig(env);
@@ -47,7 +52,7 @@ export async function answerMtalkQuestion(admin, env, input) {
   let report = null;
   if (owner.reportId) {
     const { data, error } = await admin.from("ai_reports").select("id,title,store_id,store_name,period_from,period_to,markdown")
-      .eq("id", owner.reportId).eq("user_id", owner.userId).limit(1);
+      .eq("id", owner.reportId).eq("user_id", owner.reportUserId ?? owner.userId).limit(1);
     if (error) throw error;
     report = data?.[0] ?? null;
   }

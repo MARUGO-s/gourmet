@@ -15,6 +15,8 @@ type Props = {
   stores: Store[]; scopeKeys: StoreKeys | null; defaultStoreId: string; onStoresChanged: () => void;
   // 表示中の店舗（店舗 UUID・"all"・null）。週報の配信の絞り込み用
   scope?: string | null;
+  // false（チームのメンバー）: 未設定の店舗IDをその場で割り当てない
+  canAssignSites?: boolean;
 };
 type Draft = { mode: ScheduleMode; intervalHours: number; timeOfDay: string; weekday: number; enabled: boolean };
 type Row = { key: string; source: string; storeId: string; label: string; schedule: FetchSchedule | null };
@@ -35,7 +37,7 @@ const formatJst = (iso: string | null | undefined) => iso ? jst.format(new Date(
 const inputClass = "rounded border border-line bg-card px-2 py-1 text-[11px]";
 
 // 店舗×サイトごとの自動取得の周期。保存した周期で、Grok Botが予定時刻を過ぎた設定を取得依頼にする。
-export default function SchedulesPanel({ sources, credentials, stores, scopeKeys, defaultStoreId, onStoresChanged, scope = null }: Props) {
+export default function SchedulesPanel({ sources, credentials, stores, scopeKeys, defaultStoreId, onStoresChanged, scope = null, canAssignSites = true }: Props) {
   const [schedules, setSchedules] = useState<FetchSchedule[]>([]);
   const [loading, setLoading] = useState(true);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
@@ -112,7 +114,7 @@ export default function SchedulesPanel({ sources, credentials, stores, scopeKeys
     e.preventDefault();
     try {
       // 店舗IDが未設定なら、その店舗の割り当てに保存してから行を追加する
-      const { key, created } = await commitPick(stores, custom.source, custom.pick);
+      const { key, created } = await commitPick(stores, custom.source, custom.pick, { canAssign: canAssignSites });
       if (created) onStoresChanged();
       setExtra((x) => [...x, { source: custom.source, storeId: key }]);
       setCustom({ ...custom, pick: emptyPick(custom.pick.storeId) });
@@ -226,7 +228,7 @@ export default function SchedulesPanel({ sources, credentials, stores, scopeKeys
               {SCHEDULE_SOURCES.map((id) => <option key={id} value={id}>{srcMap.get(id)?.name ?? id}{SUPPORTED_SCHEDULE_SOURCES.includes(id) ? "" : "（準備中）"}</option>)}
             </select>
           </label>
-          <StorePicker compact stores={stores} source={custom.source} sourceName={srcMap.get(custom.source)?.name ?? custom.source} value={custom.pick} onChange={(pick) => setCustom({ ...custom, pick })} />
+          <StorePicker compact canAssign={canAssignSites} stores={stores} source={custom.source} sourceName={srcMap.get(custom.source)?.name ?? custom.source} value={custom.pick} onChange={(pick) => setCustom({ ...custom, pick })} />
           <button type="submit" disabled={!custom.pick.storeId} className="rounded-md border border-brand px-3 py-2 font-bold text-brand disabled:opacity-50">この店舗を追加</button>
           <span className="text-[10px] text-faint">アカウント未登録の店舗も設定できます（取得にはアカウント管理での登録が必要です）</span>
         </form>

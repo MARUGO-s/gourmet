@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ApiError, createRequest, getCredentials, getDashboard, getRequests, getSources, getStores } from "./api";
-import type { AgentRequest, AgentRequestAction, CredentialRow, DashboardData, SourceMeta, Store } from "./types";
+import { ApiError, createRequest, getCredentials, getDashboard, getRequests, getSources, getStores, getTeamMe } from "./api";
+import type { AgentRequest, AgentRequestAction, CredentialRow, DashboardData, SourceMeta, Store, TeamMe } from "./types";
 import { ALL_STORES, filterByStore, keysForStore } from "../supabase/functions/_shared/stores.js";
 import { loadSelection, saveSelection } from "./lib/store-selection";
 import StoreSelect from "./components/StoreSelect";
@@ -20,16 +20,19 @@ import IngestPanel from "./components/IngestPanel";
 import RequestsPanel from "./components/RequestsPanel";
 import SchedulesPanel from "./components/SchedulesPanel";
 import AlertsPanel from "./components/AlertsPanel";
+import JoinPanel from "./components/JoinPanel";
+import MembersPanel from "./components/MembersPanel";
 import { DEEP_LINK_PARAMS, parseDeepLink } from "../supabase/functions/_shared/login-help.js";
 // 一休の詳細分析は選択時だけ読み込む（初期バンドルを小さく保つ）
 const IkyuDetails = lazy(() => import("./components/IkyuDetails"));
 // AI分析も選択時だけ読み込む
 const AiAnalystPage = lazy(() => import("./components/AiAnalystPage"));
 
-export type View = "overview" | "dashboard" | "ai" | "requests" | "schedules" | "alerts" | "accounts" | "stores";
+export type View = "overview" | "dashboard" | "ai" | "requests" | "schedules" | "alerts" | "accounts" | "stores" | "members";
 const VIEW_TITLES: Record<View, [string, string | null]> = {
   overview: ["全店舗の比較", "店舗×サイトの月別PV・前月比・予約・評価・口コミ・未返信"], stores: ["店舗管理", "店舗の追加・並び替えと、各サイトの店舗ID"],
   dashboard: ["ダッシュボード", null], ai: ["AI分析", "AIによる質問への回答と分析レポート（OpenAI）"], requests: ["取得依頼", "Grok Botへの取得依頼と履歴"], schedules: ["自動取得の設定", "店舗×サイトごとの自動取得の周期と、店舗ごとの週報の配信（日本時間）"], alerts: ["口コミ通知", "新着口コミ・食べログ総合点の変化を M-talk の店舗Botからルームへ"], accounts: ["アカウント管理", "口コミサイトのアカウント（店舗×サイト）"],
+  members: ["メンバー管理", "参加申請の承認・役割・担当店舗"],
 };
 
 // M-talk の「ログイン情報を更新」から開いたときの画面（?view=accounts&source=…&store=…&retry=…）。使い終わったら URL から消す
@@ -53,6 +56,10 @@ export default function App() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  // チーム（migration 024）: 承認前（未申請・申請中・停止）はデータを読まず、参加申請の画面だけ
+  const [team, setTeam] = useState<TeamMe | null>(null);
+  const [teamError, setTeamError] = useState<string | null>(null);
   const [credentials, setCredentials] = useState<CredentialRow[]>([]);
   const [requests, setRequests] = useState<AgentRequest[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(false);
@@ -76,8 +83,8 @@ export default function App() {
 
   useEffect(() => {
     let alive = true;
-    supabase.auth.getSession().then(({ data }) => { if (alive) setUserId(data.session?.user.id ?? null); });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => setUserId(session?.user.id ?? null));
+    supabase.auth.getSession().then(({ data }) => { if (alive) { setUserId(data.session?.user.id ?? null); setUserEmail(data.session?.user.email ?? null); } });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => { setUserId(session?.user.id ?? null); setUserEmail(session?.user.email ?? null); });
     return () => { alive = false; subscription.unsubscribe(); };
   }, []);
 
@@ -91,10 +98,25 @@ export default function App() {
     setStores([]);
     setStoresLoaded(false);
     setScope(null);
+    setTeam(null);
+    setTeamError(null);
   }, [userId]);
 
   useEffect(() => {
     if (!userId) return;
+    let alive = true;
+    getTeamMe().then(({ team: t }) => { if (alive) setTeam(t); })
+      .catch((e) => { if (alive) setTeamError(e instanceof Error ? e.message : "利用者の状態を確認できませんでした"); });
+    return () => { alive = false; };
+  }, [userId]);
+  // ログイン中で承認済み（持ち主・管理者・メンバー）。未ログインはデモ
+  const active = !!userId && !!team?.permissions.active;
+  const perms = team?.permissions;
+  const hiddenViews: View[] = !userId ? [] : !active ? ["overview", "dashboard", "ai", "requests", "schedules", "alerts", "accounts", "stores", "members"]
+    : [...(perms?.manageCredentials ? [] : ["accounts" as const]), ...(perms?.manageStores ? [] : ["stores" as const]), ...(perms?.manageTeam ? [] : ["members" as const])];
+
+  useEffect(() => {
+    if (!userId || !active) return;
     let alive = true;
     setStoresError(null);
     getStores()
@@ -111,7 +133,7 @@ export default function App() {
       .catch((e) => { if (alive) setStoresError(e instanceof Error ? e.message : "店舗を読み込めませんでした"); })
       .finally(() => { if (alive) setStoresLoaded(true); });
     return () => { alive = false; };
-  }, [userId, storesKey]);
+  }, [userId, active, storesKey]);
 
   const selectScope = useCallback((next: string) => {
     setScope(next);
@@ -141,13 +163,13 @@ export default function App() {
   useEffect(() => {
     let alive = true;
     getSources().then((rows) => { if (alive) setSources(rows); }).catch(() => { if (alive) setSources([]); });
-    if (userId) getCredentials().then((rows) => { if (alive) setCredentials(rows); }).catch(() => { if (alive) setCredentials([]); });
+    if (active) getCredentials().then((rows) => { if (alive) setCredentials(rows); }).catch(() => { if (alive) setCredentials([]); });
     return () => { alive = false; };
-  }, [refreshKey, userId]);
+  }, [refreshKey, userId, active]);
 
   // 店舗の割り当てを変えたら表示中の店舗のデータも変わるため、storesKey でも読み直す
   useEffect(() => {
-    if (userId && !scope) return;
+    if (userId && (!active || !scope)) return;
     let alive = true;
     setLoading(true);
     getDashboard(filter, userId ? scope ?? ALL_STORES : ALL_STORES)
@@ -159,7 +181,7 @@ export default function App() {
       })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [filter, refreshKey, userId, scope, storesKey, reselect, refreshStores]);
+  }, [filter, refreshKey, userId, active, scope, storesKey, reselect, refreshStores]);
 
   // 取得依頼: 処理待ちがある間は30秒ごとに確認し、完了したらダッシュボードを読み直す
   const loadRequests = useCallback(async () => {
@@ -180,13 +202,13 @@ export default function App() {
     }
   }, [refreshAll]);
 
-  useEffect(() => { if (userId) void loadRequests(); }, [userId, loadRequests]);
+  useEffect(() => { if (active) void loadRequests(); }, [active, loadRequests]);
   const pending = hasOpenRequests(requests);
   useEffect(() => {
-    if (!userId || !pending) return;
+    if (!active || !pending) return;
     const timer = setInterval(() => void loadRequests(), 30_000);
     return () => clearInterval(timer);
-  }, [userId, pending, loadRequests]);
+  }, [active, pending, loadRequests]);
 
   const onRequest = useCallback(async (source: string, storeId: string, action: AgentRequestAction = "sync_now", params?: { fromMonth?: string; note?: string }) => {
     if (!userId) return;
@@ -205,10 +227,11 @@ export default function App() {
   }, [userId, loadRequests]);
 
   const filteredSrc = filter === "all" ? "すべてのサイト" : (sources.find((s) => s.id === filter)?.name ?? "");
-  const choosing = !!userId && !scope && view !== "stores";
-  const [baseTitle, subtitle] = choosing ? ["店舗の選択", "表示する店舗を選んでください"] as const : VIEW_TITLES[view];
+  const choosing = active && !scope && view !== "stores" && view !== "members";
+  const [baseTitle, subtitle] = userId && !active ? ["参加申請", "管理者の承認後に使えます"] as const
+    : choosing ? ["店舗の選択", "表示する店舗を選んでください"] as const : VIEW_TITLES[view];
   const scopeName = !userId ? null : scope === ALL_STORES ? "全店舗" : currentStore?.name ?? null;
-  const title = scopeName && !choosing && view !== "overview" && view !== "stores" && view !== "ai" && view !== "alerts" ? `${scopeName} · ${baseTitle}` : baseTitle;
+  const title = scopeName && active && !choosing && view !== "overview" && view !== "stores" && view !== "ai" && view !== "alerts" && view !== "members" ? `${scopeName} · ${baseTitle}` : baseTitle;
   const openCount = scopedRequests.filter((r) => r.status === "queued" || r.status === "claimed").length;
   const onView = (v: View) => {
     if (v === "overview") { selectScope(ALL_STORES); return; }
@@ -218,8 +241,8 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen">
-      <Sidebar view={choosing ? null : view} onView={onView} signedIn={!!userId} storeName={scopeName}
-        mobileOpen={menuOpen} onClose={closeMenu} onReselect={userId && scope ? reselect : undefined} />
+      <Sidebar view={choosing || (userId && !active) ? null : view} onView={onView} signedIn={!!userId} storeName={active ? scopeName : null} hidden={hiddenViews}
+        mobileOpen={menuOpen} onClose={closeMenu} onReselect={active && scope ? reselect : undefined} />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
           title={title}
@@ -231,7 +254,7 @@ export default function App() {
           onRequests={() => setView("requests")}
           onMenu={() => setMenuOpen(true)}
           menuOpen={menuOpen}
-          switcher={userId && scope ? <StoreSwitcher stores={stores} scope={scope} onChange={selectScope} onReselect={reselect} /> : null}
+          switcher={active && scope ? <StoreSwitcher stores={stores} scope={scope} onChange={selectScope} onReselect={reselect} /> : null}
         />
 
         {notice ? (
@@ -250,10 +273,17 @@ export default function App() {
           {!userId && deepLink?.kind === "credentials" ? (
             <p className="rounded-md border border-line bg-warn-soft px-4 py-2.5 text-[12px] font-bold text-warn">右上の「ログイン」からログインすると、ログイン情報の更新画面を開きます。</p>
           ) : null}
-          {choosing ? (
-            <StoreSelect stores={stores} sources={sources} loading={!storesLoaded} error={storesError} onSelect={selectScope} onManage={() => setView("stores")} onRetry={refreshStores} />
+          {userId && !active ? (
+            team ? <JoinPanel team={team} email={userEmail} onChanged={setTeam} />
+              : <div className="rounded-md border border-line bg-card px-6 py-12 text-center text-[12px] font-semibold text-faint">{teamError ?? "読み込み中…"}</div>
+          ) : view === "members" && perms?.manageTeam ? (
+            <MembersPanel />
+          ) : userId && hiddenViews.includes(view) ? (
+            <div className="rounded-md border border-line bg-card px-6 py-12 text-center text-[12px] font-semibold text-faint">この画面は持ち主・管理者だけが使えます</div>
+          ) : choosing ? (
+            <StoreSelect stores={stores} sources={sources} loading={!storesLoaded} error={storesError} onSelect={selectScope} onManage={perms?.manageStores ? () => setView("stores") : undefined} onRetry={refreshStores} />
           ) : view === "overview" ? (
-            userId ? <OverviewPage key={`${userId}/${storesKey}`} sources={sources} onSelectStore={selectScope} onManage={() => setView("stores")} /> : signInFirst
+            userId ? <OverviewPage key={`${userId}/${storesKey}`} sources={sources} onSelectStore={selectScope} onManage={perms?.manageStores ? () => setView("stores") : undefined} /> : signInFirst
           ) : view === "ai" ? (
             userId ? (
               <Suspense fallback={<div className="rounded-md border border-line bg-card px-6 py-8 text-center text-[12px] font-semibold text-faint">読み込み中…</div>}>
@@ -299,7 +329,7 @@ export default function App() {
 
               <IngestPanel filter={filter} signedIn={!!userId} sources={sources} credentials={scopedCredentials} requests={scopedRequests} busyKey={busyKey} stores={stores}
                 onFilter={setFilter}
-                onRequest={(source, storeId) => void onRequest(source, storeId)} onRequests={() => setView("requests")} onAccounts={() => setView("accounts")} />
+                onRequest={(source, storeId) => void onRequest(source, storeId)} onRequests={() => setView("requests")} onAccounts={perms?.manageCredentials || !userId ? () => setView("accounts") : undefined} />
 
               {loading ? (
                 <div className="rounded-md border border-line bg-card px-6 py-12 text-center text-[12px] font-semibold text-faint">
@@ -343,9 +373,9 @@ export default function App() {
           ) : view === "requests" ? (
             userId ? (
               <RequestsPanel sources={sources} credentials={credentials} requests={requests} loading={requestsLoading} busyKey={busyKey}
-                stores={stores} scopeKeys={scopeKeys} defaultStoreId={defaultStoreId} onStoresChanged={refreshStores}
+                stores={stores} scopeKeys={scopeKeys} defaultStoreId={defaultStoreId} onStoresChanged={refreshStores} canAssignSites={!!perms?.manageStores}
                 onRequest={(source, storeId, action, params) => void onRequest(source, storeId, action, params)} onRefresh={() => void loadRequests()}
-                onRelogin={(source, storeKey, retry) => { setCredPreset({ source, storeKey, retry }); setView("accounts"); }} />
+                onRelogin={perms?.manageCredentials ? (source, storeKey, retry) => { setCredPreset({ source, storeKey, retry }); setView("accounts"); } : undefined} />
             ) : (
               <div className="rounded-md border border-line bg-card px-6 py-12 text-center text-[12px] font-semibold text-faint">右上の「ログイン」から開始してください</div>
             )
@@ -355,7 +385,7 @@ export default function App() {
             )
           ) : view === "schedules" ? (
             userId ? (
-              <SchedulesPanel key={`${userId}/${scope}`} sources={sources} credentials={credentials} stores={stores} scopeKeys={scopeKeys} defaultStoreId={defaultStoreId} onStoresChanged={refreshStores} scope={scope} />
+              <SchedulesPanel key={`${userId}/${scope}`} sources={sources} credentials={credentials} stores={stores} scopeKeys={scopeKeys} defaultStoreId={defaultStoreId} onStoresChanged={refreshStores} scope={scope} canAssignSites={!!perms?.manageStores} />
             ) : (
               <div className="rounded-md border border-line bg-card px-6 py-12 text-center text-[12px] font-semibold text-faint">右上の「ログイン」から開始してください</div>
             )

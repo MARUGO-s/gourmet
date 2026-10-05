@@ -12,7 +12,8 @@ type Props = {
   onFilter: (source: string) => void;
   onRequest: (source: string, storeId: string) => void;
   onRequests: () => void;
-  onAccounts: () => void;
+  // アカウント管理（持ち主・管理者だけ。メンバーには出さない）
+  onAccounts?: () => void;
   // 店舗マスタ（店舗名の表示用）。credentials は表示中の店舗で絞り込み済み
   stores: Store[];
 };
@@ -37,7 +38,7 @@ export default function IngestPanel({ filter, signedIn, sources, credentials, re
         {signedIn ? (
           <div className="flex gap-2">
             <button onClick={onRequests} className="rounded-md border border-brand px-3 py-2 text-[12px] font-bold text-brand">依頼の履歴</button>
-            <button onClick={onAccounts} className="rounded-md border border-line px-3 py-2 text-[12px] font-bold text-subtle">店舗のアカウント</button>
+            {onAccounts ? <button onClick={onAccounts} className="rounded-md border border-line px-3 py-2 text-[12px] font-bold text-subtle">店舗のアカウント</button> : null}
           </div>
         ) : (
           <p className="rounded bg-surface px-3 py-2 text-[12px] text-subtle">右上の「ログイン」から開始してください（未ログイン時はデモ表示）</p>
