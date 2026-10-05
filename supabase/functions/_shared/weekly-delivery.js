@@ -4,7 +4,7 @@
 //   line_report mtalk-external-post POST /store-post（GOURMET_MTALK_TOKEN + HMAC）へ送る。
 // GOURMET_MTALK_TOKEN は gourmet の Edge Function の秘密情報だけにあり、Grok Bot は持たない。
 // 店舗Bot の決め方は口コミ通知と同じ設定（review_alert_settings: 自動＝店舗名で判定／指定／送らない、ルーム）。
-// ルームの既定: 設定でルームを選んでいればそのルーム、無ければ Bot の「店舗ルーム」（is_store_room）、それも無ければ Bot が参加している全グループ。
+// ルームの既定: --room（roomIds）→ 画面「週報の配信」で選んだルーム（weekly_delivery_schedules.room_ids）→ 口コミ通知の設定で選んだルーム → 無ければ Bot の「店舗ルーム」（is_store_room）、それも無ければ Bot が参加している全グループ。
 // 二重送信の防止: dedupe_key = gourmet-weekly:<店舗 UUID>:<作成日の週の月曜（日本時間）>。M-talk がルームごとにカード・（任意の）PDF を1回だけ投稿する。
 // カードは件数・評価・PV などの集計だけ。お客様の個人情報らしき文字列（メールアドレス・電話番号）があれば送らない。
 // 週報の本体は HTML（承認済み共通テンプレート）。M-talk には HTML を添付せず、許可ホスト marugo-s.github.io 上の Pages URL を「週報を開く」で開く。PDF は任意。
@@ -142,8 +142,10 @@ export function validateWeeklyDeliverInput(raw) {
 }
 
 /** 送るルーム: 指定 → 設定のルーム → Bot の店舗ルーム → null（＝M-talk が Bot の参加している全グループへ）。 */
-export function weeklyRoomIds({ requested = null, settings, bot, bots }) {
+export function weeklyRoomIds({ requested = null, scheduled = null, settings, bot, bots }) {
   if (requested?.length) return requested;
+  // 画面「自動取得の設定」→「週報の配信」で選んだルーム（weekly_delivery_schedules.room_ids）
+  if (scheduled?.length) return scheduled.slice(0, WEEKLY_LIMITS.rooms);
   if (settings?.roomIds?.length) return settings.roomIds;
   const live = Array.isArray(bots) ? bots.find((b) => b.id === bot?.id) : null;
   const storeRooms = (live?.rooms ?? []).filter((r) => r.isStoreRoom).map((r) => r.id);
@@ -174,10 +176,11 @@ export function buildWeeklyStorePost({ storeId, storeName, asOf, sections, pdf, 
  * 1店舗の週報を送る。deps:
  *   findStore(input) → { id, name } | null（INGEST_USER_ID の店舗だけ）
  *   loadSettings(storeId) → review_alert_settings の行 | null
+ *   loadScheduleRooms(storeId) → weekly_delivery_schedules.room_ids | null（任意。画面で選んだ週報の送り先ルーム）
  *   listBots() → normalizeStoreBots の結果（M-talk GET /store-bots）
  *   send(payload) → M-talk POST /store-post の応答（失敗は status を持つ例外）
  */
-export async function deliverWeeklyReport(input, { findStore, loadSettings, listBots, send, configured = true }) {
+export async function deliverWeeklyReport(input, { findStore, loadSettings, loadScheduleRooms = async () => null, listBots, send, configured = true }) {
   if (!configured) throw new WeeklyDeliveryError("M-talk連携は未設定です（管理者がサーバーに接続情報を設定すると利用できます）", 503);
   const store = await findStore(input);
   if (!store) throw new WeeklyDeliveryError("店舗が見つかりません（storeId、またはアプリの店舗に紐づいたサイトの店舗キーを指定してください）", 404);
@@ -188,7 +191,7 @@ export async function deliverWeeklyReport(input, { findStore, loadSettings, list
   const bots = await listBots();
   const bot = effectiveBot(settings, store.name, bots);
   if (!bot) return { ok: false, ...base, skipped: `${NO_BOT_REASON}（アプリの「口コミ通知」で店舗Botを指定してください）` };
-  const roomIds = weeklyRoomIds({ requested: input.roomIds, settings, bot, bots });
+  const roomIds = weeklyRoomIds({ requested: input.roomIds, scheduled: await loadScheduleRooms(store.id), settings, bot, bots });
   const payload = buildWeeklyStorePost({ storeId: store.id, storeName: store.name, asOf: input.asOf, sections: input.sections, pdf: input.pdf, botId: bot.id, roomIds, dryRun: input.dryRun });
   const res = await send(payload);
   const rooms = (Array.isArray(res?.rooms) ? res.rooms : []).slice(0, 50).map((r) => ({

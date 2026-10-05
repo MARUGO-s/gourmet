@@ -114,6 +114,11 @@ INGEST_TOKEN=... node scripts/agent-queue.mjs --claim --origin mtalk_live --limi
 - 同じ店舗×サイトの依頼が依頼中・取得中なら新たに依頼せず、次回予定だけ進めます（`open_request`）。依頼の件数制限（1時間30件・未完了20件）に達したら予定を戻して終了し、次の確認で再度依頼します（`rate_limited`）。次回予定は`next_due_at`が変わっていない場合だけ更新するため、複数のエージェントが同時に呼んでも二重に依頼しません（`concurrent`）。
 - 次回予定の計算は`supabase/functions/_shared/fetch-schedules.js`（Node/Edge/ブラウザ共通、テストあり）。○時間ごとは前回の予定時刻から数え、毎日・毎週はその時刻より後の最初の日本時間の時刻です。
 
+### 週報の配信（店舗ごとの曜日・時刻、migration 023）
+
+- 画面「自動取得の設定」の下段「週報の配信」で、店舗ごとに曜日・時刻（日本時間）・送り先の M-talk ルーム・PDF の有無を保存します（`review-api` `GET/POST /weekly-schedules`・`DELETE /weekly-schedules/<id>`、表`weekly_delivery_schedules`。ブラウザは本人の行のSELECTのみ）。
+- Grok Botは稼働時間の確認ごとに`agent-api` `POST /weekly/due`（`scripts/agent-queue.mjs --weekly-due`）を呼び、予定を過ぎた店舗は`/weekly/claim` → `scripts/weekly-assemble.mjs`（最新の実取得データから入力を組み立て。stub は拒否）→ `scripts/weekly-deliver.mjs --publish-dir public`（Pages 用 HTML）→ HTML だけの PR をマージ → dryRun → `--send` → `/weekly/finish`（delivered / skipped / deferred / failed）の順に処理します。データ待ち・失敗は30分後にもう一度（最大12回）。手順の詳細は [docs/weekly-report.md](docs/weekly-report.md)。
+
 ### AI分析（migration 014）
 
 - 「AI分析」画面で店舗（全店舗／各店舗）と期間を選び、PV・予約・口コミについて日本語で質問できます（会話はブラウザのタブを閉じるまで`sessionStorage`に保存）。「レポート作成」は、サマリー・KPIの推移・サイト別の比較・口コミの傾向・未返信の口コミ・改善提案をまとめて`ai_reports`に保存し、一覧から開き直し・印刷（PDF）・Markdown/HTMLのダウンロード・削除ができます。
@@ -347,6 +352,13 @@ INGEST_TOKEN=... node scripts/agent-ingest.mjs payload.json
 2. 直後に`review-api`と`agent-api`を配置する（上記の`supabase functions deploy`、`--no-verify-jwt`）。
 3. PRをmainへマージし、GitHub Pagesの画面に「自動取得の設定」が出ることを確認する。
 4. Grok Botの5分ごとの手順の先頭に`node scripts/agent-queue.mjs --enqueue-due`を追加する（最初は`--dry-run`で内容を確認）。
+
+### 週報の配信（migration 023）の配置
+
+1. `supabase migration list --linked`と`supabase db push --linked --dry-run`で、未適用が`023_weekly_delivery_schedules.sql`だけであることを確認してから適用する（またはSQLエディタで023だけを実行）。新しい表を作るだけで、既存の表・行は変更しません。
+2. 直後に`review-api`と`agent-api`を配置する（`--no-verify-jwt`）。
+3. PRをmainへマージし、「自動取得の設定」の下に「週報の配信」が出ることを確認する。BISTRO CAVACAVA は画面で「毎週 月曜 10:13・ルーム 30」を保存する（画面を使えないときは`supabase/seed/023_weekly_delivery_cava.sql`。口コミ通知の送り先も30だけにする B は任意で、行頭のコメントを外したときだけ）。
+4. Grok Botの稼働時間の確認に`node scripts/agent-queue.mjs --weekly-due`を追加し、予定を過ぎた店舗だけ週報の手順（docs/weekly-report.md「配信の予定」）を実行する。
 
 ### 店舗の選択（migration 013）の配置
 

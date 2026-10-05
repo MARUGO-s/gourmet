@@ -12,6 +12,7 @@ import { loadSourceReviews, mergeReviews, loadIngestedDetails, overlayDetails, l
 import { validateRequestInput, publicRequest } from "../_shared/agent-requests.js";
 import { japanDate } from "../_shared/sync-data.js";
 import { validateScheduleInput, nextDueOnSave, publicSchedule } from "../_shared/fetch-schedules.js";
+import { publicWeeklySchedule, validateWeeklyScheduleInput, weeklySchedulePatchOnSave } from "../_shared/weekly-schedules.js";
 import { ALL_STORES, UNASSIGNED, MAX_STORES, buildOverview, filterReviews, isMonth, isStoreId, publicSite, publicStores, scopeKeys, storeSnapshots,
   validateReorder, validateSiteInput, validateStoreInput } from "../_shared/stores.js";
 import { loadOverviewInputs, loadStoreDailyInputs, loadStoreMaster } from "../_shared/store-data.js";
@@ -184,6 +185,30 @@ Deno.serve(async req => {
     }
     if (/^\/schedules\/[0-9a-f-]{36}$/.test(path) && req.method === "DELETE") {
       await must(admin.from("fetch_schedules").delete().eq("user_id",user.id).eq("id",path.split("/").at(-1)));
+      return json(req,{ok:true});
+    }
+    // 週報の配信予定（店舗ごとの曜日・時刻・ルーム）。閲覧は本人のJWT（RLS）、保存は検証後に本人の user_id に限定して service_role。
+    // 予定時刻を過ぎた店舗の週報を作って届けるのは Grok Bot（agent-api /weekly/due → /weekly/claim → /weekly/deliver → /weekly/finish）だけ。
+    if (path === "/weekly-schedules" && req.method === "GET") {
+      const [rows, stores]=await Promise.all([
+        must(client.from("weekly_delivery_schedules").select("*")),
+        must(client.from("stores").select("id,name")),
+      ]);
+      const byId=new Map(stores.map((s:any)=>[s.id,s]));
+      return json(req,{schedules:rows.map((r:any)=>publicWeeklySchedule(r,byId.get(r.store_id) as any))});
+    }
+    if (path === "/weekly-schedules" && req.method === "POST") {
+      const stores=await must(admin.from("stores").select("id,name").eq("user_id",user.id));
+      let row;
+      try { row=validateWeeklyScheduleInput(await body(req),stores.map((s:any)=>s.id)); }
+      catch (error) { return json(req,{error:(error as Error).message},400); }
+      const now=new Date();
+      const saved=await must(admin.from("weekly_delivery_schedules").upsert({...row,...weeklySchedulePatchOnSave(row,now),user_id:user.id,
+        updated_at:now.toISOString(),updated_by:user.id},{onConflict:"user_id,store_id"}).select("*").single());
+      return json(req,{schedule:publicWeeklySchedule(saved,stores.find((s:any)=>s.id===saved.store_id) as any)});
+    }
+    if (/^\/weekly-schedules\/[0-9a-f-]{36}$/.test(path) && req.method === "DELETE") {
+      await must(admin.from("weekly_delivery_schedules").delete().eq("user_id",user.id).eq("id",path.split("/").at(-1)));
       return json(req,{ok:true});
     }
     // 店舗マスタ（店舗ごとに各サイトの店舗IDをまとめる）。閲覧は本人のJWT（RLS）、保存は検証後に本人の user_id に限定して service_role。

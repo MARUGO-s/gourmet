@@ -29,7 +29,7 @@ const AiAnalystPage = lazy(() => import("./components/AiAnalystPage"));
 export type View = "overview" | "dashboard" | "ai" | "requests" | "schedules" | "alerts" | "accounts" | "stores";
 const VIEW_TITLES: Record<View, [string, string | null]> = {
   overview: ["全店舗の比較", "店舗×サイトの月別PV・前月比・予約・評価・口コミ・未返信"], stores: ["店舗管理", "店舗の追加・並び替えと、各サイトの店舗ID"],
-  dashboard: ["ダッシュボード", null], ai: ["AI分析", "AIによる質問への回答と分析レポート（OpenAI）"], requests: ["取得依頼", "Grok Botへの取得依頼と履歴"], schedules: ["自動取得の設定", "店舗×サイトごとの自動取得の周期（日本時間）"], alerts: ["口コミ通知", "新着口コミ・食べログ総合点の変化を M-talk の店舗Botからルームへ"], accounts: ["アカウント管理", "口コミサイトのアカウント（店舗×サイト）"],
+  dashboard: ["ダッシュボード", null], ai: ["AI分析", "AIによる質問への回答と分析レポート（OpenAI）"], requests: ["取得依頼", "Grok Botへの取得依頼と履歴"], schedules: ["自動取得の設定", "店舗×サイトごとの自動取得の周期と、店舗ごとの週報の配信（日本時間）"], alerts: ["口コミ通知", "新着口コミ・食べログ総合点の変化を M-talk の店舗Botからルームへ"], accounts: ["アカウント管理", "口コミサイトのアカウント（店舗×サイト）"],
 };
 
 // M-talk の「ログイン情報を更新」から開いたときの画面（?view=accounts&source=…&store=…&retry=…）。使い終わったら URL から消す
@@ -355,7 +355,7 @@ export default function App() {
             )
           ) : view === "schedules" ? (
             userId ? (
-              <SchedulesPanel key={`${userId}/${scope}`} sources={sources} credentials={credentials} stores={stores} scopeKeys={scopeKeys} defaultStoreId={defaultStoreId} onStoresChanged={refreshStores} />
+              <SchedulesPanel key={`${userId}/${scope}`} sources={sources} credentials={credentials} stores={stores} scopeKeys={scopeKeys} defaultStoreId={defaultStoreId} onStoresChanged={refreshStores} scope={scope} />
             ) : (
               <div className="rounded-md border border-line bg-card px-6 py-12 text-center text-[12px] font-semibold text-faint">右上の「ログイン」から開始してください</div>
             )

@@ -13,6 +13,9 @@
 //   POST /agent-api/pages/ingest           管理画面のページの保存HTML（未解析の分析・予約・プランのページ）を site_page_snapshots へ（service_role だけが読む）
 //   POST /agent-api/schedules/enqueue-due  自動取得の設定（fetch_schedules）のうち予定時刻を過ぎたものを取得依頼にする
 //   POST /agent-api/alerts/dispatch        口コミ通知（新着口コミ・総合点の変化）の送信待ちを M-talk へ送る（結果を返す）
+//   POST /agent-api/weekly/due             週報の配信予定（weekly_delivery_schedules、画面「自動取得の設定」→「週報の配信」）のうち予定時刻を過ぎた店舗
+//   POST /agent-api/weekly/claim           その店舗の週報の作業中の印を付ける（claimId。期限 2 時間。他のエージェントと二重に作らない）
+//   POST /agent-api/weekly/finish          作業の結果（delivered / skipped / deferred / failed）。配信済み・送らない → 翌週、データ待ち・失敗 → 30分後にもう一度
 //   POST /agent-api/weekly/deliver         週報（要約カード＋PDF）を店舗の M-talk 店舗Bot のルームへ（mtalk-external-post POST /store-post）。
 //                                          店舗×週で1回だけ（dedupe_key）。dryRun: true は M-talk でも投稿せず、Bot・ルーム・カードの確認だけ
 // 口コミ通知は取り込み（/ingest）の直後と取得依頼の確認（/requests/pending、Grok Bot が数分ごと）のたびにバックグラウンドでも送る。
@@ -36,6 +39,7 @@ import { REQUEST_ORIGINS } from "../_shared/agent-requests.js";
 import { answerMtalkQuestion, resolveMtalkOwner } from "../_shared/mtalk-answer.js";
 import { splitReply } from "../_shared/mtalk-chat.js";
 import { STORE_POST_PATH, WEEKLY_LIMITS, WeeklyDeliveryError, deliverWeeklyReport, validateWeeklyDeliverInput } from "../_shared/weekly-delivery.js";
+import { claimWeeklySchedule, finishWeeklySchedule, listWeeklyDue, supabaseWeeklyScheduleStore } from "../_shared/weekly-schedules.js";
 
 // 口コミ通知の送信（同時に2つ走っても claim_review_alert_events が1回だけ確保する）。失敗しても取り込みの応答には影響させない
 function runAlerts(admin: any, userId: string) {
@@ -175,6 +179,20 @@ Deno.serve(async (req) => {
       const result = await runAlerts(admin, userId);
       return reply(result);
     }
+    // 週報の配信予定（画面で選んだ曜日・時刻）。予定を過ぎた店舗 → 作業中の印 → 結果の報告
+    if (path === "/weekly/due") {
+      return reply(await listWeeklyDue(supabaseWeeklyScheduleStore(admin, userId), { now: new Date() }));
+    }
+    if (path === "/weekly/claim") {
+      let out;
+      try { out = await claimWeeklySchedule(supabaseWeeklyScheduleStore(admin, userId), input?.scheduleId, crypto.randomUUID(), { now: new Date() }); } catch (error) { return invalid(error); }
+      return out.status === 200 ? reply(out.body) : reply({ error: out.error }, out.status);
+    }
+    if (path === "/weekly/finish") {
+      let out;
+      try { out = await finishWeeklySchedule(supabaseWeeklyScheduleStore(admin, userId), input, { now: new Date() }); } catch (error) { return invalid(error); }
+      return out.status === 200 ? reply(out.body) : reply({ error: out.error }, out.status);
+    }
     // 週報 → M-talk の店舗Bot のルーム（GOURMET_MTALK_TOKEN はここだけ。Grok Bot は INGEST_TOKEN で呼ぶ）
     if (path === "/weekly/deliver") {
       let weekly;
@@ -194,9 +212,10 @@ Deno.serve(async (req) => {
             return rows[0] ? { id: rows[0].id, name: rows[0].name } : null;
           },
           loadSettings: async (storeId: string) => (await must(admin.from("review_alert_settings").select("*").eq("user_id", userId).eq("store_id", storeId).limit(1)))[0] ?? null,
+          loadScheduleRooms: (storeId: string) => supabaseWeeklyScheduleStore(admin, userId).roomsFor(storeId),
           listBots: async () => normalizeStoreBots(await mtalkRequest(mtalk, "GET", STORE_BOTS_PATH, null, { timeoutMs: ALERT_LIMITS.timeoutMs })),
           send: (payload: unknown) => mtalkRequest(mtalk, "POST", STORE_POST_PATH, payload, { timeoutMs: WEEKLY_LIMITS.timeoutMs }),
-        });
+        } as any);
         return reply(result);
       } catch (error) {
         // 利用者向けの日本語だけを返す（URL・トークン・M-talk の応答本文は含めない）

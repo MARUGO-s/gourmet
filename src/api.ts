@@ -7,6 +7,8 @@ import type {
   AgentRequestAction,
   FetchSchedule,
   ScheduleInput,
+  WeeklySchedule,
+  WeeklyScheduleInput,
   Store,
   StoreSite,
   Overview,
@@ -125,6 +127,26 @@ export async function saveSchedule(input: ScheduleInput) {
     headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(input),
   }).then((r) => json<{ schedule: FetchSchedule }>(r));
+}
+
+// 週報の配信予定（店舗ごとの曜日・時刻・ルーム）。予定時刻を過ぎた店舗の週報はGrok Botが作って届ける
+export async function getWeeklySchedules() {
+  const headers = await authHeaders();
+  return apiFetch("/api/weekly-schedules", { headers }).then((r) => json<{ schedules: WeeklySchedule[] }>(r));
+}
+
+export async function saveWeeklySchedule(input: WeeklyScheduleInput) {
+  const headers = await authHeaders();
+  return apiFetch("/api/weekly-schedules", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(input),
+  }).then((r) => json<{ schedule: WeeklySchedule }>(r));
+}
+
+export async function deleteWeeklySchedule(id: string) {
+  const headers = await authHeaders();
+  return apiFetch(`/api/weekly-schedules/${encodeURIComponent(id)}`, { method: "DELETE", headers }).then((r) => json<{ ok: boolean }>(r));
 }
 
 // 口コミ通知の設定（店舗ごと: 新着口コミ・総合点の変化のオン/オフと M-talk の店舗Bot・ルーム）と履歴

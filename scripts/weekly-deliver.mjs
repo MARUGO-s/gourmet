@@ -5,9 +5,10 @@
 // 既定は確認だけ（dryRun: M-talk でも投稿しない）。実際に投稿するのは --send を付けたときだけ。--no-post は agent-api も呼ばない。
 // PDF は任意（--pdf）。本体は HTML（Pages）。M-talk /store-post は HTML 添付不可・marugo-s.github.io リンク可。
 //
+//   入力は scripts/weekly-assemble.mjs の出力（assembled 付き）を使う。--send は stub・手書きの入力を拒否する。
 //   INGEST_TOKEN=... node scripts/weekly-deliver.mjs \
-//     --tabelog-input weekly-input.json \
-//     --ikyu-payload payload.json [--ikyu-payload older.json] --ikyu-store 112789 \
+//     --tabelog-input <assemble>/tabelog-input.json \
+//     --ikyu-input <assemble>/ikyu-input.json \
 //     --name "BISTRO CAVA CAVA" --store-id <gourmet の店舗 UUID> [--as-of 2026-10-05] [--room 30] \
 //     [--out-dir run-xxx/weekly] [--publish-dir public] [--pdf] [--send | --no-post]
 //
@@ -23,6 +24,7 @@ import { renderWeeklyPdf, weeklyCardSection } from "./shared/weekly-pdf.js";
 import { loadReportFonts, renderReportPdf } from "../supabase/functions/_shared/report-pdf.js";
 import { bytesToBase64 } from "../supabase/functions/_shared/mtalk-share.js";
 import { looksLikePersonalInfo, validateWeeklyDeliverInput, weeklyFileName, weeklyHtmlRepoPath, weeklyHtmlUrl } from "../supabase/functions/_shared/weekly-delivery.js";
+import { payloadProblem, sendBlockers } from "./shared/weekly-sources.js";
 
 const japanToday = () => new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Tokyo" }).format(new Date());
 const has = (v) => v !== undefined && v !== true;
@@ -87,6 +89,20 @@ export async function runWeeklyDeliver(argv, { fetcher = fetch, log = console.er
   }
   const body = deliverPayload({ views, pdf: wantPdf ? pdf : null, args });
   if (body.sections.some((s) => [...s.fields.flatMap((f) => [f.label, f.value]), ...s.items].some(looksLikePersonalInfo))) throw new Error("カードに個人情報らしき文字列があります");
+
+  // Pages への公開（--publish-dir）と送信（--send）は、assemble を通した実データの入力だけ（手書き・stub の入力は公開も送信もしない）。
+  // --allow-unassembled はテスト・手元確認用（月曜の配信では使わない）。
+  if ((args.send === true || typeof args["publish-dir"] === "string") && args["allow-unassembled"] !== true) {
+    const check = [];
+    if (typeof args["tabelog-input"] === "string") check.push(...sendBlockers(JSON.parse(fs.readFileSync(args["tabelog-input"], "utf8")), { asOf }).map((m) => `食べログ: ${m}`));
+    if (typeof args["ikyu-input"] === "string") check.push(...sendBlockers(JSON.parse(fs.readFileSync(args["ikyu-input"], "utf8")), { asOf }).map((m) => `一休: ${m}`));
+    // --ikyu-payload だけのときも、組み立ての元が stub なら止める（日別の合成値）
+    for (const f of [].concat(args["ikyu-payload"] ?? []).filter((x) => typeof x === "string")) {
+      const problem = payloadProblem(JSON.parse(fs.readFileSync(f, "utf8")));
+      if (problem) check.push(`一休の取り込み JSON（${f}）: ${problem}`);
+    }
+    if (check.length) throw new Error(`実データの週報入力ではありません。scripts/weekly-assemble.mjs で組み立て直してください。\n${check.join("\n")}`);
+  }
 
   const htmlDirs = [];
   if (typeof args["out-dir"] === "string") {
