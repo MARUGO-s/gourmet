@@ -228,15 +228,17 @@ INGEST_TOKEN=... node scripts/agent-ingest.mjs payload.json
 
 manifest（パスはmanifestの場所基準）: `{"storeKey":"13245351","name":"店名","daily":["日別PVの各月のHTML"...],"conversion":"来店指標（全期間を選択）.html","myReport":"マイレポート.html","accessRanking":"アクセスランキング.html","reviews":{"reply":["口コミ返信一覧の各ページ"...],"pickup":["ピックアップの各ページ"...]},"public":"自店舗の公開ページ.html","pageHistory":{"first":"YYYYMM","last":"YYYYMM","pc":"...","sp":"...","app":"..."},"topPages":"top-pages.json（任意）"}`。「よく見られるページ」はグラフ（JavaScript）の値なので、ブラウザで`readTopPages`した結果をJSONで渡します。口コミは全ページが必要です（件数が揃わない場合は停止）。合成フィクスチャ: `server/tests/fixtures/tabelog/`。
 
-### 食べログ週報 HTML（既定テンプレート）
+### 週報 HTML（全サイト共通テンプレート）
 
-週報の **既定テンプレート** は `scripts/tabelog/weekly-report.js`（サンプル週報と同じ UI。内容ルールは青写真＝未取得は「未取得」、事実と推測を分離、PII 禁止）。詳細は [docs/tabelog-weekly-report.md](docs/tabelog-weekly-report.md)。
+週報の見た目は **全サイト共通テンプレート** `scripts/shared/weekly-report.js`（サンプル週報と同じ UI。内容ルールは青写真＝未取得は「未取得」、事実と推測を分離、PII 禁止）。食べログ・一休はそれぞれのアダプタ（`scripts/tabelog/weekly-report.js`・`scripts/ikyu/weekly-report.js`）が数値を詰めるだけで、同じ見た目になります。詳細は [docs/weekly-report.md](docs/weekly-report.md)（共通・一休）、[docs/tabelog-weekly-report.md](docs/tabelog-weekly-report.md)（食べログ）。
 
 ```sh
 node scripts/tabelog-weekly-report.mjs --input weekly-input.json --out weekly-report.html
+node scripts/ikyu-weekly-report.mjs --payload payload.json --store 112789 --name "BISTRO CAVA CAVA" --out ikyu-weekly.html
+node scripts/weekly-report.mjs --site <tabelog|ikyu> …   # 共通 CLI
 ```
 
-`--input` は `assembleWeeklyReportInput` 向け JSON（`storeKey` / `storeName` / `asOf` 必須）。アプリ実行環境では使わず、エージェント／ローカル用です。
+食べログの `--input` は `assembleWeeklyReportInput` 向け JSON（`storeKey` / `storeName` / `asOf` 必須）。一休の `--payload` は `scripts/ikyu-html-to-json.mjs` の出力（複数指定で重ねる）、`--input` は `assembleIkyuWeeklyInput` 向け JSON（DB 行も可）。アプリ実行環境では使わず、エージェント／ローカル用です。
 
 ### 一休.comレストラン
 

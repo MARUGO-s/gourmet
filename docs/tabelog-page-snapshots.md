@@ -36,4 +36,4 @@
 
 ## 週報 HTML（既定テンプレート）
 
-**既定**は `scripts/tabelog/weekly-report.js`（`buildWeeklyReportHtml` / `assembleWeeklyReportInput`）。エクスポート入口は `node scripts/tabelog-weekly-report.mjs`。UI＝サンプル週報 HTML、内容＝青写真ルール。オフライン（外部 CDN なし）。通話成立≠予約確定、通知件数≠期間合計、公開ページに投稿日なし、を脚注に明記。詳細: [tabelog-weekly-report.md](tabelog-weekly-report.md)。
+**既定**は `scripts/tabelog/weekly-report.js`（`buildWeeklyReportHtml` / `assembleWeeklyReportInput`）。見た目は全サイト共通テンプレート `scripts/shared/weekly-report.js`（一休週報も同じ）。エクスポート入口は `node scripts/tabelog-weekly-report.mjs`（または `node scripts/weekly-report.mjs --site tabelog`）。UI＝サンプル週報 HTML、内容＝青写真ルール。オフライン（外部 CDN なし）。通話成立≠予約確定、通知件数≠期間合計、公開ページに投稿日なし、を脚注に明記。詳細: [weekly-report.md](weekly-report.md)・[tabelog-weekly-report.md](tabelog-weekly-report.md)。
