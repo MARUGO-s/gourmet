@@ -12,10 +12,10 @@
 import { createClient } from "npm:@supabase/supabase-js@2.116.0";
 import * as PDFLib from "npm:pdf-lib@1.17.1";
 import * as fontkit from "npm:fontkit@2.0.4";
-import { service, json, body } from "../_shared/http.ts";
+import { service, json, body, cors } from "../_shared/http.ts";
 import { must, japanDate } from "../_shared/sync-data.js";
 import { AI_LIMITS, REPORT_SCHEMA_HINT, askToolContext, buildReportFacts, composeReportMarkdown, contextMessage, dataCoverage, normalizeReportAi, reportPromptFacts, resolvePeriod, systemPrompt,
-  validateAskInput, validateReportInput } from "../_shared/ai-analyst.js";
+  validateAskInput, validateReportInput, validateAnswerPdfInput, answerPdfDocument } from "../_shared/ai-analyst.js";
 import { AiError, answerWithTools, chatCompletion, openAiConfig } from "../_shared/openai.js";
 import { buildEvidence, labelReportSpeculation, sanitizeReportAi, verificationFeedback, verifyReportAi } from "../_shared/answer-verify.js";
 
@@ -97,6 +97,16 @@ Deno.serve(async req => {
       const fresh = answerFreshness(result, ds, { todayYear, coverage, period:{ from:input.from, to:input.to } });
       const answer = fresh.text ? `${result.answer}\n\n${fresh.text.split("\n").map((l: string) => `> ${l}`).join("\n")}` : result.answer;
       return json(req, { answer, freshness:fresh.text || null, model:result.model, calls:result.calls, verification:result.verification, period:{ from:input.from, to:input.to }, store:input.store });
+    }
+
+    // 質問への回答をPDFにする（画面に表示した回答の本文を受け取り、日本語フォントを埋め込んで返す。保存はしない）
+    if (path === "/answer-pdf" && req.method === "POST") {
+      let input;
+      try { input = validateAnswerPdfInput(await body(req, 200_000)); }
+      catch (error) { return json(req, { error:error instanceof SyntaxError ? "入力形式が不正です" : (error as Error).message }, 400); }
+      const { report, meta } = answerPdfDocument(input, new Date().toISOString());
+      const pdf = await renderReportPdf({ PDFLib, fontkit, fonts:await reportFonts(), report, meta, footer:"Review Command Center" });
+      return new Response(pdf as unknown as BodyInit, { status:200, headers:{ ...cors(req), "Content-Type":"application/pdf", "Cache-Control":"no-store" } });
     }
 
     if (path === "/reports" && req.method === "GET") {
