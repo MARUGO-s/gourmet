@@ -1,6 +1,6 @@
 # gourmet アプリ概要（APP_OVERVIEW）
 
-最終更新: 2026-10-05（食べログ週報 HTML を既定テンプレート化。UI=サンプル週報、内容=青写真ルール）。詳しい手順・API の入出力は [README.md](README.md) を見てください。
+最終更新: 2026-10-05（週報 HTML を全サイト共通テンプレート化し、一休週報を追加。UI=サンプル週報、内容=青写真ルール）。詳しい手順・API の入出力は [README.md](README.md) を見てください。
 
 ## 1. 目的
 
@@ -137,14 +137,23 @@ AI は **キャッシュ（取り込み済みの DB）だけ** で答え、質�
 | 食べログ | Grok Bot が取得。日別・端末別 PV、月別アクセス・来店指標（ネット予約・通話成立・地図印刷）、エリア順位、ページ別 PV、マイレポートの端末別ページサマリー、口コミ・ピックアップ、公開ページの保存数・予算、管理トップの予約通知件数、公開エリア×ジャンル順位・競合・ニューオープンを解析/構造化。電話効果・端末別の日別ページ・求人・予約実績・キャンセル料請求・コース・座席・空席・クーポン・店舗管理トップHTMLは保存HTMLのみ（トップは件数のみ構造化可） |
 | ホットペッパー・Google・トレタ・Retty | 共通の取り込み形式で送られたデータを表示するだけ（Grok Bot 側の取得手順は未実装） |
 
-## 11. 食べログ週報（既定テンプレート）
+## 11. 週報 HTML（全サイト共通テンプレート）
 
-食べログ店舗の週報 HTML の **既定テンプレート** は `scripts/tabelog/weekly-report.js`（`buildWeeklyReportHtml`）。UI はサンプル週報 HTML（hero / KPI / panels / charts / competitor bars / actions / footnotes）、内容ルールは青写真（未取得は「未取得」、事実と推測を分離、PII 禁止）。エクスポート入口: `node scripts/tabelog-weekly-report.mjs --input … --out …`。詳細は [docs/tabelog-weekly-report.md](docs/tabelog-weekly-report.md)。
+週報 HTML の見た目は **全サイト共通** の `scripts/shared/weekly-report.js`（`renderWeeklyReportHtml`、CSS は `scripts/shared/weekly-report.css.txt`）。UI はユーザー承認済みのサンプル週報（hero / KPI / panels / charts / competitor bars / actions / footnotes）、内容ルールは青写真（未取得は「未取得」、事実と推測を分離、PII 禁止）。サイトごとの数値・文言は各アダプタが詰めるだけで、食べログ・一休・今後のホットペッパー等はすべて同じ見た目になります。エージェント／ローカルで HTML を作る（Edge Functions は使わない）。
+
+| サイト | アダプタ | エクスポート入口 |
+|---|---|---|
+| 食べログ | `scripts/tabelog/weekly-report.js` | `node scripts/tabelog-weekly-report.mjs --input … --out …` |
+| 一休 | `scripts/ikyu/weekly-report.js`（取り込み JSON・DB 行から組み立て。予約は受付日ベース。競合・エリア順位は未取得） | `node scripts/ikyu-weekly-report.mjs --payload payload.json --store 112789 --name … --out …` |
+| 共通 CLI | — | `node scripts/weekly-report.mjs --site tabelog\|ikyu …` |
+
+詳細は [docs/weekly-report.md](docs/weekly-report.md)（共通・一休）と [docs/tabelog-weekly-report.md](docs/tabelog-weekly-report.md)（食べログ）。
 
 ## 12. 残課題
 
 - 保存HTMLだけのページ（上の表）は、本物のサンプルがそろってから解析を足す（`parsed_at` が空のものが対象）。
 - 一休の販売集計（プラン別・日付別）の URL は本番の画面でまだ確かめていない。
+- 一休週報の競合比較・エリア順位・新規オープン・比較店のプラン価格は「未取得」（一休の公開一覧・プランの取得が未対応）。
 - 食べログのネット予約の管理一覧はメニューに無く、未対応。
 - 022 以降、鮮度から出る「ログイン情報を更新」で保存しても、取り直しの結果のお知らせ（`mtalk_followups`）は旧 `mtalk_live` の依頼のときだけ作られる（取り直し自体は行われ、次の質問の鮮度に反映される）。
 - 一休のログインが「ID・パスワードが正しくありません」と出る件（9/30・10/1。ログイン情報は未変更の可能性）は様子見。続く日は一休のログインを止める。
