@@ -1,5 +1,5 @@
 // 週報 → M-talk の店舗Bot のルーム（agent-api /weekly/deliver → mtalk-external-post /store-post）と、
-// 週報のビュー → PDF・カードの要約（scripts/shared/weekly-pdf.js）、Grok Bot 用 CLI（scripts/weekly-deliver.mjs）。
+// 週報のビュー → Pages 上の HTML（「週報を開く」）・任意 PDF・カードの要約、Grok Bot 用 CLI（scripts/weekly-deliver.mjs）。
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -8,8 +8,8 @@ import path from "node:path";
 import * as PDFLib from "pdf-lib";
 import * as fontkit from "fontkit";
 import {
-  STORE_POST_PATH, WEEKLY_APP_URL, WeeklyDeliveryError, buildWeeklyStorePost, deliverWeeklyReport, looksLikePersonalInfo,
-  validateWeeklyDeliverInput, weekMonday, weeklyDedupeKey, weeklyFileName, weeklyRoomIds,
+  STORE_POST_PATH, WEEKLY_APP_URL, WEEKLY_PAGES_BASE, WeeklyDeliveryError, buildWeeklyStorePost, deliverWeeklyReport, looksLikePersonalInfo,
+  validateWeeklyDeliverInput, weekMonday, weeklyDedupeKey, weeklyFileName, weeklyHtmlRepoPath, weeklyHtmlUrl, weeklyRoomIds,
 } from "../../supabase/functions/_shared/weekly-delivery.js";
 import { mtalkConfig, mtalkRequest } from "../../supabase/functions/_shared/mtalk-share.js";
 import { loadReportFonts, renderReportPdf } from "../../supabase/functions/_shared/report-pdf.js";
@@ -75,8 +75,12 @@ test("store-post payload: the M-talk /store-post contract (not the /alert review
   assert.equal(body.title, "BISTRO CAVA CAVA 週報（食べログ・一休）");
   assert.equal(body.subtitle, "2026/10/05 作成（日本時間）");
   assert.equal(body.dedupe_key, `gourmet-weekly:${STORE}:2026-10-05`);
-  assert.deepEqual(body.links, [{ label: "アプリで見る", url: WEEKLY_APP_URL }]);
+  assert.equal(WEEKLY_PAGES_BASE, "https://marugo-s.github.io/gourmet/weekly");
+  assert.equal(weeklyHtmlUrl(STORE, "2026-10-05"), `${WEEKLY_PAGES_BASE}/${STORE}/2026-10-05/`);
+  assert.equal(weeklyHtmlRepoPath(STORE, "2026-10-05"), `weekly/${STORE}/2026-10-05`);
+  assert.deepEqual(body.links, [{ label: "週報を開く", url: weeklyHtmlUrl(STORE, "2026-10-05") }]);
   assert.deepEqual(body.files, [{ pdf_base64: PDF_B64, filename: "BISTRO CAVA CAVA weekly 2026-10-05.pdf" }]);
+  assert.notEqual(body.links[0].url, WEEKLY_APP_URL, "アプリのトップではなく週報 HTML（Pages）を開く");
   assert.deepEqual(body.sections[0], { heading: "食べログ", fields: input.sections[0].fields, items: input.sections[0].items });
   for (const k of ["reviews", "score_changes", "recipient_user_id"]) assert.equal(k in body, false, k);
   const dry = buildWeeklyStorePost({ storeId: STORE, storeName: "BISTRO CAVA CAVA", asOf: input.asOf, sections: input.sections, pdf: null, botId: CAVA_BOT.id, roomIds: null, dryRun: true });
@@ -109,6 +113,7 @@ test("deliver: auto-matches the BISTRO CAVA CAVA store bot and prefers its store
   assert.deepEqual(out.rooms, [{ id: 30, name: "BISTRO CAVA CAVA", isStoreRoom: undefined, cardMessageId: 900, fileMessageIds: [901], deduplicated: false }]);
   assert.equal(out.dedupeKey, `gourmet-weekly:${STORE}:2026-10-05`);
   assert.equal(out.pdf.filename, "BISTRO CAVA CAVA weekly 2026-10-05.pdf");
+  assert.deepEqual(out.html, { url: weeklyHtmlUrl(STORE, "2026-10-05") });
 });
 
 test("deliver: rooms from the request, then the alert settings, then the store room, else all bot rooms", () => {
@@ -235,19 +240,32 @@ test("weekly-deliver CLI: dry run by default, --send to post, --no-post stays lo
   const sent = JSON.parse(calls[0].init.body);
   assert.equal(sent.dryRun, true);
   assert.deepEqual(sent.site, { source: "tabelog", storeKey: "13245351" });
-  assert.equal(Buffer.from(sent.pdf.base64, "base64").subarray(0, 5).toString(), "%PDF-");
-  assert.ok(fs.existsSync(path.join(dir, "BISTRO CAVA CAVA weekly 2026-10-05.pdf")));
-  assert.ok(fs.existsSync(path.join(dir, "tabelog-weekly-2026-10-05.html")) && fs.existsSync(path.join(dir, "ikyu-weekly-2026-10-05.html")), "HTML は手元の確認用（M-talk には送らない）");
+  assert.equal(sent.pdf, undefined, "既定では PDF を M-talk に載せない（HTML が本体）");
+  assert.ok(fs.existsSync(path.join(dir, "BISTRO CAVA CAVA weekly 2026-10-05.pdf")), "out-dir では手元確認用に PDF も書く");
+  assert.ok(fs.existsSync(path.join(dir, "tabelog-weekly-2026-10-05.html")) && fs.existsSync(path.join(dir, "ikyu-weekly-2026-10-05.html")), "HTML は手元の確認用");
+  assert.ok(fs.existsSync(path.join(dir, "html", "index.html")) && fs.existsSync(path.join(dir, "html", "tabelog.html")), "ハブ＋サイト別 HTML");
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "weekly-card-2026-10-05.json"), "utf8")).pdf, undefined, "カードの JSON に PDF の中身を書かない");
+
+  const pub = path.join(dir, "public");
+  await runWeeklyDeliver([...argv, "--no-post", "--store-id", STORE, "--publish-dir", pub], { fetcher, env: {}, log: () => {} });
+  const published = path.join(pub, "weekly", STORE, "2026-10-05");
+  assert.ok(fs.existsSync(path.join(published, "index.html")));
+  assert.ok(fs.existsSync(path.join(published, "tabelog.html")) && fs.existsSync(path.join(published, "ikyu.html")));
+  assert.match(fs.readFileSync(path.join(published, "index.html"), "utf8"), /週報を開く|食べログ週報|一休週報/);
 
   await runWeeklyDeliver([...argv, "--send", "--store-id", STORE, "--room", "30"], { fetcher, env, log: () => {} });
   const live = JSON.parse(calls[1].init.body);
   assert.equal(live.dryRun, false);
   assert.equal(live.storeId, STORE);
   assert.deepEqual(live.roomIds, [30]);
+  assert.equal(live.pdf, undefined, "--pdf 無しでは添付なし");
+
+  await runWeeklyDeliver([...argv, "--send", "--pdf", "--store-id", STORE, "--room", "30"], { fetcher, env, log: () => {} });
+  const withPdf = JSON.parse(calls[2].init.body);
+  assert.equal(Buffer.from(withPdf.pdf.base64, "base64").subarray(0, 5).toString(), "%PDF-");
 
   const local = await runWeeklyDeliver([...argv, "--no-post"], { fetcher, env: {}, log: () => {} });
-  assert.equal(calls.length, 2, "--no-post は agent-api を呼ばない（トークンも不要）");
+  assert.equal(calls.length, 3, "--no-post は agent-api を呼ばない（トークンも不要）");
   assert.equal(local.posted, false);
   assert.throws(() => deliverPayload({ views: views(), pdf: null, args: { "store-id": "bad" } }), /storeId/);
 });

@@ -1,17 +1,20 @@
 // 週報（食べログ・一休などの共通テンプレート）を M-talk の店舗Botのルームへ届ける。Node/Deno 共通の純粋ロジック＋送信の手順。
-// 流れ: Grok Bot（月曜の作業）が scripts/weekly-deliver.mjs で週報のビュー → PDF とカードの要約を作り、
+// 流れ: Grok Bot（月曜の作業）が scripts/weekly-deliver.mjs で週報のビュー → 共通テンプレート HTML（GitHub Pages に置く）とカードの要約（任意で PDF）を作り、
 //   agent-api POST /weekly/deliver（X-Ingest-Token）へ渡す → ここで検証し、店舗Bot・ルームを決めて
 //   line_report mtalk-external-post POST /store-post（GOURMET_MTALK_TOKEN + HMAC）へ送る。
 // GOURMET_MTALK_TOKEN は gourmet の Edge Function の秘密情報だけにあり、Grok Bot は持たない。
 // 店舗Bot の決め方は口コミ通知と同じ設定（review_alert_settings: 自動＝店舗名で判定／指定／送らない、ルーム）。
 // ルームの既定: 設定でルームを選んでいればそのルーム、無ければ Bot の「店舗ルーム」（is_store_room）、それも無ければ Bot が参加している全グループ。
-// 二重送信の防止: dedupe_key = gourmet-weekly:<店舗 UUID>:<作成日の週の月曜（日本時間）>。M-talk がルームごとにカード・PDF を1回だけ投稿する。
-// カードは件数・評価・PV などの集計だけ。お客様の個人情報らしき文字列（メールアドレス・電話番号）があれば送らない。HTML は添付しない（PDF だけ）。
+// 二重送信の防止: dedupe_key = gourmet-weekly:<店舗 UUID>:<作成日の週の月曜（日本時間）>。M-talk がルームごとにカード・（任意の）PDF を1回だけ投稿する。
+// カードは件数・評価・PV などの集計だけ。お客様の個人情報らしき文字列（メールアドレス・電話番号）があれば送らない。
+// 週報の本体は HTML（承認済み共通テンプレート）。M-talk には HTML を添付せず、許可ホスト marugo-s.github.io 上の Pages URL を「週報を開く」で開く。PDF は任意。
 import { SOURCES } from "./sources.js";
 import { NO_BOT_REASON, effectiveBot, resolveAlertSettings } from "./review-alerts.js";
 
 export const STORE_POST_PATH = "/store-post";
 export const WEEKLY_APP_URL = "https://marugo-s.github.io/gourmet/";
+/** 週報 HTML の GitHub Pages ルート（Vite public/weekly → dist/weekly）。 */
+export const WEEKLY_PAGES_BASE = "https://marugo-s.github.io/gourmet/weekly";
 export const WEEKLY_LIMITS = {
   sections: 4, fields: 8, fieldLabel: 24, fieldValue: 120, items: 3, item: 200, rooms: 20,
   /** PDF（デコード後）。agent-api の本文 8MB に base64 で収まる大きさ。 */
@@ -60,6 +63,25 @@ const slash = (ymd) => ymd.replace(/-/g, "/");
 export function weeklyFileName(storeName, asOf) {
   const store = String(storeName ?? "").normalize("NFKC").replace(/[^A-Za-z0-9._() -]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 60);
   return `${store ? `${store} ` : ""}weekly ${asOf}.pdf`.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * 店舗×作成日の週報 HTML（Pages）の URL。
+ * 実体は `public/weekly/<storeId>/<asOf>/index.html`（＋サイト別 HTML）。カードの「週報を開く」がこれを開く。
+ */
+export function weeklyHtmlUrl(storeId, asOf) {
+  const id = String(storeId ?? "").toLowerCase();
+  if (!UUID.test(id)) throw new WeeklyDeliveryError("storeId が不正です");
+  if (!DAY.test(String(asOf ?? ""))) throw new WeeklyDeliveryError("asOf は YYYY-MM-DD で指定してください");
+  return `${WEEKLY_PAGES_BASE}/${id}/${asOf}/`;
+}
+
+/** Pages 上の週報パス（リポジトリの public/ からの相対）。 */
+export function weeklyHtmlRepoPath(storeId, asOf) {
+  const id = String(storeId ?? "").toLowerCase();
+  if (!UUID.test(id)) throw new WeeklyDeliveryError("storeId が不正です");
+  if (!DAY.test(String(asOf ?? ""))) throw new WeeklyDeliveryError("asOf は YYYY-MM-DD で指定してください");
+  return `weekly/${id}/${asOf}`;
 }
 
 function pdfBase64(value) {
@@ -142,7 +164,7 @@ export function buildWeeklyStorePost({ storeId, storeName, asOf, sections, pdf, 
     subtitle: `${slash(asOf)} 作成（日本時間）`,
     sections: sections.map((s) => ({ heading: s.heading, fields: s.fields, items: s.items })),
     note: WEEKLY_NOTE,
-    links: [{ label: "アプリで見る", url: WEEKLY_APP_URL }],
+    links: [{ label: "週報を開く", url: weeklyHtmlUrl(storeId, asOf) }],
     ...(pdf ? { files: [{ pdf_base64: pdf.base64, filename: pdf.filename || weeklyFileName(name, asOf) }] } : {}),
     ...(dryRun ? { dry_run: true } : {}),
   };
@@ -175,6 +197,7 @@ export async function deliverWeeklyReport(input, { findStore, loadSettings, list
   }));
   return {
     ok: true, ...base, bot: { id: bot.id, name: res?.bot_name ? clip(res.bot_name, 100) : bot.name, how: bot.how }, roomIds, rooms,
+    html: { url: weeklyHtmlUrl(store.id, input.asOf) },
     pdf: payload.files ? { filename: payload.files[0].filename } : null,
     ...(input.dryRun ? { preview: clip(res?.text, 500) } : { deduplicated: !!res?.deduplicated }),
   };
