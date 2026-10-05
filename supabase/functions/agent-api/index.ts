@@ -13,6 +13,8 @@
 //   POST /agent-api/pages/ingest           管理画面のページの保存HTML（未解析の分析・予約・プランのページ）を site_page_snapshots へ（service_role だけが読む）
 //   POST /agent-api/schedules/enqueue-due  自動取得の設定（fetch_schedules）のうち予定時刻を過ぎたものを取得依頼にする
 //   POST /agent-api/alerts/dispatch        口コミ通知（新着口コミ・総合点の変化）の送信待ちを M-talk へ送る（結果を返す）
+//   POST /agent-api/weekly/deliver         週報（要約カード＋PDF）を店舗の M-talk 店舗Bot のルームへ（mtalk-external-post POST /store-post）。
+//                                          店舗×週で1回だけ（dedupe_key）。dryRun: true は M-talk でも投稿せず、Bot・ルーム・カードの確認だけ
 // 口コミ通知は取り込み（/ingest）の直後と取得依頼の確認（/requests/pending、Grok Bot が数分ごと）のたびにバックグラウンドでも送る。
 // 検出は DB トリガー（migration 017）。送信は店舗の M-talk 店舗Botとして、その Bot が参加しているグループのルームへ
 // line_report mtalk-external-post POST /alert（GOURMET_MTALK_TOKEN + HMAC、ai-analyst と同じ秘密情報）。Bot の自動判定は GET /store-bots。
@@ -29,10 +31,11 @@ import { normalizePageSnapshots } from "../_shared/page-snapshots.js";
 import { publicRequest, validateFinish } from "../_shared/agent-requests.js";
 import { enqueueDueSchedules, supabaseScheduleStore, ENQUEUE_LIMIT } from "../_shared/fetch-schedules.js";
 import { ALERT_LIMITS, ALERT_PATH, STORE_BOTS_PATH, dispatchReviewAlerts, normalizeStoreBots, supabaseAlertStore } from "../_shared/review-alerts.js";
-import { mtalkConfig, mtalkRequest } from "../_shared/mtalk-share.js";
+import { MtalkError, mtalkConfig, mtalkRequest } from "../_shared/mtalk-share.js";
 import { REQUEST_ORIGINS } from "../_shared/agent-requests.js";
 import { answerMtalkQuestion, resolveMtalkOwner } from "../_shared/mtalk-answer.js";
 import { splitReply } from "../_shared/mtalk-chat.js";
+import { STORE_POST_PATH, WEEKLY_LIMITS, WeeklyDeliveryError, deliverWeeklyReport, validateWeeklyDeliverInput } from "../_shared/weekly-delivery.js";
 
 // 口コミ通知の送信（同時に2つ走っても claim_review_alert_events が1回だけ確保する）。失敗しても取り込みの応答には影響させない
 function runAlerts(admin: any, userId: string) {
@@ -171,6 +174,35 @@ Deno.serve(async (req) => {
     if (path === "/alerts/dispatch") {
       const result = await runAlerts(admin, userId);
       return reply(result);
+    }
+    // 週報 → M-talk の店舗Bot のルーム（GOURMET_MTALK_TOKEN はここだけ。Grok Bot は INGEST_TOKEN で呼ぶ）
+    if (path === "/weekly/deliver") {
+      let weekly;
+      try { weekly = validateWeeklyDeliverInput(input); } catch (error) { return reply({ error: String((error as Error).message).slice(0, 300) }, (error as WeeklyDeliveryError).status ?? 422); }
+      const mtalk = mtalkConfig((k: string) => Deno.env.get(k));
+      try {
+        const result = await deliverWeeklyReport(weekly, {
+          configured: mtalk.configured,
+          findStore: async (w: any) => {
+            let storeId = w.storeId;
+            if (!storeId) {
+              const sites = await must(admin.from("store_sites").select("store_id").eq("user_id", userId).eq("source", w.site.source).eq("site_store_key", w.site.storeKey).limit(2));
+              if (sites.length !== 1) return null;
+              storeId = sites[0].store_id;
+            }
+            const rows = await must(admin.from("stores").select("id,name").eq("user_id", userId).eq("id", storeId).limit(1));
+            return rows[0] ? { id: rows[0].id, name: rows[0].name } : null;
+          },
+          loadSettings: async (storeId: string) => (await must(admin.from("review_alert_settings").select("*").eq("user_id", userId).eq("store_id", storeId).limit(1)))[0] ?? null,
+          listBots: async () => normalizeStoreBots(await mtalkRequest(mtalk, "GET", STORE_BOTS_PATH, null, { timeoutMs: ALERT_LIMITS.timeoutMs })),
+          send: (payload: unknown) => mtalkRequest(mtalk, "POST", STORE_POST_PATH, payload, { timeoutMs: WEEKLY_LIMITS.timeoutMs }),
+        });
+        return reply(result);
+      } catch (error) {
+        // 利用者向けの日本語だけを返す（URL・トークン・M-talk の応答本文は含めない）
+        if (error instanceof WeeklyDeliveryError || error instanceof MtalkError) return reply({ error: String(error.message).slice(0, 300) }, (error as { status: number }).status || 502);
+        throw error;
+      }
     }
     if (path === "/credentials/versions") {
       const rows = await must(admin.from("credentials").select("source,store_key,label,credentials_version,updated_at").eq("user_id", userId).order("source").order("store_key"));

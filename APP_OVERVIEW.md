@@ -67,7 +67,7 @@ AI は **キャッシュ（取り込み済みの DB）だけ** で答え、質�
 |---|---|---|
 | `review-api` | 利用者の JWT（`auth.getUser()`） | `/dashboard`、`/overview`、`/sources`、`/stores`・`/stores/reorder`、`/credentials`、`/requests`、`/schedules`、`/alert-settings`、`/alert-log`。`/sync` は廃止（410） |
 | `ai-analyst` | `/ask` 等は JWT。`/mtalk-chat` は `GOURMET_MTALK_TOKEN` の HMAC 署名 | `/ask`、`/reports`（作成・一覧）、`/reports/:id/share-mtalk`、`/shares`、`/mtalk-recipients`、`/status`、`/mtalk-chat` |
-| `agent-api` | `X-Ingest-Token`（`INGEST_TOKEN`）。対象の利用者は `INGEST_USER_ID` で固定 | `/ingest`、`/ikyu/ingest`、`/pages/ingest`、`/credentials/versions`、`/credentials/fetch`、`/requests/pending`・`/claim`・`/complete`・`/fail`、`/schedules/enqueue-due`、`/alerts/dispatch` |
+| `agent-api` | `X-Ingest-Token`（`INGEST_TOKEN`）。対象の利用者は `INGEST_USER_ID` で固定 | `/ingest`、`/ikyu/ingest`、`/pages/ingest`、`/credentials/versions`、`/credentials/fetch`、`/requests/pending`・`/claim`・`/complete`・`/fail`、`/schedules/enqueue-due`、`/alerts/dispatch`、`/weekly/deliver` |
 | `review-worker` | ― | 廃止（常に 410） |
 
 すべて `--no-verify-jwt` で配置し、認証は関数の中で行います。

@@ -56,6 +56,50 @@ import { assembleIkyuWeeklyInput, buildIkyuWeeklyReportHtml } from "./scripts/ik
 const html = buildIkyuWeeklyReportHtml(assembleIkyuWeeklyInput({ storeKey: "112789", storeName, asOf, payloads }));
 ```
 
+## M-talk の店舗ルームへ届ける（PDF＋要約カード）
+
+週報は Grok Bot の月曜の作業で、店舗の **M-talk 店舗Bot** として、その Bot の店舗ルーム（例: BISTRO CAVA CAVA の店舗ルーム）へ届けます。
+HTML は M-talk に添付できないため、**同じビューから PDF** を作ります（AI分析レポートと同じ `supabase/functions/_shared/report-pdf.js`。A4縦・Noto Sans JP 埋め込み。グラフは表と文で表し、数値は HTML と同じ計算）。
+
+```sh
+# 確認だけ（既定。M-talk でも投稿しない。送り先の Bot・ルーム・カードの文が返る）
+INGEST_TOKEN=... node scripts/weekly-deliver.mjs \
+  --tabelog-input weekly-input.json \
+  --ikyu-payload payload.json [--ikyu-payload older.json] --ikyu-store 112789 \
+  --name "BISTRO CAVA CAVA" [--as-of 2026-10-05] --out-dir run-xxx/weekly
+
+# 実際に投稿する（確認の結果が正しいときだけ）
+INGEST_TOKEN=... node scripts/weekly-deliver.mjs …同じ引数… --send
+
+# 手元で PDF・HTML・カードの JSON だけ作る（agent-api も呼ばない。トークン不要）
+node scripts/weekly-deliver.mjs …同じ引数… --out-dir run-xxx/weekly --no-post
+```
+
+- 作るもの: サイト別の週報 HTML（手元の確認用）、全サイトをまとめた PDF（`<店舗名> weekly <作成日>.pdf`）、カードの要約（サイトごとに KPI 4つ＋直近7日のPV、今週のポイント2つ）。
+- 送り先: `agent-api POST /weekly/deliver`（`X-Ingest-Token`）→ gourmet が店舗Bot・ルームを決めて line_report の `mtalk-external-post POST /store-post` へ署名つきで送る。`GOURMET_MTALK_TOKEN` は gourmet の Edge Function だけが持ち、Grok Bot には渡しません。
+- 店舗: `--store-id`（gourmet の店舗 UUID）、無ければ最初のサイトの店舗キー（食べログの `storeKey`・一休の店舗ID）からアプリの店舗を探します（店舗に紐づいていないと 404）。
+- 店舗Bot・ルーム: 口コミ通知と同じ設定（アプリの「口コミ通知」: 自動＝店舗名で判定／指定／送らない、ルーム）。ルームの既定は「設定で選んだルーム → Bot の店舗ルーム（`is_store_room`）→ Bot が参加している全グループ」。`--room <ID>` で指定もできます。「送らない」・Bot が決まらない店舗は送らず理由を返します。
+- 二重送信の防止: 店舗×週（作成日の週の月曜、日本時間）で同じ `dedupe_key`（`gourmet-weekly:<店舗 UUID>:<月曜>`）。月曜の作業をやり直しても、同じ週はルームごとにカード・PDF が 1 回だけ届きます。
+- カードに載せるのは件数・評価・PV などの集計だけ。メールアドレス・電話番号らしき文字列があれば gourmet と M-talk の両方で送りません。
+
+`agent-api POST /weekly/deliver` の本文:
+
+```json
+{
+  "site": { "source": "tabelog", "storeKey": "13245351" },
+  "asOf": "2026-10-05",
+  "sections": [
+    { "source": "tabelog", "fields": [{ "label": "9月のPV", "value": "4,753 PV（↑ 前月比 2.8%増）" }, { "label": "直近7日のPV", "value": "910 PV（09/28–10/04、前7日比 +1.2%）" }], "items": ["9月のPVは4,753（前月比 +2.8%）。"] },
+    { "source": "ikyu", "fields": [{ "label": "9月の予約受付", "value": "8 件" }, { "label": "直近7日のPV", "value": "118 PV（09/27–10/03、前7日比 −68.8%）" }] }
+  ],
+  "pdf": { "base64": "JVBERi0…", "filename": "BISTRO CAVA CAVA weekly 2026-10-05.pdf" },
+  "dryRun": true
+}
+```
+
+応答: `{ ok, store: { id, name }, asOf, week, dedupeKey, dryRun, bot: { id, name, how }, roomIds, rooms: [...], pdf: { filename }, preview? | deduplicated? }`。送らなかったときは `{ ok: false, skipped: "理由" }`。
+エラー: 422（入力・個人情報・HTML の添付）、404（店舗・店舗Bot・ルームが無い）、409（同じ PDF を処理中）、413（PDF 5MB 超）、502（M-talk に届かない。同じ週ならやり直しても二重に届かない）、503（M-talk 連携が未設定）。
+
 ## 新しいサイトを足すとき
 
 1. `scripts/<site>/weekly-report.js` に `build<Site>WeeklyView(input)` を作り、`renderWeeklyReportHtml` のビュー（JSDoc 参照）を詰める。`site: { key, label }`、KPI 4枚、月次の指標 2〜3 個、表、脚注、次の3アクション。
@@ -63,4 +107,4 @@ const html = buildIkyuWeeklyReportHtml(assembleIkyuWeeklyInput({ storeKey: "1127
 3. `scripts/weekly-report.mjs` の `SITES` に登録し、必要ならラッパー `scripts/<site>-weekly-report.mjs` を置く。
 4. テストで骨格の同一性（`server/tests/weekly-report-shared.test.js` の chrome 比較）と未取得・PII を確認する。
 
-テスト: `server/tests/weekly-report-shared.test.js`（共通テンプレート・食べログの薄いラッパー・骨格の同一性・CLI）、`server/tests/ikyu-weekly-report.test.js`（一休の組み立て・未取得・PII・CLI）、`server/tests/tabelog-weekly-parity.test.js`（食べログの内容）。
+テスト: `server/tests/weekly-delivery.test.js`（M-talk への配信・PDF・カード・CLI）、`server/tests/weekly-report-shared.test.js`（共通テンプレート・食べログの薄いラッパー・骨格の同一性・CLI）、`server/tests/ikyu-weekly-report.test.js`（一休の組み立て・未取得・PII・CLI）、`server/tests/tabelog-weekly-parity.test.js`（食べログの内容）。

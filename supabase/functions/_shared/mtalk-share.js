@@ -59,6 +59,10 @@ export async function mtalkRequest(config, method, path, payload, { fetchImpl = 
   // /alert の 404 は送信先なし（やり直さない）。ルート自体が無い（M-talk 側が未配置: "not found"）は 502 でやり直す
   if (res.status === 404 && path === "/alert" && data?.error !== "not found") throw new MtalkError("送信先のM-talk利用者が見つからないか、利用停止中です", 404);
   if (res.status === 404 && path === "/send") throw new MtalkError("送信先のM-talk利用者が見つからないか、利用停止中です。送信先を選び直してください", 404);
+  // /store-post（週報）: 404 は店舗Bot・ルームが見つからない（ルート自体が無い "not found" は M-talk 側が未配置なので 502）。400/422 は内容の問題（やり直しても同じ）
+  if (res.status === 404 && path === "/store-post" && data?.error !== "not found") throw new MtalkError("M-talkの店舗Botが見つからないか、選んだルームにその店舗Botが参加していません", 404);
+  if (res.status === 422 && path === "/store-post") throw new MtalkError("カードに個人情報らしき文字列が含まれているため、M-talkへ送りませんでした", 422);
+  if (res.status === 400 && path === "/store-post") throw new MtalkError("週報の内容がM-talkの形式に合わないため送れませんでした", 400);
   if (res.status === 409) throw new MtalkError("同じ送信を処理中です。しばらくしてから再度お試しください", 409);
   if (res.status === 413) throw new MtalkError("PDFが大きすぎるため送信できませんでした", 413);
   if (res.status === 401) throw new MtalkError("M-talkとの接続設定を確認してください（認証に失敗しました）", 502);
