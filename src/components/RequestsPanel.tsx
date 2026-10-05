@@ -18,6 +18,8 @@ type Props = {
   scopeKeys: StoreKeys | null;
   defaultStoreId: string;
   onStoresChanged: () => void;
+  // false（チームのメンバー）: 未設定の店舗IDをその場で割り当てない
+  canAssignSites?: boolean;
   // 失敗した依頼の「ログイン情報を更新」（アカウント管理をその店舗×サイトで開く）
   onRelogin?: (source: string, storeId: string, requestId: string) => void;
 };
@@ -41,7 +43,7 @@ function resultSummary(r: AgentRequest) {
 }
 
 // 店舗×サイトごとの取得依頼と、依頼の履歴（依頼中 / 取得中 / 完了 / 失敗）
-export default function RequestsPanel({ sources, credentials: allCredentials, requests: allRequests, loading, busyKey, onRequest, onRefresh, stores, scopeKeys, defaultStoreId, onStoresChanged, onRelogin }: Props) {
+export default function RequestsPanel({ sources, credentials: allCredentials, requests: allRequests, loading, busyKey, onRequest, onRefresh, stores, scopeKeys, defaultStoreId, onStoresChanged, onRelogin, canAssignSites = true }: Props) {
   // 表示中の店舗に割り当てた店舗コードのアカウント・依頼だけ（全店舗では全件）
   const credentials = filterByStore(allCredentials, scopeKeys);
   const requests = filterByStore(allRequests, scopeKeys, (r) => r.storeId);
@@ -111,7 +113,7 @@ export default function RequestsPanel({ sources, credentials: allCredentials, re
           e.preventDefault();
           setFormError(null);
           // 店舗IDが未設定なら、その店舗の割り当てに保存してから依頼する
-          commitPick(stores, custom.source, custom.pick)
+          commitPick(stores, custom.source, custom.pick, { canAssign: canAssignSites })
             .then(({ key, created }) => { if (created) onStoresChanged(); submit(custom.source, key, custom.action, custom.fromMonth); })
             .catch((err) => setFormError(err instanceof Error ? err.message : "依頼できませんでした"));
         }}>
@@ -120,7 +122,7 @@ export default function RequestsPanel({ sources, credentials: allCredentials, re
               {sources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </label>
-          <StorePicker compact stores={stores} source={custom.source} sourceName={names.get(custom.source) ?? custom.source} value={custom.pick} onChange={(pick) => setCustom({ ...custom, pick })} />
+          <StorePicker compact canAssign={canAssignSites} stores={stores} source={custom.source} sourceName={names.get(custom.source) ?? custom.source} value={custom.pick} onChange={(pick) => setCustom({ ...custom, pick })} />
           <label className="flex flex-col gap-1 font-bold text-subtle">依頼内容
             <select value={custom.action} onChange={(e) => setCustom({ ...custom, action: e.target.value as AgentRequestAction })} className="rounded border border-line bg-card px-2 py-1.5 font-normal text-ink">
               {ACTIONS.map((a) => <option key={a} value={a}>{ACTION_LABELS[a]}</option>)}

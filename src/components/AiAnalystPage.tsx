@@ -111,7 +111,7 @@ export default function AiAnalystPage({ userId, stores, scope }: Props) {
       ) : null}
       {tab === "chat"
         ? <Chat userId={userId} storeId={storeId} storeName={storeName} range={range} disabled={status ? !status.configured : false} model={status?.model} />
-        : <Reports storeId={storeId} storeName={storeName} range={range} disabled={status ? !status.configured : false} />}
+        : <Reports storeId={storeId} storeName={storeName} range={range} disabled={status ? !status.configured : false} canShare={status?.canShareMtalk ?? false} />}
     </section>
   );
 }
@@ -212,7 +212,8 @@ function Chat({ userId, storeId, storeName, range, disabled, model }: { userId: 
   );
 }
 
-function Reports({ storeId, storeName, range, disabled }: { storeId: string; storeName: string; range: { from: string; to: string }; disabled: boolean }) {
+// canShare: M-talk への送信（持ち主・管理者だけ。メンバーには出さない）
+function Reports({ storeId, storeName, range, disabled, canShare }: { storeId: string; storeName: string; range: { from: string; to: string }; disabled: boolean; canShare: boolean }) {
   const [list, setList] = useState<AiReportSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [current, setCurrent] = useState<AiReport | null>(null);
@@ -223,7 +224,7 @@ function Reports({ storeId, storeName, range, disabled }: { storeId: string; sto
   const [sharing, setSharing] = useState(false);
   const [toast, setToast] = useState<{ text: string; error: boolean } | null>(null);
   const closeToast = useCallback(() => setToast(null), []);
-  const shareLog = useReportShares(current?.id);
+  const shareLog = useReportShares(canShare ? current?.id : undefined);
   const load = useCallback(async () => {
     setLoading(true);
     try { setList((await getAiReports()).reports); }
@@ -298,7 +299,7 @@ function Reports({ storeId, storeName, range, disabled }: { storeId: string; sto
           <header className="no-print flex flex-wrap items-center gap-2 border-b border-line px-5 py-3">
             <span className="text-[11px] text-faint">{current.storeName} · {current.from}〜{current.to} · {current.model}</span>
             <div className="ml-auto flex flex-wrap gap-1.5">
-              <button onClick={() => setSharing(true)} className="rounded-md bg-brand px-3 py-1.5 text-[11px] font-bold text-white transition hover:opacity-90">M-talkに送る</button>
+              {canShare ? <button onClick={() => setSharing(true)} className="rounded-md bg-brand px-3 py-1.5 text-[11px] font-bold text-white transition hover:opacity-90">M-talkに送る</button> : null}
               <button onClick={() => window.print()} className={btn}>印刷・PDF</button>
               <button onClick={() => download(fileName(current.title, "md"), current.markdown, "text/markdown")} className={btn}>Markdown</button>
               <button onClick={() => download(fileName(current.title, "html"), reportHtmlDocument(current.title, current.markdown), "text/html")} className={btn}>HTML</button>
@@ -306,10 +307,10 @@ function Reports({ storeId, storeName, range, disabled }: { storeId: string; sto
             </div>
           </header>
           <Markdown text={current.markdown} className="md-report px-8 py-6" />
-          <ShareHistory shares={shareLog.shares} loading={shareLog.loading} />
+          {canShare ? <ShareHistory shares={shareLog.shares} loading={shareLog.loading} /> : null}
         </article>
       ) : null}
-      {current && sharing ? <MtalkShareDialog report={current} onClose={() => setSharing(false)} onSent={() => void shareLog.reload()} onToast={setToast} /> : null}
+      {current && sharing && canShare ? <MtalkShareDialog report={current} onClose={() => setSharing(false)} onSent={() => void shareLog.reload()} onToast={setToast} /> : null}
       <ShareToast toast={toast} onClose={closeToast} />
     </div>
   );

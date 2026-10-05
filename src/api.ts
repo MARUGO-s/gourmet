@@ -24,6 +24,9 @@ import type {
   AlertEvent,
   StoreBot,
   RefetchResult,
+  TeamMe,
+  TeamMember,
+  TeamMemberUpdate,
 } from "./types";
 
 // ログイン中のセッションがあれば Supabase JWT を API リクエストに転送する。
@@ -196,6 +199,20 @@ export const deleteStore = (id: string) => del(`/api/stores/${encodeURIComponent
 export const addStoreSite = (storeId: string, input: { source: string; siteStoreKey: string }) =>
   postJson<{ site: StoreSite }>(`/api/stores/${encodeURIComponent(storeId)}/sites`, input);
 export const deleteStoreSite = (storeId: string, siteId: string) => del(`/api/stores/${encodeURIComponent(storeId)}/sites/${encodeURIComponent(siteId)}`);
+
+// チーム: 自分の状態・参加申請・メンバー管理（持ち主・管理者だけ）
+export async function getTeamMe() {
+  const headers = await authHeaders();
+  return apiFetch("/api/team/me", { headers }).then((r) => json<{ team: TeamMe }>(r));
+}
+export const requestJoin = (displayName: string) => postJson<{ team: TeamMe }>("/api/team/request", { displayName });
+export async function getTeamMembers() {
+  const headers = await authHeaders();
+  return apiFetch("/api/team/members", { headers })
+    .then((r) => json<{ members: TeamMember[]; stores: { id: string; name: string }[]; me: { role: "owner" | "admin"; userId: string } }>(r));
+}
+export const updateTeamMember = (id: string, input: TeamMemberUpdate) => postJson<{ member: TeamMember }>(`/api/team/members/${encodeURIComponent(id)}`, input);
+export const removeTeamMember = (id: string) => del(`/api/team/members/${encodeURIComponent(id)}`);
 
 export async function getOverview(month?: string) {
   const headers = await authHeaders();

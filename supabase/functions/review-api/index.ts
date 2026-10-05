@@ -20,6 +20,8 @@ import { STORE_BOTS_PATH, normalizeStoreBots, publicAlertEvent, publicAlertSetti
 import { mtalkConfig, mtalkRequest } from "../_shared/mtalk-share.js";
 import { queueRefetchAfterSave } from "../_shared/mtalk-followups.js";
 import { isUuid } from "../_shared/login-help.js";
+import { canManageMember, canUseSiteKey, canUseStore, loadTeamContext, publicMember, publicTeamMe, teamOwnerId, teamPermissions, validateJoinInput,
+  validateMemberUpdate } from "../_shared/team.js";
 
 // M-talk の店舗Bot（と参加しているグループのルーム）。読めなければ bots=null と理由（画面は保存済みの設定だけ出す）
 async function loadStoreBots(): Promise<{ bots: any[] | null; botsError: string | null }> {
@@ -42,6 +44,11 @@ const storePath = /^\/stores\/([0-9a-f-]{36})$/;
 const sitePath = /^\/stores\/([0-9a-f-]{36})\/sites$/;
 const siteItemPath = /^\/stores\/([0-9a-f-]{36})\/sites\/([0-9a-f-]{36})$/;
 const requestColumns = "id,source,store_id,action,params,status,requested_at,claimed_at,finished_at,claimed_by,attempts,result,error,failure_kind";
+const memberPath = /^\/team\/members\/([0-9a-f-]{36})$/;
+const memberColumns = "id,owner_id,user_id,email,display_name,role,status,requested_at,approved_at,updated_at";
+const NOT_MEMBER = "参加の承認が必要です。「参加申請」を送り、管理者の承認をお待ちください";
+const FORBIDDEN = "この操作は持ち主・管理者だけができます";
+const NOT_YOUR_STORE = "担当していない店舗です";
 
 Deno.serve(async req => {
   if (req.method === "OPTIONS") return json(req, {});
@@ -58,8 +65,76 @@ Deno.serve(async req => {
     global: { headers: token ? { Authorization:`Bearer ${token}` } : {} }, auth:{persistSession:false,autoRefreshToken:false},
   });
   try {
+    // チーム（_shared/team.js）: 読み込みは本人のJWT（RLS が担当店舗に絞る）。書き込みは役割・担当店舗を確かめ、user_id は持ち主
+    const { ctx:team, member:teamMember }:any = user ? await loadTeamContext(admin, user, teamOwnerId((k:string)=>Deno.env.get(k))) : { ctx:null, member:null };
+    const can:any = team ? teamPermissions(team) : null;
+    // 持ち主の店舗のサイト（担当店舗の判定に使う）
+    const ownerSites = () => must(admin.from("store_sites").select("store_id,source,site_store_key").eq("user_id",team.ownerId));
+    if (path.startsWith("/team/") && !user) return json(req,{error:"ログインが必要です"},401);
+    if (path === "/team/me" && req.method === "GET") return json(req,{team:publicTeamMe(team,teamMember)});
+    if (path === "/team/request" && req.method === "POST") {
+      if (team.role === "owner" || team.role === "admin" || team.role === "member") return json(req,{error:"すでに参加しています"},409);
+      if (team.role === "suspended") return json(req,{error:"利用が停止されています。管理者へお問い合わせください"},403);
+      let row;
+      try { row=validateJoinInput(await body(req,10_000)); }
+      catch (error) { return json(req,{error:(error as Error).message},400); }
+      const now=new Date().toISOString();
+      // 申請中なら名前だけ更新（承認はされない）
+      if (team.role === "pending") await must(admin.from("team_members").update({display_name:row.display_name,updated_at:now}).eq("user_id",user!.id).eq("status","pending"));
+      else await must(admin.from("team_members").insert({owner_id:team.ownerId,user_id:user!.id,email:String(user!.email ?? "").slice(0,320),display_name:row.display_name,role:"member",status:"pending",updated_at:now}));
+      const next=await loadTeamContext(admin,user!,team.ownerId);
+      return json(req,{team:publicTeamMe(next.ctx,next.member)},201);
+    }
+    if (path === "/team/members" && req.method === "GET") {
+      if (!can.manageTeam) return json(req,{error:FORBIDDEN},403);
+      const [rows, links, stores]=await Promise.all([
+        must(admin.from("team_members").select(memberColumns).eq("owner_id",team.ownerId).order("status").order("requested_at",{ascending:false})),
+        must(admin.from("team_member_stores").select("member_id,store_id").eq("owner_id",team.ownerId)),
+        must(admin.from("stores").select("id,name,sort_order").eq("user_id",team.ownerId).order("sort_order").order("name")),
+      ]);
+      return json(req,{members:rows.map((r:any)=>publicMember(r,links.filter((l:any)=>l.member_id===r.id).map((l:any)=>l.store_id))),
+        stores:stores.map((s:any)=>({id:s.id,name:s.name})),me:{role:team.role,userId:user!.id}});
+    }
+    if (memberPath.test(path) && (req.method === "POST" || req.method === "DELETE")) {
+      if (!can.manageTeam) return json(req,{error:FORBIDDEN},403);
+      const id=path.split("/")[3];
+      const found=await must(admin.from("team_members").select(memberColumns).eq("owner_id",team.ownerId).eq("id",id).limit(1));
+      if (!found.length) return json(req,{error:"メンバーが見つかりません"},404);
+      const target=found[0];
+      if (req.method === "DELETE") {
+        if (!canManageMember(team,target)) return json(req,{error:"管理者の変更・削除は持ち主だけができます"},403);
+        await must(admin.from("team_members").delete().eq("owner_id",team.ownerId).eq("id",id));
+        return json(req,{ok:true});
+      }
+      const stores=await must(admin.from("stores").select("id").eq("user_id",team.ownerId));
+      let input;
+      try { input=validateMemberUpdate(await body(req,20_000),stores.map((s:any)=>s.id)); }
+      catch (error) { return json(req,{error:(error as Error).message},400); }
+      if (!canManageMember(team,target,input.patch)) return json(req,{error:"管理者の変更・削除は持ち主だけができます"},403);
+      const now=new Date().toISOString();
+      const patch:any={...input.patch,updated_at:now,updated_by:user!.id};
+      if (input.patch.status === "active" && target.status !== "active") { patch.approved_at=now; patch.approved_by=user!.id; }
+      await must(admin.from("team_members").update(patch).eq("owner_id",team.ownerId).eq("id",id));
+      if (input.storeIds !== undefined) {
+        await must(admin.from("team_member_stores").delete().eq("owner_id",team.ownerId).eq("member_id",id));
+        if (input.storeIds.length) await must(admin.from("team_member_stores").insert(input.storeIds.map((storeId:string)=>({member_id:id,owner_id:team.ownerId,store_id:storeId}))));
+      }
+      const [row, links]=await Promise.all([
+        must(admin.from("team_members").select(memberColumns).eq("id",id).limit(1)),
+        must(admin.from("team_member_stores").select("store_id").eq("member_id",id)),
+      ]);
+      return json(req,{member:publicMember(row[0],links.map((l:any)=>l.store_id))});
+    }
+    // 承認されていない人（申請中・停止・未申請）はデータを見られない
+    if (user && !can.active && path !== "/sources") return json(req,{error:NOT_MEMBER,team:publicTeamMe(team,teamMember)},403);
     if (path === "/sources" && req.method === "GET") {
-      const creds = user ? await must(client.from("credentials").select("source")) : [];
+      // ログイン情報の登録の有無（ID・パスワードは返さない）。メンバーは担当店舗のサイトの店舗コードだけ
+      let creds:any[] = [];
+      if (user && can.active) {
+        const rows = await must(admin.from("credentials").select("source,store_key").eq("user_id",team.ownerId));
+        const sites = can.allStores ? [] : await ownerSites();
+        creds = rows.filter((c:any)=>canUseSiteKey(team,sites,c.source,c.store_key));
+      }
       // 全サイトとも外部エージェント（Grok Bot）が取り込む。最終取り込み日時は sync_log の成功記録。
       const updated: Record<string,string|null> = user ? await loadLastUpdated(client) : {};
       return json(req, SOURCES.map(s => ({ id:s.id, name:s.name, nameEn:s.nameEn,color:s.color,loginUrl:s.loginUrl,hasCredential:creds.some((c:any)=>c.source===s.id),
@@ -127,9 +202,15 @@ Deno.serve(async req => {
       return json(req,{...dashboard,details,ikyu,store:ALL_STORES});
     }
     if (!user) return json(req,{error:"ログインが必要です"},401);
+    // ログイン情報: 一覧（登録済み・更新日時だけ）は持ち主のもの。メンバーは担当店舗の分だけ。保存・削除は持ち主・管理者だけ
     if (path === "/credentials" && req.method === "GET") {
-      const rows=await must(client.from("credentials").select(credentialColumns).order("updated_at",{ascending:false}));
-      return json(req,rows.map((r:any)=>({id:r.id,source:r.source,label:r.label,storeKey:r.store_key,credentialsVersion:r.credentials_version,updatedAt:r.updated_at})));
+      const rows=await must(admin.from("credentials").select(credentialColumns).eq("user_id",team.ownerId).order("updated_at",{ascending:false}));
+      const sites=can.allStores ? [] : await ownerSites();
+      return json(req,rows.filter((r:any)=>canUseSiteKey(team,sites,r.source,r.store_key))
+        .map((r:any)=>({id:r.id,source:r.source,label:r.label,storeKey:r.store_key,credentialsVersion:r.credentials_version,updatedAt:r.updated_at})));
+    }
+    if ((path === "/credentials" && req.method === "POST") || (/^\/credentials\/[0-9a-f-]{36}$/.test(path) && req.method === "DELETE")) {
+      if (!can.manageCredentials) return json(req,{error:FORBIDDEN},403);
     }
     if (path === "/credentials" && req.method === "POST") {
       const input=await body(req);
@@ -139,20 +220,21 @@ Deno.serve(async req => {
       if(!/^[0-9A-Za-z_-]{0,40}$/.test(storeKey)) return json(req,{error:"店舗コードは英数字・_・-の40文字以内で入力してください"},400);
       if(!getSource(input.source) || !username || username.length>320 || typeof input.password!=="string" || !input.password || input.password.length>1000 || (input.label && (typeof input.label!=="string" || input.label.length>200))) return json(req,{error:input.source==="ikyu"?"店舗ID（6桁）・オペレータID・パスワードをご確認ください":"サイト・ID・パスワードをご確認ください"},400);
       if(input.retry!=null && !isUuid(input.retry)) return json(req,{error:"取り直す依頼が不正です"},400);
-      await must(admin.from("credentials").upsert({user_id:user.id,source:input.source,store_key:storeKey,label:input.label||"",username,password_enc:await encrypt(input.password),updated_at:new Date().toISOString()},{onConflict:"user_id,source,store_key"}));
+      await must(admin.from("credentials").upsert({user_id:team.ownerId,source:input.source,store_key:storeKey,label:input.label||"",username,password_enc:await encrypt(input.password),updated_at:new Date().toISOString()},{onConflict:"user_id,source,store_key"}));
       // 保存したら、その店舗×サイトの取り直しを依頼する（M-talk のボタンから来たなら結果をそのトークへ）。依頼できなくても保存は成功
       let refetch;
-      try { refetch=await queueRefetchAfterSave(admin,user.id,{source:input.source,storeKey,retry:input.retry??null}); }
+      try { refetch=await queueRefetchAfterSave(admin,team.ownerId,{source:input.source,storeKey,retry:input.retry??null}); }
       catch { refetch={status:"failed",mtalk:false,message:"取り直しを依頼できませんでした。「取得依頼」から依頼してください"}; }
       return json(req,{ok:true,refetch});
     }
     if (/^\/credentials\/[0-9a-f-]{36}$/.test(path) && req.method === "DELETE") {
-      await must(admin.from("credentials").delete().eq("user_id",user.id).eq("id",path.split("/").at(-1)));
+      await must(admin.from("credentials").delete().eq("user_id",team.ownerId).eq("id",path.split("/").at(-1)));
       return json(req,{ok:true});
     }
     // アプリ内の同期は廃止（すべてのサイトは Grok Bot が取り込む）。旧画面からの呼び出しには理由を返す。
     if (path === "/sync" || path.startsWith("/sync/")) return json(req,{error:"アプリからの同期は終了しました。「取得依頼」からGrok Botへ依頼してください"},410);
-    // アプリ → Grok Bot の取得依頼。本人のJWTで登録・閲覧（RLS）。状態の変更は agent-api のみ。
+    // アプリ → Grok Bot の取得依頼。閲覧は本人のJWT（RLS。メンバーは担当店舗の分）。登録は担当店舗を確かめてから持ち主の依頼として service_role で
+    // （Grok Bot は持ち主の依頼だけを処理する。件数の制限は DB のトリガーが持ち主ごとに数える）。状態の変更は agent-api のみ。
     if (path === "/requests" && req.method === "GET") {
       const rows=await must(client.from("agent_requests").select(requestColumns).order("requested_at",{ascending:false}).limit(50));
       return json(req,{requests:rows.map((r:any)=>publicRequest(r))});
@@ -161,7 +243,8 @@ Deno.serve(async req => {
       let row;
       try { row=validateRequestInput(await body(req),japanDate().slice(0,7)); }
       catch (error) { return json(req,{error:(error as Error).message},400); }
-      const {data,error}=await client.from("agent_requests").insert(row).select(requestColumns).single();
+      if (!can.allStores && !canUseSiteKey(team,await ownerSites(),row.source,row.store_id)) return json(req,{error:NOT_YOUR_STORE},403);
+      const {data,error}=await admin.from("agent_requests").insert({...row,user_id:team.ownerId,requested_by:user.id}).select(requestColumns).single();
       if(error?.code==="23505") return json(req,{error:"同じ店舗・サイト・内容の依頼が処理待ちです。完了までお待ちください"},409);
       if(error?.code==="P0429") return json(req,{error:error.message},429);
       if(error) throw error;
@@ -177,17 +260,23 @@ Deno.serve(async req => {
       let row;
       try { row=validateScheduleInput(await body(req)); }
       catch (error) { return json(req,{error:(error as Error).message},400); }
-      const existing=await must(admin.from("fetch_schedules").select("last_enqueued_at").eq("user_id",user.id).eq("source",row.source).eq("store_id",row.store_id).limit(1));
+      if (!can.allStores && !canUseSiteKey(team,await ownerSites(),row.source,row.store_id)) return json(req,{error:NOT_YOUR_STORE},403);
+      const existing=await must(admin.from("fetch_schedules").select("last_enqueued_at").eq("user_id",team.ownerId).eq("source",row.source).eq("store_id",row.store_id).limit(1));
       const now=new Date();
-      const saved=await must(admin.from("fetch_schedules").upsert({...row,user_id:user.id,next_due_at:nextDueOnSave(row,now,existing[0]?.last_enqueued_at??null),
+      const saved=await must(admin.from("fetch_schedules").upsert({...row,user_id:team.ownerId,next_due_at:nextDueOnSave(row,now,existing[0]?.last_enqueued_at??null),
         updated_at:now.toISOString(),updated_by:user.id},{onConflict:"user_id,source,store_id"}).select("*").single());
       return json(req,{schedule:publicSchedule(saved)});
     }
     if (/^\/schedules\/[0-9a-f-]{36}$/.test(path) && req.method === "DELETE") {
-      await must(admin.from("fetch_schedules").delete().eq("user_id",user.id).eq("id",path.split("/").at(-1)));
+      const id=path.split("/").at(-1);
+      if (!can.allStores) {
+        const found=await must(admin.from("fetch_schedules").select("source,store_id").eq("user_id",team.ownerId).eq("id",id).limit(1));
+        if (found.length && !canUseSiteKey(team,await ownerSites(),found[0].source,found[0].store_id)) return json(req,{error:NOT_YOUR_STORE},403);
+      }
+      await must(admin.from("fetch_schedules").delete().eq("user_id",team.ownerId).eq("id",id));
       return json(req,{ok:true});
     }
-    // 週報の配信予定（店舗ごとの曜日・時刻・ルーム）。閲覧は本人のJWT（RLS）、保存は検証後に本人の user_id に限定して service_role。
+    // 週報の配信予定（店舗ごとの曜日・時刻・ルーム）。閲覧は本人のJWT（RLS。メンバーは担当店舗）、保存は担当店舗を確かめてから持ち主の user_id で service_role。
     // 予定時刻を過ぎた店舗の週報を作って届けるのは Grok Bot（agent-api /weekly/due → /weekly/claim → /weekly/deliver → /weekly/finish）だけ。
     if (path === "/weekly-schedules" && req.method === "GET") {
       const [rows, stores]=await Promise.all([
@@ -198,20 +287,31 @@ Deno.serve(async req => {
       return json(req,{schedules:rows.map((r:any)=>publicWeeklySchedule(r,byId.get(r.store_id) as any))});
     }
     if (path === "/weekly-schedules" && req.method === "POST") {
-      const stores=await must(admin.from("stores").select("id,name").eq("user_id",user.id));
+      // 持ち主の店舗のうち、担当している店舗だけ（管理者・持ち主は全店舗）
+      const stores=(await must(admin.from("stores").select("id,name").eq("user_id",team.ownerId))).filter((s:any)=>canUseStore(team,s.id));
       let row;
       try { row=validateWeeklyScheduleInput(await body(req),stores.map((s:any)=>s.id)); }
       catch (error) { return json(req,{error:(error as Error).message},400); }
       const now=new Date();
-      const saved=await must(admin.from("weekly_delivery_schedules").upsert({...row,...weeklySchedulePatchOnSave(row,now),user_id:user.id,
+      const saved=await must(admin.from("weekly_delivery_schedules").upsert({...row,...weeklySchedulePatchOnSave(row,now),user_id:team.ownerId,
         updated_at:now.toISOString(),updated_by:user.id},{onConflict:"user_id,store_id"}).select("*").single());
       return json(req,{schedule:publicWeeklySchedule(saved,stores.find((s:any)=>s.id===saved.store_id) as any)});
     }
     if (/^\/weekly-schedules\/[0-9a-f-]{36}$/.test(path) && req.method === "DELETE") {
-      await must(admin.from("weekly_delivery_schedules").delete().eq("user_id",user.id).eq("id",path.split("/").at(-1)));
+      const id=path.split("/").at(-1);
+      if (!can.allStores) {
+        const found=await must(admin.from("weekly_delivery_schedules").select("store_id").eq("user_id",team.ownerId).eq("id",id).limit(1));
+        if (found.length && !canUseStore(team,found[0].store_id)) return json(req,{error:NOT_YOUR_STORE},403);
+      }
+      await must(admin.from("weekly_delivery_schedules").delete().eq("user_id",team.ownerId).eq("id",id));
       return json(req,{ok:true});
     }
-    // 店舗マスタ（店舗ごとに各サイトの店舗IDをまとめる）。閲覧は本人のJWT（RLS）、保存は検証後に本人の user_id に限定して service_role。
+    // 店舗マスタ（店舗ごとに各サイトの店舗IDをまとめる）。閲覧は本人のJWT（RLS。メンバーは担当店舗）、保存は検証後に持ち主の user_id に限定して service_role。
+    // 店舗の追加・変更・削除・サイトの割り当ては持ち主・管理者だけ（メンバーが別の店舗のサイトを割り当てて見られないようにする）
+    if (((path === "/stores" || path === "/stores/reorder" || storePath.test(path) || sitePath.test(path)) && req.method === "POST")
+      || ((storePath.test(path) || siteItemPath.test(path)) && req.method === "DELETE")) {
+      if (!can.manageStores) return json(req,{error:FORBIDDEN},403);
+    }
     if (path === "/stores" && req.method === "GET") {
       const { stores, sites } = await loadStoreMaster(client);
       return json(req,{stores:publicStores(stores,sites)});
@@ -220,20 +320,20 @@ Deno.serve(async req => {
       let row;
       try { row=validateStoreInput(await body(req)); }
       catch (error) { return json(req,{error:(error as Error).message},400); }
-      const existing=await must(admin.from("stores").select("sort_order").eq("user_id",user.id).order("sort_order",{ascending:false}).limit(MAX_STORES));
+      const existing=await must(admin.from("stores").select("sort_order").eq("user_id",team.ownerId).order("sort_order",{ascending:false}).limit(MAX_STORES));
       if (existing.length>=MAX_STORES) return json(req,{error:`店舗は${MAX_STORES}件までです`},409);
-      const {data,error}=await admin.from("stores").insert({user_id:user.id,name:row.name,sort_order:row.sort_order ?? ((existing[0]?.sort_order ?? 0)+1)}).select("id,name,sort_order,updated_at").single();
+      const {data,error}=await admin.from("stores").insert({user_id:team.ownerId,name:row.name,sort_order:row.sort_order ?? ((existing[0]?.sort_order ?? 0)+1)}).select("id,name,sort_order,updated_at").single();
       if (error?.code==="23505") return json(req,{error:"同じ名前の店舗があります"},409);
       if (error) throw error;
       return json(req,{store:publicStores([data],[])[0]},201);
     }
     if (path === "/stores/reorder" && req.method === "POST") {
-      const existing=await must(admin.from("stores").select("id").eq("user_id",user.id));
+      const existing=await must(admin.from("stores").select("id").eq("user_id",team.ownerId));
       let order;
       try { order=validateReorder(await body(req),existing.map((s:any)=>s.id)); }
       catch (error) { return json(req,{error:(error as Error).message},400); }
       const now=new Date().toISOString();
-      for (const o of order) await must(admin.from("stores").update({sort_order:o.sort_order,updated_at:now}).eq("user_id",user.id).eq("id",o.id));
+      for (const o of order) await must(admin.from("stores").update({sort_order:o.sort_order,updated_at:now}).eq("user_id",team.ownerId).eq("id",o.id));
       const { stores, sites } = await loadStoreMaster(client);
       return json(req,{stores:publicStores(stores,sites)});
     }
@@ -241,7 +341,7 @@ Deno.serve(async req => {
       let row;
       try { row=validateStoreInput(await body(req),{partial:true}); }
       catch (error) { return json(req,{error:(error as Error).message},400); }
-      const {data,error}=await admin.from("stores").update({...row,updated_at:new Date().toISOString()}).eq("user_id",user.id).eq("id",path.split("/")[2]).select("id,name,sort_order,updated_at");
+      const {data,error}=await admin.from("stores").update({...row,updated_at:new Date().toISOString()}).eq("user_id",team.ownerId).eq("id",path.split("/")[2]).select("id,name,sort_order,updated_at");
       if (error?.code==="23505") return json(req,{error:"同じ名前の店舗があります"},409);
       if (error) throw error;
       if (!data?.length) return json(req,{error:"店舗が見つかりません"},404);
@@ -250,7 +350,7 @@ Deno.serve(async req => {
     }
     // 店舗の削除: 店舗とサイトの割り当てだけを削除（資格情報・取得依頼・自動取得の設定・取り込みデータは残り、「未割り当て」に表示される）
     if (storePath.test(path) && req.method === "DELETE") {
-      await must(admin.from("stores").delete().eq("user_id",user.id).eq("id",path.split("/")[2]));
+      await must(admin.from("stores").delete().eq("user_id",team.ownerId).eq("id",path.split("/")[2]));
       return json(req,{ok:true});
     }
     if (sitePath.test(path) && req.method === "POST") {
@@ -258,13 +358,13 @@ Deno.serve(async req => {
       let row;
       try { row=validateSiteInput(await body(req)); }
       catch (error) { return json(req,{error:(error as Error).message},400); }
-      const owned=await must(admin.from("stores").select("id").eq("user_id",user.id).eq("id",storeId).limit(1));
+      const owned=await must(admin.from("stores").select("id").eq("user_id",team.ownerId).eq("id",storeId).limit(1));
       if (!owned.length) return json(req,{error:"店舗が見つかりません"},404);
-      const {data,error}=await admin.from("store_sites").insert({user_id:user.id,store_id:storeId,source:row.source,site_store_key:row.site_store_key}).select("id,store_id,source,site_store_key").single();
+      const {data,error}=await admin.from("store_sites").insert({user_id:team.ownerId,store_id:storeId,source:row.source,site_store_key:row.site_store_key}).select("id,store_id,source,site_store_key").single();
       if (error?.code==="23505") {
-        const other=await must(admin.from("store_sites").select("id,store_id,source,site_store_key").eq("user_id",user.id).eq("source",row.source).eq("site_store_key",row.site_store_key).limit(1));
+        const other=await must(admin.from("store_sites").select("id,store_id,source,site_store_key").eq("user_id",team.ownerId).eq("source",row.source).eq("site_store_key",row.site_store_key).limit(1));
         if (other[0]?.store_id===storeId) return json(req,{site:publicSite(other[0])});
-        const owner=other[0]?await must(admin.from("stores").select("name").eq("user_id",user.id).eq("id",other[0].store_id).limit(1)):[];
+        const owner=other[0]?await must(admin.from("stores").select("name").eq("user_id",team.ownerId).eq("id",other[0].store_id).limit(1)):[];
         return json(req,{error:`この店舗IDは「${owner[0]?.name ?? "別の店舗"}」に割り当て済みです`},409);
       }
       if (error) throw error;
@@ -272,7 +372,7 @@ Deno.serve(async req => {
     }
     if (siteItemPath.test(path) && req.method === "DELETE") {
       const [, , storeId, , siteId]=path.split("/");
-      await must(admin.from("store_sites").delete().eq("user_id",user.id).eq("store_id",storeId).eq("id",siteId));
+      await must(admin.from("store_sites").delete().eq("user_id",team.ownerId).eq("store_id",storeId).eq("id",siteId));
       return json(req,{ok:true});
     }
     // 口コミ通知（新着口コミ・総合点の変化 → M-talk）の店舗ごとの設定と履歴。閲覧は本人のJWT（RLS）、保存は検証後に本人の user_id に限定して service_role。
@@ -286,11 +386,12 @@ Deno.serve(async req => {
       return json(req,{settings:publicAlertSettings(stores,rows,bots),bots,botsError,defaults:{botMode:"auto",newReviews:true,scoreChanges:true}});
     }
     if (path === "/alert-settings" && req.method === "POST") {
-      const stores=await must(admin.from("stores").select("id,name").eq("user_id",user.id));
+      // 持ち主の店舗のうち、担当している店舗だけ（管理者・持ち主は全店舗）
+      const stores=(await must(admin.from("stores").select("id,name").eq("user_id",team.ownerId))).filter((s:any)=>canUseStore(team,s.id));
       let row;
       try { row=validateAlertSettingsInput(await body(req),stores.map((s:any)=>s.id)); }
       catch (error) { return json(req,{error:(error as Error).message},400); }
-      const saved=await must(admin.from("review_alert_settings").upsert({...row,user_id:user.id,updated_at:new Date().toISOString(),updated_by:user.id},{onConflict:"user_id,store_id"}).select("*").single());
+      const saved=await must(admin.from("review_alert_settings").upsert({...row,user_id:team.ownerId,updated_at:new Date().toISOString(),updated_by:user.id},{onConflict:"user_id,store_id"}).select("*").single());
       const { bots }=await loadStoreBots();
       return json(req,{setting:publicAlertSettings(stores.filter((s:any)=>s.id===row.store_id),[saved],bots)[0]});
     }

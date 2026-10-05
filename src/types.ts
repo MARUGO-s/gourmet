@@ -175,7 +175,7 @@ export type { PublicStore as Store, PublicStoreSite as StoreSite, Overview, Over
 
 // AI分析（ai-analyst）
 export type AiChatMessage = { role: "user" | "assistant"; content: string; at: string; storeName?: string; period?: { from: string; to: string }; calls?: { name: string; args: Record<string, unknown> }[]; error?: boolean };
-export type AiStatus = { configured: boolean; model: string; limits: { askPerHour: number; reportsPerHour: number } };
+export type AiStatus = { configured: boolean; model: string; limits: { askPerHour: number; reportsPerHour: number }; canShareMtalk?: boolean };
 export type AiAskResult = { answer: string; model: string; calls: { name: string; args: Record<string, unknown> }[]; period: { from: string; to: string }; store: string };
 export type AiReportSummary = { id: string; title: string; storeId: string; storeName: string; from: string; to: string; model: string; createdAt: string };
 export type AiReport = AiReportSummary & { markdown: string; content: Record<string, unknown> };
@@ -184,3 +184,15 @@ export type AiReportShare = { id: string; reportId: string | null; reportTitle: 
 
 // 口コミ通知（新着口コミ・食べログ総合点の変化 → M-talk の店舗Bot が参加しているルーム）。型は共通モジュールの宣言を使う
 export type { AlertBot, AlertBotMode, AlertSetting, AlertSettingInput, AlertDelivery, AlertEvent, StoreBot, StoreBotRoom } from "../supabase/functions/_shared/review-alerts.js";
+
+// チーム（migration 024）。持ち主・管理者は全店舗、メンバーは担当店舗だけ。申請中・停止・未申請はデータを見られない
+export type TeamRole = "owner" | "admin" | "member" | "pending" | "suspended" | "none";
+export type TeamPermissions = {
+  active: boolean; allStores: boolean; manageCredentials: boolean; manageStores: boolean; manageTeam: boolean; shareMtalk: boolean; editStoreSettings: boolean;
+};
+export type TeamMe = { role: TeamRole; roleLabel: string | null; permissions: TeamPermissions; storeIds: string[] | null; displayName: string; requestedAt: string | null };
+export type TeamMember = {
+  id: string; userId: string; email: string; displayName: string; role: "admin" | "member"; roleLabel: string;
+  status: "pending" | "active" | "suspended"; requestedAt: string; approvedAt: string | null; updatedAt: string; storeIds: string[] | null;
+};
+export type TeamMemberUpdate = { role?: "admin" | "member"; status?: "active" | "suspended"; storeIds?: string[]; displayName?: string };

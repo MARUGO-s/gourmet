@@ -30,6 +30,7 @@ import { answerMtalkQuestion, mtalkOverLimit, resolveMtalkOwner } from "../_shar
 import { handleMtalkTurn, supabaseLiveStore } from "../_shared/mtalk-live.js";
 import { answerFreshness, freshnessSystemMessage, withCoverage } from "../_shared/data-freshness.js";
 import { safeParts } from "../_shared/failure-text.js";
+import { loadTeamContext, teamOwnerId, teamPermissions } from "../_shared/team.js";
 import * as fontModule from "../_shared/fonts/noto-sans-jp.js";
 
 const reportPath = /^\/reports\/([0-9a-f-]{36})$/;
@@ -68,7 +69,14 @@ Deno.serve(async req => {
     prompt_tokens:usage?.prompt_tokens ?? null, completion_tokens:usage?.completion_tokens ?? null }).then(({ error }) => { if (error) console.warn("[ai-analyst] usage log failed"); });
 
   try {
-    if (path === "/status" && req.method === "GET") return json(req, { configured:!!config.apiKey, model:config.model, limits:{ askPerHour:AI_LIMITS.askPerHour, reportsPerHour:AI_LIMITS.reportsPerHour } });
+    // チーム（_shared/team.js）: 承認済みの人だけ。データは本人のJWT（RLS がメンバーの担当店舗に絞る）。レポート・利用回数は本人のもの
+    const { ctx:team }: any = await loadTeamContext(admin, user, teamOwnerId((k: string) => Deno.env.get(k)));
+    const can = teamPermissions(team);
+    if (!can.active) return json(req, { error:"参加の承認が必要です。「参加申請」を送り、管理者の承認をお待ちください" }, 403);
+    // M-talk へのレポート送信は持ち主・管理者だけ（M-talk 側の答えは持ち主の全店舗のデータになるため）
+    if ((path === "/mtalk-recipients" || path === "/shares" || sharePath.test(path)) && !can.shareMtalk) return json(req, { error:"M-talkへの送信は持ち主・管理者だけができます" }, 403);
+    if (path === "/status" && req.method === "GET") return json(req, { configured:!!config.apiKey, model:config.model, limits:{ askPerHour:AI_LIMITS.askPerHour, reportsPerHour:AI_LIMITS.reportsPerHour },
+      canShareMtalk:can.shareMtalk });
 
     if (path === "/ask" && req.method === "POST") {
       let input;
