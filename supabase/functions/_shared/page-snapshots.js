@@ -7,6 +7,7 @@
 // ・予約一覧などお客様の個人情報（氏名・電話・メール・住所）を含むページは pii: true。表は service_role だけが読め（RLS・付与なし）、
 //   AI分析の関数・アプリ・M-talk には渡さない。解析するときも個人情報は取り出さない（件数・人数・日時・プラン・金額・状態だけ）。
 // ・アカウント・パスワード・カード・口座・APIトークンなどの設定ページは保存しない（カタログに無いページは受け付けない）。
+// ・公開 tabelog.com は本カタログ外（PUBLIC_FETCH_CATALOG）。構造化 JSON のみ /ingest。詳細は docs/tabelog-page-snapshots.md。
 export const SNAPSHOT_LIMITS = { htmlBytes: 3_000_000, pagesPerRequest: 20, requestBytes: 7_500_000 };
 
 const IKYU_BASE = "https://restaurant.ikyu.com/rsOwner/v2/{storeId}";
@@ -37,6 +38,7 @@ export const PAGE_CATALOG = {
     { page: "ikyu_last_minute", title: "直前割設定", menu: "直前割設定", url: `${IKYU_BASE}/last_minute_promotion`, period: "current", status: "raw", pii: false },
   ],
   tabelog: [
+    { page: "tabelog_owner_home", title: "店舗管理トップ（新着ご予約情報）", menu: "トップ", url: `${TABELOG}/owner_rst/`, period: "current", status: "raw", pii: true, note: "新着ご予約情報は件数のみ構造化（scripts/tabelog/owner-home.js）。氏名等の個人情報は取り込まない。HTMLは contains_pii" },
     { page: "tabelog_access_total_daily", title: "アクセス数レポート（日別・端末別）", menu: "アクセス数レポート", url: `${TABELOG}/owner_rst/access_report_total?display_type=daily&start_month={YYYY}{MM}`, period: "month", status: "parsed", pii: false },
     { page: "tabelog_access_total_monthly", title: "アクセス数レポート（月別）", menu: "アクセス数レポート › 月別", url: `${TABELOG}/owner_rst/access_report_total?display_type=monthly`, period: "current", status: "raw", pii: false },
     { page: "tabelog_conversion", title: "来店指標（TEL数・ネット予約数など）", menu: "来店指標", url: `${TABELOG}/owner_rst/access_report_total_conversion`, period: "current", status: "parsed", pii: false },
@@ -66,6 +68,17 @@ export const PAGE_CATALOG = {
 // 保存しないページ（アカウント・支払い・権限など。間違えて保存しないよう、名前が似ていても受け付けない）
 export const NEVER_SAVE = [
   "パスワード変更", "ログインID変更", "オペレータ", "APIトークン", "クレジットカード情報", "口座照会・変更", "口座変更", "会員情報", "請求明細", "契約情報", "通知再受信", "応募者一覧", "メッセージ",
+];
+
+
+// 公開ページ（tabelog.com）は site_page_snapshots には保存しない（ホスト制限）。
+// Grok Bot が公開取得し、構造化 JSON を /ingest（agent_reports: public_profile / public_genre_ranking /
+// public_competitors / public_new_opens）へ送る。URL 組み立ては scripts/tabelog/store-config.js。
+// ルーチンは PUBLIC_FETCH_CATALOG + store-config.publicFetchPlan(storeKey) を参照。
+export const PUBLIC_FETCH_CATALOG = [
+  { page: "tabelog_public_store", title: "公開店舗ページ（評価・口コミ・保存・予算・駅）", host: "tabelog.com", pathPattern: "/{pref}/{L}/{M}/{storeId8}/", status: "structured", pii: false, note: "scripts/tabelog/public.js → public_profile" },
+  { page: "tabelog_public_rank_genre", title: "エリア×ジャンル 評価順一覧", host: "tabelog.com", pathPattern: "/{areaPath}/rstLst/{genre}/?Srt=D&SrtT=rt", status: "structured", pii: false, note: "広告枠スキップ。scripts/tabelog/public-lists.js → public_genre_ranking" },
+  { page: "tabelog_public_rank_newopen", title: "エリア×ジャンル ニューオープン順", host: "tabelog.com", pathPattern: "/{areaPath}/rstLst/{genre}/?Srt=D&SrtT=nod", status: "structured", pii: false, note: "scripts/tabelog/public-lists.js → public_new_opens（オープン日は各店公開ページで補完）" },
 ];
 
 export const pageInfo = (source, page) => (PAGE_CATALOG[source] ?? []).find((p) => p.page === page) ?? null;

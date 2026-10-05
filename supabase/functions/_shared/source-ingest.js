@@ -11,7 +11,7 @@ export const METRIC_COLUMNS = {
   reservations: "reservations", reservationAmount: "reservation_amount", covers: "covers", visits: "visits", calls: "calls",
 };
 export const METRIC_KEYS = Object.keys(METRIC_COLUMNS);
-export const LIMITS = { stores: 50, daysPerStore: 5000, monthsPerStore: 240, reviewsPerStore: 2000, reportsPerStore: 20, reportBytes: 200_000, extraKeys: 30 };
+export const LIMITS = { stores: 50, daysPerStore: 5000, monthsPerStore: 240, reviewsPerStore: 2000, reportsPerStore: 40, reportBytes: 200_000, extraKeys: 30 };
 
 const fail = (message) => { throw new Error(message); };
 const count = (v) => v == null || (Number.isSafeInteger(v) && v >= 0 && v <= 1e11);
@@ -94,7 +94,11 @@ export function normalizeSourceIngest(payload, today = japanDate()) {
     if (publicUrl != null && (source !== "tabelog" || typeof publicUrl !== "string" || publicUrl.length > 300 || !TABELOG_PUBLIC_URL.test(publicUrl)
       || (/^\d{8}$/.test(key) && !publicUrl.endsWith(`/${key}/`)))) fail(where("publicUrl が不正です（https://tabelog.com/…/<8桁の店舗ID>/）"));
     const summary = store.summary ?? null;
-    if (summary != null && (typeof summary !== "object" || !rating(summary.rating) || !count(summary.reviewCount))) fail(where("summary（rating 0〜5 / reviewCount）が不正です"));
+    if (summary != null) {
+      if (typeof summary !== "object" || Array.isArray(summary) || !rating(summary.rating) || !count(summary.reviewCount)) fail(where("summary（rating 0〜5 / reviewCount）が不正です"));
+      if (!count(summary.saveCount ?? null)) fail(where("summary.saveCount が不正です"));
+      if (!optText(summary.budgetNight, 80) || !optText(summary.budgetDay, 80) || !optText(summary.station, 120)) fail(where("summary の予算・最寄駅が不正です"));
+    }
     const daily = store.daily ?? [], monthly = store.monthly ?? [];
     if (!Array.isArray(daily) || daily.length > LIMITS.daysPerStore) fail(where(`daily は${LIMITS.daysPerStore}日までです`));
     if (!Array.isArray(monthly) || monthly.length > LIMITS.monthsPerStore) fail(where(`monthly は${LIMITS.monthsPerStore}か月までです`));

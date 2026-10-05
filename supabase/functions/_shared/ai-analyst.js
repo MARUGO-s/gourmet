@@ -514,6 +514,84 @@ const storeParam = { type: "string", description: "店舗名または店舗ID。
 const sourceParam = { type: "string", enum: ["all", ...SOURCE_IDS], description: "サイト（tabelog=食べログ, ikyu=一休, hotpepper, google, toreta, retty）。all は全サイト" };
 const dateParam = (d) => ({ type: "string", description: `${d}（YYYY-MM-DD、日本時間）` });
 const fn = (name, description, properties, required = []) => ({ type: "function", function: { name, description, parameters: { type: "object", properties, required, additionalProperties: false } } });
+
+/** 最新の agent_reports 行（kind 一致） */
+function latestReport(ds, scope, kind) {
+  const rows = (ds.reports ?? []).filter((r) => r.source === "tabelog" && r.kind === kind && inScope(scope.keys, "tabelog", r.key ?? ""));
+  let best = null;
+  for (const r of rows) {
+    if (!best || String(r.updatedAt) > String(best.updatedAt) || (String(r.updatedAt) === String(best.updatedAt) && String(r.period) > String(best.period))) best = r;
+  }
+  return best;
+}
+function latestReportsOfKind(ds, scope, kind) {
+  const rows = (ds.reports ?? []).filter((r) => r.source === "tabelog" && r.kind === kind && inScope(scope.keys, "tabelog", r.key ?? ""));
+  const byPeriod = new Map();
+  for (const r of rows) {
+    const cur = byPeriod.get(r.period);
+    if (!cur || String(r.updatedAt) > String(cur.updatedAt)) byPeriod.set(r.period, r);
+  }
+  return [...byPeriod.values()];
+}
+/** 直近7日 / 前7日の PV 合計（サーバー計算） */
+export function weeklyPvWindowsResult(ds, scope, sources, asOf) {
+  if (!isDate(asOf)) fail("asOf は YYYY-MM-DD です");
+  const last7to = shiftDate(asOf, -1), last7from = shiftDate(asOf, -7);
+  const prior7to = shiftDate(asOf, -8), prior7from = shiftDate(asOf, -14);
+  const sum = (from, to) => {
+    const rows = dailyPv(ds, scope, sources.filter((s) => s === "tabelog"), from, to);
+    const byDate = new Map();
+    for (const r of rows) byDate.set(r.date, (byDate.get(r.date) ?? 0) + (r.total ?? r.pv ?? 0));
+    const missing = [];
+    let pv = 0;
+    for (let d = from; d <= to; d = shiftDate(d, 1)) {
+      if (!byDate.has(d)) missing.push(d);
+      else pv += byDate.get(d);
+    }
+    return { from, to, pv: missing.length ? null : pv, days: byDate.size, missingDates: missing };
+  };
+  const last7 = sum(last7from, last7to), prior7 = sum(prior7from, prior7to);
+  const change = (last7.pv != null && prior7.pv != null && prior7.pv !== 0)
+    ? round2(((last7.pv - prior7.pv) / prior7.pv) * 100) : null;
+  return {
+    asOf, last7, prior7, changePct: change,
+    note: "食べログ日別PV。欠けた日があると pv は null。通話・予約の週次合計ではない",
+  };
+}
+export function publicProfileResult(ds, scope) {
+  const row = latestReport(ds, scope, "public_profile");
+  if (!row) return { profile: null, note: "公開プロフィール（保存数・予算）の取り込みはありません" };
+  return { profile: row.data, period: row.period, fetchedAt: row.updatedAt };
+}
+export function reservationNoticesResult(ds, scope) {
+  const row = latestReport(ds, scope, "reservation_notices");
+  if (!row) return { notices: null, note: "予約通知件数の取り込みはありません" };
+  return {
+    notices: { new: row.data?.new ?? 0, changed: row.data?.changed ?? 0, cancelled: row.data?.cancelled ?? 0 },
+    period: row.period, fetchedAt: row.updatedAt,
+    note: "確認時点の新着通知件数。週・月の予約総数やキャンセル総数ではない。通話成立≠予約確定",
+  };
+}
+export function competitorSnapshotResult(ds, scope) {
+  const row = latestReport(ds, scope, "public_competitors");
+  if (!row) return { competitors: null, note: "競合スナップショットの取り込みはありません" };
+  return { competitors: row.data, period: row.period, fetchedAt: row.updatedAt };
+}
+export function genreRankResult(ds, scope, genreKey = null) {
+  let rows = latestReportsOfKind(ds, scope, "public_genre_ranking");
+  if (genreKey) rows = rows.filter((r) => r.data?.genreKey === genreKey || r.data?.genre === genreKey);
+  if (!rows.length) return { rankings: [], note: "ジャンル公開順位の取り込みはありません" };
+  return {
+    rankings: rows.map((r) => ({ period: r.period, fetchedAt: r.updatedAt, ...r.data })),
+    note: "広告枠を除く有機掲載順。selfRank が自店順位",
+  };
+}
+export function areaNewOpensResult(ds, scope) {
+  const rows = latestReportsOfKind(ds, scope, "public_new_opens");
+  if (!rows.length) return { lists: [], note: "ニューオープン一覧の取り込みはありません" };
+  return { lists: rows.map((r) => ({ period: r.period, fetchedAt: r.updatedAt, ...r.data })) };
+}
+
 export const AI_TOOLS = [
   fn("list_stores", "登録されている店舗の一覧（店舗名・割り当てたサイト・データの有無）", {}),
   fn("get_kpis", "期間のKPI（サイト別・合計のPV、直前の同じ日数との比較、予約、期間内の新着口コミ数と平均評価、最新の評価・口コミ数、未返信数）", { store: storeParam, source: sourceParam, from: dateParam("開始日"), to: dateParam("終了日") }),
@@ -530,6 +608,12 @@ export const AI_TOOLS = [
   fn("get_pv_breakdown", "PVの内訳（毎日取り込んだ管理画面の確定値）。一休: ページ種別（店舗ガイド・プラン・その他）×端末（スマホ・PC）。食べログ: 端末別（PC・スマホ・アプリ）の合計と割合、月別の端末別PV", { store: storeParam, source: { type: "string", enum: ["all", "ikyu", "tabelog"], description: "ikyu=一休, tabelog=食べログ, all=両方" }, from: dateParam("開始日"), to: dateParam("終了日") }),
   fn("get_site_reports", "食べログの詳細レポート（最新の取り込み）: エリア内のアクセス順位、よく見られるページ、端末別のページサマリー（レポート期間・端末ごとのトップページ/全ページPV・来店指標）", { store: storeParam, kind: { type: "string", enum: ["all", "area_ranking", "top_pages", "device_summary"] } }),
   fn("get_monthly_conversion", "月別のコンバージョン率（予約 ÷ PV × 100、%）。サイト別・月別の PV・予約・率と期間の合計（サーバーで計算済み。式と根拠つき）。食べログ: 月別PVとネット予約組数、一休: 月別PVと予約件数（受付日ベース）", { store: storeParam, source: { type: "string", enum: ["all", "ikyu", "tabelog"], description: "ikyu=一休, tabelog=食べログ, all=両方" }, from_month: { type: "string", description: "開始月 YYYY-MM" }, to_month: { type: "string", description: "終了月 YYYY-MM" } }),
+  fn("get_weekly_pv_windows", "食べログの直近7日PVと直前7日PV（サーバー合計）。asOf（YYYY-MM-DD、省略時は今日）より前の窓。欠け日があると pv は null", { store: storeParam, as_of: dateParam("基準日（省略時は今日）") }),
+  fn("get_public_profile", "食べログ公開店舗ページの保存数・夜/昼予算・最寄駅・評価・口コミ数（最新の取り込み）", { store: storeParam }),
+  fn("get_reservation_notices", "食べログ管理トップの新着ご予約情報の件数のみ（新規/変更/キャンセル）。期間合計ではない。個人情報は含まない", { store: storeParam }),
+  fn("get_competitor_snapshot", "食べログ競合上位店の公開プロフィール（評価・口コミ・予算・駅・保存）の週次スナップショット", { store: storeParam }),
+  fn("get_genre_rank", "食べログ公開エリア×ジャンル順位（広告枠除く）。genre で絞り込み可（bistro/winebar/french 等）", { store: storeParam, genre: { type: "string", description: "ジャンルキー（例: bistro, winebar, french）。省略時は取り込み済みすべて" } }),
+  fn("get_area_new_opens", "食べログ公開ニューオープン一覧（エリア×ジャンル）の取り込み", { store: storeParam }),
   fn("get_data_freshness", "取り込み済みデータの鮮度（サイトごとの最後の取得日時・入っている期間・36時間を超えて古いか・直近の取得の失敗理由）", {}),
 ];
 
@@ -640,6 +724,15 @@ export function runTool(ds, name, rawArgs, ctx) {
     }
     if (name === "get_pv_breakdown") { const p = toolPeriod(args, ctx); return limitJson({ ...head, ...p, ...pvBreakdown(ds, scope, sources, p.from, p.to) }); }
     if (name === "get_site_reports") return limitJson({ ...head, ...siteReports(ds, scope, sources, args.kind) });
+    if (name === "get_weekly_pv_windows") {
+      const asOf = optDate(args.as_of, "基準日") ?? ds.today;
+      return limitJson({ ...head, ...weeklyPvWindowsResult(ds, scope, sources, asOf) });
+    }
+    if (name === "get_public_profile") return limitJson({ ...head, ...publicProfileResult(ds, scope) });
+    if (name === "get_reservation_notices") return limitJson({ ...head, ...reservationNoticesResult(ds, scope) });
+    if (name === "get_competitor_snapshot") return limitJson({ ...head, ...competitorSnapshotResult(ds, scope) });
+    if (name === "get_genre_rank") return limitJson({ ...head, ...genreRankResult(ds, scope, typeof args.genre === "string" ? args.genre : null) });
+    if (name === "get_area_new_opens") return limitJson({ ...head, ...areaNewOpensResult(ds, scope) });
     return limitJson({ error: `不明な関数です（${name}）` });
   } catch (error) {
     return limitJson({ error: error instanceof Error ? error.message : "データを取得できませんでした" });
@@ -662,7 +755,7 @@ export function systemPrompt(today, { screenPeriod = false } = {}) {
     "- 推測・解釈・可能性を述べるときは、その文に必ず「（推測）」と付け、事実の文と分ける。見込み・予想（今月の着地など）は「（予想）」と付け、計算の前提（どの確定値から出したか）を書く。予想の数値を事実として書かない。",
     "- データは Grok Bot が毎日サイトの管理画面から取り込んだ確定値（キャッシュ）。最新を取り直す選択肢はない。鮮度（最後の取得日時・期間）はシステムが回答の最後に付ける。期間の外・取り込みの無い項目は「わかりません」と書く。",
     "- 月別のPV・予約は get_monthly_metrics（日別のデータが無い過去の月も入っている）。コンバージョン率・予約率（予約÷PV）は必ず get_monthly_conversion を使い、結果の conversionPct と式（予約÷PV×100）をそのまま書く。率を自分で割り算しない。get_pv_trend の月別は日別の合計なので、日別が無い月を「PVが無い」と言わない。",
-    "- 予約・売上は get_reservation_sales、PVの内訳（ページ種別・端末）は get_pv_breakdown、食べログのエリア順位・よく見られるページは get_site_reports で確かめる。一休の予約は受付日ベース（来店日ではない）とはっきり書く。",
+    "- 予約・売上は get_reservation_sales、PVの内訳（ページ種別・端末）は get_pv_breakdown、食べログのエリア順位・よく見られるページは get_site_reports、公開の保存数・予算は get_public_profile、予約通知件数は get_reservation_notices、週次PV窓は get_weekly_pv_windows、競合・ジャンル順位・ニューオープンは get_competitor_snapshot / get_genre_rank / get_area_new_opens で確かめる。通話成立≠予約確定。予約通知件数≠期間合計。公開ページに口コミ投稿日はない。一休の予約は受付日ベース（来店日ではない）とはっきり書く。",
     "- 予約者の氏名・電話番号・メールアドレス・住所などの個人情報は扱わない・書かない（関数の結果にも含まれない）。",
     reviewPeriodRule,
     "- 「悪い口コミ」は評価3.0以下（low_rating）。0件なら0件と答え、必要なら lowest でいちばん低い口コミ（例: ★3.5）を示す。3.5 などを低評価と呼ばない。",

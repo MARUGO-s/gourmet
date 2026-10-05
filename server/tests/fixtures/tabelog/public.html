@@ -1,6 +1,18 @@
 <!DOCTYPE html>
-<!-- SYNTHETIC fixture: structure modeled on the Tabelog owner console; all values are fake. -->
-<html lang="ja"><head><meta charset="UTF-8"><title>テスト食堂 | 食べログ</title><script src="https://example.invalid/should-not-load.js"></script></head><body>
-<nav><a href="https://tabelog.com/tokyo/A1309/A130903/13999999/">他店</a> <a href="https://tabelog.com/tokyo/A1309/A130903/13245351/?lid=owner_rst-top-jitempo_pc">自店舗ページ表示</a></nav>
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"Restaurant","name":"テスト食堂","aggregateRating":{"@type":"AggregateRating","ratingValue":"3.26","ratingCount":"49"}}</script><h1 class="display-name">テスト食堂</h1>
+<!-- SYNTHETIC fixture: structure modeled on Tabelog public store page; all values are fake. -->
+<html lang="ja"><head><meta charset="UTF-8"><title>テスト食堂 | 食べログ</title></head><body>
+<nav><a href="https://tabelog.com/tokyo/A1309/A130903/13999999/">他店</a></nav>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Restaurant","name":"テスト食堂","aggregateRating":{"@type":"AggregateRating","ratingValue":"3.26","ratingCount":"49"}}</script>
+<h1 class="display-name">テスト食堂</h1>
+<div class="rdheader-rating">
+  <span class="rdheader-rating__score-val-dtl">3.26</span>
+  <span class="rdheader-rating__review-target"><span class="num">49</span></span>
+  <span class="rdheader-rating__hozon-target"><span class="num">4,007</span>人 保存</span>
+</div>
+<table class="rstinfo-table">
+  <tr><th>予算（夜）</th><td class="rdheader-budget__price">¥8,000～¥9,999</td></tr>
+  <tr><th>予算（昼）</th><td class="rdheader-budget__price--lunch">¥2,000～¥2,999</td></tr>
+  <tr><th>最寄り駅</th><td><span class="rdheader-subinfo__item-station">曙橋駅 225m</span></td></tr>
+  <tr><th>オープン日</th><td>オープン日：2019年4月1日</td></tr>
+</table>
 </body></html>

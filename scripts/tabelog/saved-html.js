@@ -6,6 +6,7 @@ import { decodeHtml } from "../ikyu/html-lite.js";
 import { readOwnerDailyTable, readOwnerReviews, mergeOwnerReviews, readOwnerPageTotals, readOwnerPublicUrl } from "./owner.js";
 import { readConversionTable, readRanking, buildRanking, readTopPages, readMyReportDevices, validDeviceSummary } from "./reports.js";
 import { readTabelogPublicDocument } from "./public.js";
+import { readReservationNotices } from "./owner-home.js";
 import { collectTabelogMetrics } from "./result.js";
 
 const OWNER = "https://owner.tabelog.com";
@@ -82,6 +83,10 @@ export async function readSavedTabelog(manifest, baseDir, { browser, today, onPr
     };
     const publicUrl = manifest.daily?.[0] ? await reader.read(file(manifest.daily[0]), `${OWNER}/owner_rst/access_report_total`, readOwnerPublicUrl).catch(() => null) : null;
     const result = await collectTabelogMetrics(collectors, onProgress);
+    if (manifest.ownerHome) {
+      const notices = await reader.read(file(manifest.ownerHome), `${OWNER}/owner_rst/`, readReservationNotices);
+      result.reports = { ...(result.reports ?? {}), reservationNotices: { ...notices, capturedAt: new Date().toISOString() } };
+    }
     return { result, publicUrl };
   } finally {
     await reader.close();
