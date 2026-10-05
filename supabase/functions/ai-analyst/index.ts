@@ -14,7 +14,7 @@ import * as PDFLib from "npm:pdf-lib@1.17.1";
 import * as fontkit from "npm:fontkit@2.0.4";
 import { service, json, body } from "../_shared/http.ts";
 import { must, japanDate } from "../_shared/sync-data.js";
-import { AI_LIMITS, REPORT_SCHEMA_HINT, buildReportFacts, composeReportMarkdown, contextMessage, normalizeReportAi, reportPromptFacts, resolvePeriod, systemPrompt,
+import { AI_LIMITS, REPORT_SCHEMA_HINT, askToolContext, buildReportFacts, composeReportMarkdown, contextMessage, dataCoverage, normalizeReportAi, reportPromptFacts, resolvePeriod, systemPrompt,
   validateAskInput, validateReportInput } from "../_shared/ai-analyst.js";
 import { AiError, answerWithTools, chatCompletion, openAiConfig } from "../_shared/openai.js";
 import { buildEvidence, labelReportSpeculation, sanitizeReportAi, verificationFeedback, verifyReportAi } from "../_shared/answer-verify.js";
@@ -28,7 +28,7 @@ import { loadReportFonts, renderReportPdf } from "../_shared/report-pdf.js";
 import { MTALK_CHAT_LIMITS, MTALK_CHAT_PATH, MtalkChatError, splitReply, validateMtalkChatInput, verifyMtalkRequest } from "../_shared/mtalk-chat.js";
 import { answerMtalkQuestion, mtalkOverLimit, resolveMtalkOwner } from "../_shared/mtalk-answer.js";
 import { handleMtalkTurn, supabaseLiveStore } from "../_shared/mtalk-live.js";
-import { answerFreshness, freshnessSystemMessage } from "../_shared/data-freshness.js";
+import { answerFreshness, freshnessSystemMessage, withCoverage } from "../_shared/data-freshness.js";
 import { safeParts } from "../_shared/failure-text.js";
 import * as fontModule from "../_shared/fonts/noto-sans-jp.js";
 
@@ -79,20 +79,22 @@ Deno.serve(async req => {
       const ds = await loadAnalystDataset(client, { today });
       if (input.store !== "all" && !ds.stores.some((s: any) => s.id === input.store)) return json(req, { error:"店舗が見つかりません。店舗を選び直してください" }, 404);
       const todayYear = Number(today.slice(0, 4));
-      const freshMessage = freshnessSystemMessage(ds.freshness ?? [], { todayYear });
+      const coverage = dataCoverage(ds, input.store);
+      const freshMessage = freshnessSystemMessage(withCoverage(ds.freshness ?? [], coverage), { todayYear });
       const messages = [
-        { role:"system", content:systemPrompt(today) },
+        { role:"system", content:systemPrompt(today, { screenPeriod:true }) },
         { role:"system", content:contextMessage(ds, input) },
         ...(freshMessage ? [{ role:"system", content:freshMessage }] : []),
         ...input.history,
         { role:"user", content:input.question },
       ];
       // 照合の根拠はこの質問の関数の結果と画面の前提（店舗・期間）だけ。会話履歴（過去の回答）は根拠にしない
-      const result: any = await answerWithTools(config, { ds, messages, ctx:{ store:input.store, from:input.from, to:input.to },
+      // 口コミも画面の期間で数える（全期間は質問がはっきり求めたときだけ。askToolContext）
+      const result: any = await answerWithTools(config, { ds, messages, ctx:askToolContext(input),
         evidenceTexts:[contextMessage(ds, input), freshMessage], question:input.question, deadlineMs:ASK_DEADLINE_MS });
       await logUsage("ask", result.model, result.usage);
-      // 鮮度（使ったサイトの最後の取得日時・期間、古い・無いときは※の行）は照合のあとにサーバーが付ける
-      const fresh = answerFreshness(result, ds, { todayYear });
+      // 鮮度（使ったサイトの最後の取得日時・取り込み済みの範囲、期間の日別の欠け、古い・無いときは※の行）は照合のあとにサーバーが付ける
+      const fresh = answerFreshness(result, ds, { todayYear, coverage, period:{ from:input.from, to:input.to } });
       const answer = fresh.text ? `${result.answer}\n\n${fresh.text.split("\n").map((l: string) => `> ${l}`).join("\n")}` : result.answer;
       return json(req, { answer, freshness:fresh.text || null, model:result.model, calls:result.calls, verification:result.verification, period:{ from:input.from, to:input.to }, store:input.store });
     }
