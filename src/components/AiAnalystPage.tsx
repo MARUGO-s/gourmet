@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { askAi, createAiReport, deleteAiReport, getAiReport, getAiReports, getAiStatus } from "../api";
+import { askAi, createAiReport, deleteAiReport, downloadAnswerPdf, getAiReport, getAiReports, getAiStatus } from "../api";
 import type { AiChatMessage, AiReport, AiReportSummary, AiStatus, Store } from "../types";
 import { markdownToHtml, reportHtmlDocument } from "../../supabase/functions/_shared/markdown.js";
 import { formatTime } from "../lib/agent-requests";
@@ -120,6 +120,9 @@ function Chat({ userId, storeId, storeName, range, disabled, model }: { userId: 
   const [messages, setMessages] = useState<AiChatMessage[]>(() => loadChat(userId));
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  // 回答のPDF（作成中の回答の番号と、失敗の文）
+  const [pdfBusy, setPdfBusy] = useState<number | null>(null);
+  const [pdfError, setPdfError] = useState<{ index: number; text: string } | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => { saveChat(userId, messages); endRef.current?.scrollIntoView({ block: "nearest" }); }, [userId, messages]);
 
@@ -140,6 +143,24 @@ function Chat({ userId, storeId, storeName, range, disabled, model }: { userId: 
       setBusy(false);
     }
   }, [busy, messages, range, storeId, storeName]);
+
+  // 回答 i をPDFでダウンロードする（質問は直前の自分の発言）
+  const savePdf = async (i: number) => {
+    const m = messages[i];
+    const q = [...messages.slice(0, i)].reverse().find((x) => x.role === "user");
+    setPdfBusy(i); setPdfError(null);
+    try {
+      const blob = await downloadAnswerPdf({ question: q?.content ?? "", answer: m.content, storeName: m.storeName ?? q?.storeName, from: (m.period ?? q?.period)?.from,
+        to: (m.period ?? q?.period)?.to, askedAt: q?.at, answeredAt: m.at, model });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const t = new Date(Date.parse(m.at) + 9 * 3600_000).toISOString();
+      a.href = url; a.download = `AI分析_回答_${t.slice(0, 10).replace(/-/g, "")}-${t.slice(11, 16).replace(":", "")}.pdf`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch (e) { setPdfError({ index: i, text: e instanceof Error ? e.message : "PDFを作成できませんでした" }); }
+    finally { setPdfBusy(null); }
+  };
 
   return (
     <div className="rounded-md border border-line bg-card">
@@ -167,7 +188,13 @@ function Chat({ userId, storeId, storeName, range, disabled, model }: { userId: 
                 {m.role === "user" && m.period ? <span>· {m.storeName} {m.period.from}〜{m.period.to}</span> : null}
                 {m.calls?.length ? <span>· 参照: {[...new Set(m.calls.map((c) => TOOL_LABELS[c.name] ?? c.name))].join("・")}</span> : null}
                 {m.role === "assistant" && !m.error ? <button onClick={() => void navigator.clipboard?.writeText(m.content)} className="no-print font-bold underline">コピー</button> : null}
+                {m.role === "assistant" && !m.error ? (
+                  <button onClick={() => void savePdf(i)} disabled={pdfBusy !== null} className="no-print inline-flex items-center gap-1 rounded border border-line bg-card px-2 py-0.5 font-bold text-subtle hover:border-brand hover:text-brand disabled:opacity-50">
+                    {pdfBusy === i ? "PDF作成中…" : "PDFをダウンロード"}
+                  </button>
+                ) : null}
               </div>
+              {pdfError?.index === i ? <p className="no-print mt-1 text-[10px] font-bold text-danger">⚠ {pdfError.text}</p> : null}
             </div>
           </div>
         ))}

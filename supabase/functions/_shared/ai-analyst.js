@@ -73,6 +73,32 @@ export function validateAskInput(input, today) {
   if (question.length > AI_LIMITS.question) fail(`質問は${AI_LIMITS.question}文字以内で入力してください`);
   return { question, store: validateStoreScope(input.storeId), ...resolvePeriod(input.from, input.to, today), history: validateHistory(input.history) };
 }
+// 質問への回答のPDF（POST /answer-pdf）。回答は画面に表示済みの本文（Markdown）をそのまま送ってもらい、サーバーで日本語フォントを埋め込んで作る
+export const ANSWER_PDF_LIMITS = { answer: 30_000, storeName: 200, model: 100 };
+const isoOrNull = (v) => (typeof v === "string" && Number.isFinite(Date.parse(v)) ? new Date(v).toISOString() : null);
+export function validateAnswerPdfInput(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) fail("入力形式が不正です");
+  const answer = String(input.answer ?? "").normalize("NFC").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "").trim();
+  if (!answer) fail("回答がありません");
+  if (answer.length > ANSWER_PDF_LIMITS.answer) fail("回答が長すぎるためPDFにできません");
+  const question = cleanText(input.question, AI_LIMITS.question);
+  const from = isDate(input.from) ? input.from : null, to = isDate(input.to) ? input.to : null;
+  return { question, answer, storeName: cleanText(input.storeName, ANSWER_PDF_LIMITS.storeName), from, to,
+    askedAt: isoOrNull(input.askedAt), answeredAt: isoOrNull(input.answeredAt), model: cleanText(input.model, ANSWER_PDF_LIMITS.model) };
+}
+const jst = (iso) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(0, 16).replace("T", " ");
+/** PDFの中身（renderReportPdf の report と見出しの下の情報の行）。now は出力日時（ISO） */
+export function answerPdfDocument(input, now) {
+  // 先頭の「# 見出し」の下に、対象・日時の行（meta）が入る（report-pdf.js）
+  const md = ["# AI分析の回答", "", ...(input.question ? ["## 質問", "", ...input.question.split("\n").map((l) => (l.trim() ? l : "")), ""] : []), "## 回答", "", input.answer].join("\n");
+  const meta = /** @type {string[]} */ ([
+    input.storeName || input.from ? `対象: ${[input.storeName, input.from && input.to ? `${input.from} 〜 ${input.to}` : ""].filter(Boolean).join(" · ")}` : null,
+    input.askedAt ? `質問: ${jst(input.askedAt)}（日本時間）` : null,
+    input.answeredAt ? `回答: ${jst(input.answeredAt)}（日本時間）${input.model ? ` · ${input.model}` : ""}` : null,
+    `PDF出力: ${jst(now)}（日本時間）`,
+  ].filter(Boolean));
+  return { report: { title: "AI分析の回答", storeName: input.storeName, from: input.from, to: input.to, createdAt: input.answeredAt ?? now, markdown: md }, meta };
+}
 export function validateReportInput(input, today) {
   if (!input || typeof input !== "object" || Array.isArray(input)) fail("入力形式が不正です");
   const title = input.title == null ? "" : cleanText(input.title, AI_LIMITS.titleChars + 1);

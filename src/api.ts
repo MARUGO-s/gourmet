@@ -216,6 +216,15 @@ const aiFetch = async <T>(path: string, options: RequestInit = {}, timeoutMs = 3
 export const getAiStatus = () => aiFetch<AiStatus>("/status");
 export const askAi = (input: { question: string; storeId: string; from: string; to: string; history: { role: "user" | "assistant"; content: string }[] }) =>
   aiFetch<AiAskResult>("/ask", { method: "POST", body: JSON.stringify(input) }, 150_000);
+// 質問への回答をPDFにする（サーバーで日本語フォントを埋め込む）。PDFのBlobを返す
+export async function downloadAnswerPdf(input: { question: string; answer: string; storeName?: string; from?: string; to?: string; askedAt?: string; answeredAt?: string; model?: string }) {
+  const headers = await authHeaders();
+  const res = await fetch(`${supabaseUrl}/functions/v1/ai-analyst/answer-pdf`, {
+    method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(input), signal: AbortSignal.timeout(60_000),
+  }).catch(() => { throw new ApiError("通信に失敗しました", 0); });
+  if (!res.ok) await json(res);
+  return res.blob();
+}
 export const getAiReports = () => aiFetch<{ reports: AiReportSummary[] }>("/reports");
 export const getAiReport = (id: string) => aiFetch<{ report: AiReport }>(`/reports/${encodeURIComponent(id)}`);
 export const createAiReport = (input: { storeId: string; from: string; to: string; title?: string; focus?: string }) =>
