@@ -56,30 +56,36 @@ import { assembleIkyuWeeklyInput, buildIkyuWeeklyReportHtml } from "./scripts/ik
 const html = buildIkyuWeeklyReportHtml(assembleIkyuWeeklyInput({ storeKey: "112789", storeName, asOf, payloads }));
 ```
 
-## M-talk の店舗ルームへ届ける（PDF＋要約カード）
+## M-talk の店舗ルームへ届ける（ホストした HTML＋要約カード）
 
-週報は Grok Bot の月曜の作業で、店舗の **M-talk 店舗Bot** として、その Bot の店舗ルーム（例: BISTRO CAVA CAVA の店舗ルーム）へ届けます。
-HTML は M-talk に添付できないため、**同じビューから PDF** を作ります（AI分析レポートと同じ `supabase/functions/_shared/report-pdf.js`。A4縦・Noto Sans JP 埋め込み。グラフは表と文で表し、数値は HTML と同じ計算）。
+週報は Grok Bot の月曜の作業で、店舗の **M-talk 店舗Bot** として、その Bot の店舗ルーム（例: BistroCAVACAVA＝ルーム 30）へ届けます。
+**本体は承認済みの共通テンプレート HTML** です。M-talk `/store-post` は HTML を添付できないため、同じビューの HTML を **GitHub Pages（`marugo-s.github.io`＝許可ホスト）** に載せ、カードの主ボタン **「週報を開く」** でその URL を開きます。PDF は任意（`--pdf`）です。
+
+公開 URL: `https://marugo-s.github.io/gourmet/weekly/<店舗UUID>/<asOf>/`（`public/weekly/.../index.html` ハブ＋`tabelog.html` / `ikyu.html`）。main へのマージで Pages が配置します。
 
 ```sh
-# 確認だけ（既定。M-talk でも投稿しない。送り先の Bot・ルーム・カードの文が返る）
-INGEST_TOKEN=... node scripts/weekly-deliver.mjs \
+# 手元で HTML・カードを作り、Pages 用に public/ へ書く（agent-api も呼ばない）
+node scripts/weekly-deliver.mjs \
   --tabelog-input weekly-input.json \
   --ikyu-payload payload.json [--ikyu-payload older.json] --ikyu-store 112789 \
-  --name "BISTRO CAVA CAVA" [--as-of 2026-10-05] --out-dir run-xxx/weekly
+  --name "BISTRO CAVA CAVA" --store-id <店舗UUID> [--as-of 2026-10-05] \
+  --out-dir run-xxx/weekly --publish-dir public --no-post
 
-# 実際に投稿する（確認の結果が正しいときだけ）
-INGEST_TOKEN=... node scripts/weekly-deliver.mjs …同じ引数… --send
+# 確認だけ（既定。M-talk でも投稿しない。送り先の Bot・ルーム・カードの文が返る）
+INGEST_TOKEN=... node scripts/weekly-deliver.mjs …同じ引数…   # dryRun
 
-# 手元で PDF・HTML・カードの JSON だけ作る（agent-api も呼ばない。トークン不要）
-node scripts/weekly-deliver.mjs …同じ引数… --out-dir run-xxx/weekly --no-post
+# 実際に投稿する（Pages に HTML が載ったあと。確認の結果が正しいときだけ）
+INGEST_TOKEN=... node scripts/weekly-deliver.mjs …同じ引数… --room 30 --send
+
+# PDF も任意で添えるとき
+INGEST_TOKEN=... node scripts/weekly-deliver.mjs …同じ引数… --pdf --send
 ```
 
-- 作るもの: サイト別の週報 HTML（手元の確認用）、全サイトをまとめた PDF（`<店舗名> weekly <作成日>.pdf`）、カードの要約（サイトごとに KPI 4つ＋直近7日のPV、今週のポイント2つ）。
-- 送り先: `agent-api POST /weekly/deliver`（`X-Ingest-Token`）→ gourmet が店舗Bot・ルームを決めて line_report の `mtalk-external-post POST /store-post` へ署名つきで送る。`GOURMET_MTALK_TOKEN` は gourmet の Edge Function だけが持ち、Grok Bot には渡しません。
-- 店舗: `--store-id`（gourmet の店舗 UUID）、無ければ最初のサイトの店舗キー（食べログの `storeKey`・一休の店舗ID）からアプリの店舗を探します（店舗に紐づいていないと 404）。
-- 店舗Bot・ルーム: 口コミ通知と同じ設定（アプリの「口コミ通知」: 自動＝店舗名で判定／指定／送らない、ルーム）。ルームの既定は「設定で選んだルーム → Bot の店舗ルーム（`is_store_room`）→ Bot が参加している全グループ」。`--room <ID>` で指定もできます。「送らない」・Bot が決まらない店舗は送らず理由を返します。
-- 二重送信の防止: 店舗×週（作成日の週の月曜、日本時間）で同じ `dedupe_key`（`gourmet-weekly:<店舗 UUID>:<月曜>`）。月曜の作業をやり直しても、同じ週はルームごとにカード・PDF が 1 回だけ届きます。
+- 作るもの: サイト別の週報 HTML＋ハブ（Pages / 手元確認）、カードの要約（サイトごとに KPI 4つ＋直近7日のPV、今週のポイント2つ）。`--pdf` または `--out-dir` のとき PDF も生成（M-talk へ載せるのは `--pdf` のときだけ）。
+- 送り先: `agent-api POST /weekly/deliver`（`X-Ingest-Token`）→ gourmet が店舗Bot・ルームを決めて line_report の `mtalk-external-post POST /store-post` へ署名つきで送る。カードの links は `{ label: "週報を開く", url: https://marugo-s.github.io/gourmet/weekly/<店舗UUID>/<asOf>/ }`。`GOURMET_MTALK_TOKEN` は gourmet の Edge Function だけが持ち、Grok Bot には渡しません。
+- 店舗: `--store-id`（gourmet の店舗 UUID）、無ければ最初のサイトの店舗キーからアプリの店舗を探します。**Pages 公開（`--publish-dir`）には `--store-id` が必須**です。
+- 店舗Bot・ルーム: 口コミ通知と同じ設定。ルームの既定は「設定で選んだルーム → Bot の店舗ルーム（`is_store_room`）→ Bot が参加している全グループ」。`--room <ID>` で指定（BistroCAVACAVA は 30）。
+- 二重送信の防止: 店舗×週（作成日の週の月曜、日本時間）で同じ `dedupe_key`（`gourmet-weekly:<店舗 UUID>:<月曜>`）。月曜の作業をやり直しても、同じ週はルームごとにカードが 1 回だけ届きます。
 - カードに載せるのは件数・評価・PV などの集計だけ。メールアドレス・電話番号らしき文字列があれば gourmet と M-talk の両方で送りません。
 
 `agent-api POST /weekly/deliver` の本文:
@@ -97,7 +103,9 @@ node scripts/weekly-deliver.mjs …同じ引数… --out-dir run-xxx/weekly --no
 }
 ```
 
-応答: `{ ok, store: { id, name }, asOf, week, dedupeKey, dryRun, bot: { id, name, how }, roomIds, rooms: [...], pdf: { filename }, preview? | deduplicated? }`。送らなかったときは `{ ok: false, skipped: "理由" }`。
+`pdf` は任意。カードの「週報を開く」URL は gourmet が `store.id` と `asOf` から組み立てます（`weeklyHtmlUrl`）。
+
+応答: `{ ok, store: { id, name }, asOf, week, dedupeKey, dryRun, bot: { id, name, how }, roomIds, rooms: [...], html: { url }, pdf: { filename } | null, preview? | deduplicated? }`。送らなかったときは `{ ok: false, skipped: "理由" }`。
 エラー: 422（入力・個人情報・HTML の添付）、404（店舗・店舗Bot・ルームが無い）、409（同じ PDF を処理中）、413（PDF 5MB 超）、502（M-talk に届かない。同じ週ならやり直しても二重に届かない）、503（M-talk 連携が未設定）。
 
 ## 新しいサイトを足すとき

@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>【食べログ週報】BISTRO CAVA CAVA 2026/10/05</title>
+  <style>
+    :root {
+      --ink: #20322e;
+      --muted: #65736d;
+      --paper: #f7f6f1;
+      --card: #fffefa;
+      --line: #e8e7de;
+      --green: #174f46;
+      --green-2: #2a7768;
+      --mint: #cde7dc;
+      --orange: #e88b54;
+      --orange-pale: #ffede1;
+      --red: #b45b4b;
+      --shadow: 0 15px 40px rgba(24, 50, 41, .07);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; background: var(--paper); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", Meiryo, sans-serif; line-height: 1.65; }
+    button { font: inherit; }
+    a { color: inherit; }
+    .wrap { width: min(1160px, calc(100% - 40px)); margin: auto; }
+    .hero { position: relative; overflow: hidden; background: #123c35; color: #fffdf5; padding: 34px 0 48px; }
+    .hero:before { content: ""; position: absolute; width: 540px; height: 540px; border: 1px solid rgba(255,255,255,.11); border-radius: 50%; right: -130px; top: -310px; box-shadow: 0 0 0 70px rgba(255,255,255,.025), 0 0 0 140px rgba(255,255,255,.025); pointer-events: none; }
+    .hero:after { content: ""; position: absolute; inset: 0; background: radial-gradient(circle at 75% 75%, rgba(100, 191, 158, .12), transparent 35%); pointer-events: none; }
+    .hero .wrap { position: relative; z-index: 1; }
+    .topline { display: flex; align-items: center; justify-content: space-between; gap: 20px; color: #d7e9dc; font-size: 12px; letter-spacing: .13em; font-weight: 700; }
+    .topline .date { letter-spacing: .03em; font-weight: 500; color: #c6d9cd; }
+    .hero-grid { display: grid; grid-template-columns: minmax(0, 1fr) 310px; align-items: end; gap: 48px; padding-top: 62px; }
+    .eyebrow { color: #a4d3ba; font-size: 12px; letter-spacing: .18em; font-weight: 800; margin: 0 0 12px; }
+    h1 { font-size: clamp(28px, 5vw, 62px); font-weight: 800; letter-spacing: -.055em; line-height: 1.14; margin: 0; }
+    h1 span { display: block; white-space: nowrap; }
+    .hero-lead { font-size: clamp(16px, 1.7vw, 21px); line-height: 1.75; margin: 24px 0 0; max-width: 640px; color: #e4f1e8; }
+    .hero-lead strong { color: #ffd0a8; }
+    .hero-aside { border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.08); border-radius: 20px; padding: 22px 24px; backdrop-filter: blur(8px); }
+    .hero-aside .small { font-size: 12px; color: #cce0d2; font-weight: 700; letter-spacing: .1em; }
+    .hero-aside p { margin: 9px 0 0; font-size: 15px; line-height: 1.75; }
+    .hero-aside b { color: #ffcca3; }
+    .main { padding: 34px 0 54px; }
+    .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 34px; }
+    .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 19px; box-shadow: var(--shadow); padding: 19px 22px 17px; min-height: 151px; }
+    .kpi .label { font-size: 12px; font-weight: 700; color: var(--muted); }
+    .kpi .value { display: flex; align-items: baseline; gap: 6px; margin: 8px 0 3px; line-height: 1; font-size: clamp(27px, 3vw, 39px); font-weight: 800; letter-spacing: -.05em; font-variant-numeric: tabular-nums; }
+    .kpi .unit { font-size: 15px; letter-spacing: 0; }
+    .kpi .delta { font-size: 12px; font-weight: 800; }
+    .positive { color: var(--green-2); }
+    .negative { color: var(--red); }
+    .neutral { color: var(--muted); }
+    .kpi .note { margin: 8px 0 0; font-size: 11px; color: var(--muted); }
+    .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin: 0 0 16px; }
+    .section-heading h2 { font-size: clamp(22px, 2.5vw, 28px); letter-spacing: -.035em; line-height: 1.3; margin: 0; }
+    .section-heading p { color: var(--muted); font-size: 13px; margin: 5px 0 0; }
+    .section-number { color: var(--green-2); font-size: 11px; font-weight: 800; letter-spacing: .16em; margin-bottom: 5px; }
+    .panels { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, .75fr); gap: 18px; margin-bottom: 34px; }
+    .panel { min-width: 0; background: var(--card); border: 1px solid var(--line); border-radius: 22px; box-shadow: var(--shadow); padding: 25px 28px 24px; }
+    .panel-top { display: flex; align-items: start; justify-content: space-between; gap: 14px; }
+    .panel h3 { font-size: 18px; letter-spacing: -.02em; margin: 0; line-height: 1.35; }
+    .panel-sub { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
+    .badge { flex: none; border-radius: 99px; background: #e4f2e9; color: var(--green); padding: 5px 10px; font-size: 11px; font-weight: 800; }
+    .segmented { display: inline-flex; gap: 4px; padding: 4px; background: #f0f2eb; border-radius: 12px; margin: 23px 0 0; max-width: 100%; }
+    .segmented button { cursor: pointer; border: 0; background: transparent; color: var(--muted); padding: 7px 14px; border-radius: 9px; font-size: 12px; font-weight: 800; transition: background .2s ease, color .2s ease, box-shadow .2s ease; }
+    .segmented button[aria-pressed="true"] { background: white; color: var(--green); box-shadow: 0 2px 8px rgba(30,60,40,.1); }
+    .segmented button:focus-visible, .bar:focus-visible, .rank-bar:focus-visible, a:focus-visible { outline: 3px solid var(--orange); outline-offset: 3px; }
+    .chart-area { height: 255px; padding: 20px 20px 0 45px; position: relative; margin-top: 15px; border-bottom: 1px solid #cfd8d0; }
+    .axis-line { position: absolute; left: 45px; right: 20px; border-top: 1px dashed #e3e7df; font-size: 10px; color: #809088; }
+    .axis-line span { position: absolute; left: -38px; top: -10px; width: 31px; text-align: right; }
+    .bars { position: relative; z-index: 1; height: 100%; display: flex; justify-content: space-around; align-items: flex-end; gap: 30px; padding: 0 30px; }
+    .bar-col { width: min(110px, 40%); height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; position: relative; }
+    .bar-label { position: absolute; bottom: calc(var(--bar-h) + 8px); font-size: 17px; color: var(--ink); font-weight: 800; white-space: nowrap; font-variant-numeric: tabular-nums; transition: bottom .45s ease; }
+    .bar { cursor: default; width: 100%; height: var(--bar-h); min-height: 5px; border: 0; border-radius: 10px 10px 0 0; background: #b6d0c4; transition: height .45s ease, background .2s ease; position: relative; }
+    .bar.current { background: linear-gradient(180deg, #3d9b81, #1a6556); }
+    .bar:hover, .bar:focus-visible { filter: brightness(1.08); }
+    .bar-col:after { content: attr(data-period); position: absolute; top: calc(100% + 8px); font-size: 12px; color: var(--muted); white-space: nowrap; font-weight: 700; }
+    .chart-caption { display: flex; gap: 12px; align-items: baseline; margin-top: 39px; padding-top: 15px; border-top: 1px solid var(--line); }
+    .chart-caption strong { color: var(--green); font-size: 25px; letter-spacing: -.04em; white-space: nowrap; }
+    .chart-caption strong.negative { color: var(--red); }
+    .chart-caption strong.positive { color: var(--green-2); }
+    .chart-caption span { font-size: 12px; color: var(--muted); line-height: 1.55; }
+    .weekly-big { margin-top: 27px; font-size: 36px; line-height: 1; font-weight: 800; letter-spacing: -.06em; color: var(--green); }
+    .weekly-big span { font-size: 15px; letter-spacing: 0; color: var(--muted); font-weight: 600; margin-left: 6px; }
+    .weekly-change { display: inline-flex; align-items: center; gap: 6px; background: #e5f3e9; color: var(--green); border-radius: 99px; padding: 5px 10px; font-size: 12px; font-weight: 800; margin-top: 11px; }
+    .weekly-rows { margin-top: 30px; display: grid; gap: 22px; }
+    .weekly-row .row-label { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; font-size: 12px; font-weight: 700; }
+    .weekly-row .row-label b { font-size: 17px; font-variant-numeric: tabular-nums; }
+    .track { height: 12px; background: #ebf0ea; border-radius: 99px; margin-top: 8px; overflow: hidden; }
+    .fill { height: 100%; border-radius: inherit; width: var(--fill); background: #b6d0c4; animation: grow .8s ease both; transform-origin: left; }
+    .fill.current { background: var(--green-2); }
+    @keyframes grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+    .minor-note { color: var(--muted); font-size: 11px; line-height: 1.6; margin: 22px 0 0; }
+    .two-col { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(300px, .8fr); gap: 18px; margin-bottom: 34px; }
+    .competitor-rows { display: grid; gap: 13px; margin-top: 18px; }
+    .competitor-row { display: grid; grid-template-columns: minmax(140px, 200px) minmax(0, 1fr) 48px; gap: 10px; align-items: center; }
+    .competitor-name { font-size: 12px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .competitor-row.own .competitor-name, .competitor-row.own .rank-value { color: var(--green); font-weight: 900; }
+    .rank-track { height: 17px; background: #eef1e9; border-radius: 99px; overflow: hidden; }
+    .rank-bar { display: block; height: 100%; width: var(--rank-w); background: #c1d7ca; border-radius: 99px; transition: width .5s ease; }
+    .competitor-row.own .rank-bar { background: var(--orange); }
+    .rank-value { text-align: right; font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .insight-box { background: #f2f6ee; border-radius: 15px; padding: 15px 17px; margin-top: 25px; font-size: 12px; line-height: 1.7; }
+    .insight-box strong { color: var(--green); }
+    .opportunity { background: #fdf3e8; border: 1px solid #f5dec4; border-radius: 17px; padding: 21px; margin-top: 23px; }
+    .opportunity .tag { color: #a96034; font-size: 11px; font-weight: 800; letter-spacing: .13em; }
+    .opportunity .price { color: #8f4b2f; margin-top: 6px; font-size: clamp(25px, 3vw, 34px); line-height: 1.25; font-weight: 900; letter-spacing: -.04em; }
+    .opportunity p { font-size: 13px; color: #705c4b; margin: 9px 0 0; }
+    .review-stat { display: flex; align-items: baseline; gap: 8px; margin-top: 25px; }
+    .review-stat strong { font-size: 39px; letter-spacing: -.05em; line-height: 1; color: var(--ink); }
+    .review-stat span { font-size: 13px; color: var(--muted); }
+    .review-note { border-left: 3px solid var(--orange); padding-left: 13px; margin-top: 17px; font-size: 13px; color: var(--muted); }
+    .action-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 34px; }
+    .action { background: var(--card); border: 1px solid var(--line); border-radius: 19px; padding: 22px 23px; box-shadow: var(--shadow); }
+    .action-no { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--green); color: white; font-size: 12px; font-weight: 800; }
+    .action h3 { font-size: 17px; letter-spacing: -.025em; line-height: 1.4; margin: 18px 0 8px; }
+    .action p { font-size: 12px; color: var(--muted); line-height: 1.75; margin: 0; }
+    .footnote { background: #eaf0e9; border-radius: 17px; padding: 20px 24px; color: #52675d; font-size: 12px; line-height: 1.7; }
+    .footnote strong { color: var(--green); }
+    .footnote ul { margin: 9px 0 0; padding-left: 20px; }
+    .footer { display: flex; justify-content: space-between; gap: 20px; padding: 25px 0 36px; color: #819087; font-size: 11px; }
+    @media (max-width: 1050px) {
+      .hero-grid { grid-template-columns: 1fr; }
+      .hero-grid { gap: 28px; padding-top: 42px; }
+      .hero-aside { max-width: 520px; }
+    }
+    @media (max-width: 900px) {
+      .panels, .two-col { grid-template-columns: 1fr; }
+      .kpis { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 620px) {
+      .wrap { width: min(100% - 26px, 1160px); }
+      .hero { padding: 23px 0 34px; }
+      .topline { font-size: 10px; flex-wrap: wrap; }
+      .hero-grid { padding-top: 39px; }
+      .hero-lead { margin-top: 18px; }
+      .kpis { gap: 10px; }
+      .kpi { min-height: 137px; padding: 15px; }
+      .kpi .value { font-size: 29px; }
+      .panel { padding: 21px 19px; }
+      .competitor-row { grid-template-columns: 103px minmax(0, 1fr) 36px; gap: 6px; }
+      .competitor-name { font-size: 10px; }
+      .action-grid { grid-template-columns: 1fr; }
+      .chart-area { padding-left: 36px; }
+      .axis-line { left: 36px; }
+      .bars { padding: 0 10px; }
+      .footer { flex-direction: column; gap: 3px; }
+    }
+    @media (max-width: 350px) {
+      h1 { font-size: 27px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *:before, *:after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+    }
+    @media print {
+      body { background: white; }
+      .hero { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .panel, .action, .kpi { box-shadow: none; break-inside: avoid; }
+      .segmented { display: none; }
+      .main { padding-top: 18px; }
+      .footnote { break-inside: avoid; }
+    }
+  
+    .pts { margin: 22px 0 0; padding-left: 1.4em; font-size: clamp(15px,1.5vw,19px); line-height: 1.7; color: #e4f1e8; max-width: 760px; }
+    .pts li { margin: 4px 0; } .pts strong { color: #ffd0a8; }
+    .alert { background: #fdf3e8; border: 1px solid #f5dec4; color: #705c4b; border-radius: 14px; padding: 12px 16px; font-size: 13px; margin: 22px 0 0; }
+    table.data { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 16px; font-variant-numeric: tabular-nums; }
+    table.data caption { text-align: left; font-size: 12px; color: var(--muted); padding-bottom: 8px; caption-side: top; }
+    table.data th, table.data td { border-bottom: 1px solid var(--line); padding: 8px 9px; text-align: left; vertical-align: top; }
+    table.data thead th { background: #eef4ed; color: var(--green); font-size: 12px; }
+    table.data td.num, table.data th.num { text-align: right; }
+    table.data tr.own td { background: #fdf3e8; font-weight: 700; }
+    .tbl-wrap { overflow-x: auto; }
+    .daily { display: flex; align-items: flex-end; gap: 3px; height: 190px; margin-top: 18px; padding: 0 2px; border-bottom: 1px solid #cfd8d0; }
+    .dbar { flex: 1; min-width: 6px; height: var(--h); background: #b6d0c4; border-radius: 4px 4px 0 0; border: 0; padding: 0; cursor: default; }
+    .dbar.peak { background: var(--green-2); } .dbar.dip { background: var(--orange); }
+    .dbar:focus-visible { outline: 3px solid var(--orange); outline-offset: 2px; }
+    .daily-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 6px; }
+    .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11px; color: var(--muted); margin-top: 10px; }
+    .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+    #daily-readout { font-size: 13px; font-weight: 700; color: var(--green); min-height: 1.6em; margin-top: 8px; }
+    .hl { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; font-size: 12px; }
+    .hl div { background: #f2f6ee; border-radius: 12px; padding: 12px 14px; } .hl div.dip { background: #fdf3e8; }
+    .hl b { display: block; color: var(--green); margin-bottom: 4px; } .hl div.dip b { color: #a96034; }
+    details summary { cursor: pointer; font-size: 12px; font-weight: 700; color: var(--green); margin-top: 14px; }
+    .section-block { margin-bottom: 34px; }
+    @media (max-width: 620px) { .hl { grid-template-columns: 1fr; } table.data { font-size: 12px; } }
+    @media print { details > *:not(summary) { display: block; } .daily { break-inside: avoid; } }
+  </style>
+</head>
+<body data-site="tabelog">
+  <header class="hero">
+    <div class="wrap">
+      <div class="topline"><span>BISTRO CAVA CAVA · WEEKLY REPORT</span><span class="date">2026.10.05 / 食べログ</span></div>
+      <div class="hero-grid">
+        <div>
+          <p class="eyebrow">今週のポイント</p>
+          <h1><span>月次の閲覧は堅調。</span><span>次は、口コミと予約導線。</span></h1>
+          <ol class="pts">
+            <li>9月のPVは<strong>4,753</strong>（8月4,624から+2.8%）。直近7日（09/28–10/04）は910PVで前7日比0.0%。</li>
+            <li>ネット予約は<strong>14組</strong>（8月15組）、予約専用番号の通話成立は<strong>5件</strong>（8月11件）。</li>
+            <li>直近7日の新着口コミは<strong>0件</strong>。評価3.26・口コミ49件、上位1店（3.61–3.61）との差は継続。</li>
+          </ol>
+        </div>
+        <aside class="hero-aside" aria-label="最優先の課題">
+          <div class="small">FOCUS · まず取り組むこと</div>
+          <p>通話成立が <b>11件 → 5件</b> に変化。電話・ネット予約の導線と、来店後に口コミを書いてもらうきっかけ作りを優先します。※通話成立は予約確定を意味しません。</p>
+        </aside>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap main">
+    <section aria-labelledby="key-numbers">
+      <div class="section-heading"><div><div class="section-number">SNAPSHOT</div><h2 id="key-numbers">まず、押さえたい4つの数字</h2></div></div>
+      <div class="kpis">
+        <article class="kpi">
+          <div class="label">9月のページ閲覧数</div>
+          <div class="value">4,753 <span class="unit">PV</span></div>
+          <div class="delta positive">↑ 前月比 2.8%増</div>
+          <p class="note">8月 4,624 PV</p>
+        </article>
+        <article class="kpi">
+          <div class="label">9月のネット予約</div>
+          <div class="value">14 <span class="unit">組</span></div>
+          <div class="delta negative">↓ 前月比 6.7%減</div>
+          <p class="note">8月 15組</p>
+        </article>
+        <article class="kpi">
+          <div class="label">9月の電話通話成立</div>
+          <div class="value">5 <span class="unit">件</span></div>
+          <div class="delta negative">↓ 前月比 54.5%減</div>
+          <p class="note">8月 11件／予約確定件数ではありません</p>
+        </article>
+        <article class="kpi">
+          <div class="label">直近7日の新着口コミ</div>
+          <div class="value">0 <span class="unit">件</span></div>
+          <div class="delta neutral">09/28–10/04</div>
+          <p class="note">累計49件</p>
+        </article>
+      </div>
+    </section>
+
+    <section aria-labelledby="trend-heading" class="section-block">
+      <div class="section-heading"><div><div class="section-number">01 / STORE ADMIN</div><h2 id="trend-heading">店舗管理データ：閲覧と予約の動き</h2><p>見たい指標を選ぶと、月次グラフが切り替わります。</p></div></div>
+      <div class="panels">
+        <article class="panel">
+          <div class="panel-top"><div><h3 id="monthly-title">月次比較</h3><p class="panel-sub" id="monthly-subtitle">2026年8月・2026年9月の確定値</p></div><span class="badge">月次比較</span></div>
+          <div class="segmented" role="group" aria-label="月次グラフの指標">
+            <button type="button" data-metric="pv" aria-pressed="true">閲覧数</button>
+            <button type="button" data-metric="booking" aria-pressed="false">ネット予約</button>
+            <button type="button" data-metric="calls" aria-pressed="false">電話通話</button>
+          </div>
+          <div class="chart-area" role="img" aria-labelledby="monthly-title" aria-describedby="monthly-alt">
+            <div class="axis-line" style="top:20px"><span id="axis-max">6,000</span></div>
+            <div class="axis-line" style="top:calc(50% + 10px)"><span id="axis-half">3,000</span></div>
+            <div class="axis-line" style="bottom:0"><span>0</span></div>
+            <div class="bars" id="monthly-bars">
+              <div class="bar-col" data-period="8月" style="--bar-h:77.06666666666668%"><span class="bar-label">4,624</span><div class="bar" tabindex="0" title="8月：4,624 PV" aria-label="8月：4,624 PV"></div></div>
+              <div class="bar-col" data-period="9月" style="--bar-h:79.21666666666667%"><span class="bar-label">4,753</span><div class="bar current" tabindex="0" title="9月：4,753 PV" aria-label="9月：4,753 PV"></div></div>
+            </div>
+          </div>
+          <p class="chart-caption"><strong id="monthly-change" class="positive">+2.8%</strong><span id="monthly-explain">月次の閲覧・予約・通話を切り替えで確認できます。</span></p>
+          <p class="minor-note" id="monthly-alt">8月 4,624 PV、9月 4,753 PV。</p>
+          <div class="tbl-wrap"><table class="data">
+            <caption>表1 月次比較（出典：店舗管理画面「来店指標（TEL数・ネット予約数など）」月別／単位：PV・件・組）</caption>
+            <thead><tr><th>指標</th><th class="num">2026年8月</th><th class="num">2026年9月</th><th class="num">増減</th><th class="num">前月比</th></tr></thead>
+            <tbody>
+              <tr><td>アクセス数（PV）</td><td class="num">4,624</td><td class="num">4,753</td><td class="num">+129</td><td class="num">+2.8%</td></tr><tr><td>食べログ予約専用番号 通話成立数（件）</td><td class="num">11</td><td class="num">5</td><td class="num">−6</td><td class="num">−54.5%</td></tr><tr><td>インターネット予約組数（組）</td><td class="num">15</td><td class="num">14</td><td class="num">−1</td><td class="num">−6.7%</td></tr><tr><td>PV内訳 PC／スマートフォン／アプリ</td><td class="num">未取得</td><td class="num">未取得</td><td class="num">—</td><td class="num">—</td></tr>
+            </tbody>
+          </table></div>
+        </article>
+        <article class="panel">
+          <div class="panel-top"><div><h3>直近7日の閲覧数</h3><p class="panel-sub">09/21–09/27 と 09/28–10/04 / PV</p></div><span class="badge">週次比較</span></div>
+          <div class="weekly-big">910<span>PV / 直近7日</span></div>
+          <div class="weekly-change">↗ 前の7日間より 0 PV（0.0%）増</div>
+          <div class="weekly-rows" role="img" aria-label="前の7日間（09/21–09/27）910 PV、直近7日間（09/28–10/04）910 PV。">
+            <div class="weekly-row"><div class="row-label"><span>前の7日間（09/21–09/27）</span><b>910</b></div><div class="track"><div class="fill" style="--fill:100%"></div></div></div>
+            <div class="weekly-row"><div class="row-label"><span>直近7日間（09/28–10/04）</span><b>910</b></div><div class="track"><div class="fill current" style="--fill:100%"></div></div></div>
+          </div>
+          <p class="minor-note">出典：店舗管理画面 アクセス数レポート（日別）。2026/10/05は集計中のため含めていません（0扱いにはしていません）。直近末日の値は速報値の可能性があり、後日修正される場合があります。</p>
+          <div class="tbl-wrap"><table class="data">
+            <caption>表2 予約通知（出典：店舗管理画面トップ「新着ご予約情報」／2026/10/05 確認時点／単位：件）</caption>
+            <thead><tr><th>区分</th><th class="num">通知件数</th></tr></thead>
+            <tbody>
+              <tr><td>新規予約</td><td class="num">未取得</td></tr><tr><td>予約内容の変更</td><td class="num">未取得</td></tr><tr><td>キャンセル</td><td class="num">未取得</td></tr>
+            </tbody>
+          </table></div>
+          <p class="minor-note">※確認時点で表示されていた新着通知の件数です。週・月の予約総数やキャンセル総数ではありません。顧客の氏名・連絡先は記載しません。</p>
+        </article>
+      </div>
+
+      <article class="panel" style="margin-top:18px">
+        <div class="panel-top"><div><h3 id="daily-title">直近30日の日別PV（2026/09/05–2026/10/04）</h3><p class="panel-sub">合計 3,850 PV／1日平均 128.3 PV／出典：アクセス数レポート（日別）</p></div><span class="badge">30日推移</span></div>
+        <div class="daily" id="daily-bars" role="group" aria-label="日別PVの棒グラフ。各棒にフォーカスすると値を表示します。"></div>
+        <div class="daily-axis"><span>9/5</span><span>9/20</span><span>10/4</span></div>
+        <div class="legend"><span><i style="background:var(--green-2)"></i>ピーク上位4日</span><span><i style="background:var(--orange)"></i>落ち込み下位4日</span><span><i style="background:#b6d0c4"></i>その他</span></div>
+        <div id="daily-readout" aria-live="polite">棒にカーソルを合わせるか、Tabキーで選択すると値を表示します。</div>
+        <div class="hl">
+          <div><b>ピーク</b>9/11（金） 160PV、9/18（金） 160PV、9/25（金） 160PV、10/2（金） 160PV</div>
+          <div class="dip"><b>落ち込み</b>9/5（土） 100PV、9/12（土） 100PV、9/19（土） 100PV、9/26（土） 100PV</div>
+        </div>
+        <details><summary>日別データ表を開く（30日分）</summary>
+          <div class="tbl-wrap"><table class="data"><caption>表3 日別アクセス数（出典：店舗管理画面 アクセス数レポート／単位：PV／2026/10/05は集計中のため除外）</caption>
+          <thead><tr><th>日付</th><th class="num">PV</th><th>区分</th></tr></thead>
+          <tbody><tr><td>2026/09/05（土）</td><td class="num">100</td><td>落ち込み</td></tr><tr><td>2026/09/06（日）</td><td class="num">110</td><td></td></tr><tr><td>2026/09/07（月）</td><td class="num">120</td><td></td></tr><tr><td>2026/09/08（火）</td><td class="num">130</td><td></td></tr><tr><td>2026/09/09（水）</td><td class="num">140</td><td></td></tr><tr><td>2026/09/10（木）</td><td class="num">150</td><td></td></tr><tr><td>2026/09/11（金）</td><td class="num">160</td><td>ピーク</td></tr><tr><td>2026/09/12（土）</td><td class="num">100</td><td>落ち込み</td></tr><tr><td>2026/09/13（日）</td><td class="num">110</td><td></td></tr><tr><td>2026/09/14（月）</td><td class="num">120</td><td></td></tr><tr><td>2026/09/15（火）</td><td class="num">130</td><td></td></tr><tr><td>2026/09/16（水）</td><td class="num">140</td><td></td></tr><tr><td>2026/09/17（木）</td><td class="num">150</td><td></td></tr><tr><td>2026/09/18（金）</td><td class="num">160</td><td>ピーク</td></tr><tr><td>2026/09/19（土）</td><td class="num">100</td><td>落ち込み</td></tr><tr><td>2026/09/20（日）</td><td class="num">110</td><td></td></tr><tr><td>2026/09/21（月）</td><td class="num">120</td><td></td></tr><tr><td>2026/09/22（火）</td><td class="num">130</td><td></td></tr><tr><td>2026/09/23（水）</td><td class="num">140</td><td></td></tr><tr><td>2026/09/24（木）</td><td class="num">150</td><td></td></tr><tr><td>2026/09/25（金）</td><td class="num">160</td><td>ピーク</td></tr><tr><td>2026/09/26（土）</td><td class="num">100</td><td>落ち込み</td></tr><tr><td>2026/09/27（日）</td><td class="num">110</td><td></td></tr><tr><td>2026/09/28（月）</td><td class="num">120</td><td></td></tr><tr><td>2026/09/29（火）</td><td class="num">130</td><td></td></tr><tr><td>2026/09/30（水）</td><td class="num">140</td><td></td></tr><tr><td>2026/10/01（木）</td><td class="num">150</td><td></td></tr><tr><td>2026/10/02（金）</td><td class="num">160</td><td>ピーク</td></tr><tr><td>2026/10/03（土）</td><td class="num">100</td><td></td></tr><tr><td>2026/10/04（日）</td><td class="num">110</td><td></td></tr></tbody>
+          </table></div>
+        </details>
+      </article>
+    </section>
+
+    <section aria-labelledby="review-heading" class="section-block">
+      <div class="section-heading"><div><div class="section-number">02 / RATING &amp; REVIEWS</div><h2 id="review-heading">自店の評価と新着口コミ</h2></div></div>
+      <div class="two-col">
+        <article class="panel">
+          <h3>評価・口コミ・保存数</h3>
+          <div class="tbl-wrap"><table class="data">
+            <caption>表4 公開店舗ページの指標（出典：食べログ公開店舗ページ／2026/10/05 取得）</caption>
+            <thead><tr><th>指標</th><th class="num">値</th><th>単位</th></tr></thead>
+            <tbody>
+              <tr><td>評価</td><td class="num">3.26</td><td>点（5点満点）</td></tr><tr><td>口コミ数</td><td class="num">49</td><td>件</td></tr><tr><td>保存数</td><td class="num">4,007</td><td>人</td></tr><tr><td>予算（夜／昼）</td><td class="num">未取得</td><td>円</td></tr>
+            </tbody>
+          </table></div>
+        </article>
+        <article class="panel">
+          <h3>直近7日の新着口コミ</h3>
+          <p class="panel-sub">確認範囲：2026/09/28–2026/10/05</p>
+          <div class="review-stat"><strong>該当口コミなし</strong></div>
+          <p class="review-note">確認範囲の新着投稿は 0 件でした。公開ページに投稿日が表示されない場合は、件数と一覧で判定しています。訪問日・訪問月と投稿日は区別してください。</p>
+          <p class="minor-note">改善・返信のアイデア：直近の口コミが少ない／ない状態が続く場合は、会計時のカードや予約完了メッセージで「感想を食べログでお聞かせください」と案内する導線を用意する。</p>
+        </article>
+      </div>
+    </section>
+
+    <section aria-labelledby="position-heading" class="section-block">
+      <div class="section-heading"><div><div class="section-number">03 / COMPETITORS</div><h2 id="position-heading">競合比較（評価上位店）</h2><p>評価と口コミ件数を切り替えて確認できます。</p></div></div>
+      <div class="two-col">
+        <article class="panel">
+          <div class="panel-top"><div><h3 id="rank-title">評価比較</h3><p class="panel-sub" id="rank-subtitle">設定エリア / 2026/10/05時点 / 5点満点</p></div></div>
+          <div class="segmented" role="group" aria-label="競合比較の指標">
+            <button type="button" data-rank="rating" aria-pressed="true">評価</button>
+            <button type="button" data-rank="reviews" aria-pressed="false">口コミ数</button>
+          </div>
+          <div class="competitor-rows" id="competitor-rows" role="img" aria-labelledby="rank-title" aria-describedby="rank-alt"></div>
+          <p class="insight-box" id="rank-insight"><strong>読み取り：</strong>自店の評価は3.26。比較した上位店（3.61–3.61）とは0.35–0.35の差があります。</p>
+          <p class="minor-note" id="rank-alt"></p>
+        </article>
+        <article class="panel">
+          <h3>価格帯の確認</h3>
+          <p class="panel-sub">公開ページに掲載された予算で比較</p>
+          <p class="minor-note">（昼予算：未取得）</p>
+          <ul class="minor-note">
+            <li><b>価格：</b>夜 未取得 ／ 昼 未取得。「昼予算 掲載なし」はランチ営業の有無を意味しません。</li>
+            <li><b>評価：</b>3.26 ／ 比較店 3.61–3.61</li>
+            <li><b>口コミ数：</b>49 ／ 比較店 146–146</li>
+          </ul>
+        </article>
+      </div>
+      <article class="panel">
+        <div class="tbl-wrap"><table class="data">
+            <caption>表5 競合比較（出典：公開ランキング一覧および各店公開ページ／2026/10/05 取得／評価は点、口コミは件、保存は人、予算は円）</caption>
+            <thead><tr><th>#</th><th>店名</th><th class="num">評価</th><th class="num">口コミ</th><th>夜予算</th><th>昼予算</th><th>最寄駅</th><th class="num">保存</th></tr></thead>
+            <tbody>
+              <tr><td>1</td><td>ラトラスフィス</td><td class="num">3.61</td><td class="num">146</td><td>掲載なし</td><td>掲載なし</td><td>未取得</td><td class="num">未取得</td></tr><tr class="own"><td>—</td><td>BISTRO CAVA CAVA（自店）</td><td class="num">3.26</td><td class="num">49</td><td>掲載なし</td><td>掲載なし</td><td>未取得</td><td class="num">未取得</td></tr>
+            </tbody>
+          </table></div>
+        <p class="insight-box"><strong>最近の変化：</strong>前回スナップショットが無い項目は、価格変更の有無を推定していません。「昼予算 掲載なし」は公開ページに記載がないことを示します。</p>
+      </article>
+    </section>
+
+    <section aria-labelledby="new-heading" class="section-block">
+      <div class="section-heading"><div><div class="section-number">04 / AREA</div><h2 id="new-heading">エリアの新規オープンとランキング</h2></div></div>
+      <div class="panels">
+        <article class="panel">
+          <h3>直近30日の新規オープン・新規掲載</h3>
+          <p class="panel-sub">確認範囲：オープン日 2026/09/05–2026/10/05</p>
+          <div class="review-stat"><strong>未取得</strong></div>
+          
+          
+          <p class="minor-note">（ニューオープン一覧：未取得）</p>
+        </article>
+        <article class="panel">
+          <h3>自店のエリア内順位</h3>
+          <p class="panel-sub">設定エリア</p>
+          
+          <div class="tbl-wrap"><table class="data">
+            <caption>表7 エリア順位（出典：店舗管理画面「アクセス数ランキング」、公開ランキング一覧（評価順）／2026/10/05 取得／単位：位）</caption>
+            <thead><tr><th>ランキング</th><th class="num">順位</th><th>備考</th></tr></thead>
+            <tbody>
+              <tr><td>アクセス数ランキング</td><td class="num">未取得</td><td>未取得</td></tr><tr><td>ジャンル公開順位</td><td class="num">未取得</td><td>広告枠を除く掲載順</td></tr>
+            </tbody>
+          </table></div>
+          <p class="minor-note">アクセス数の順位と評価順の順位は別の指標です。広告枠の扱いと対象エリアを明記してください。</p>
+          
+        </article>
+      </div>
+    </section>
+
+    <section aria-labelledby="action-heading">
+      <div class="section-heading"><div><div class="section-number">NEXT ACTIONS</div><h2 id="action-heading">次に取り組む3つのこと</h2><p>実行しやすい順にまとめました。</p></div></div>
+      <div class="action-grid">
+        <article class="action"><span class="action-no">01</span><h3>口コミのきっかけを作る</h3><p>会計時のカードや予約後のメッセージで、率直な感想を投稿しやすい案内を用意します。口コミ数（49件）を競合と比較し、差があれば埋める導線を確認します。</p></article><article class="action"><span class="action-no">02</span><h3>予約導線を見直す</h3><p>PVの動きと通話成立（11件→5件）を見比べ、店舗ページの予約可能枠・コース掲載・電話受付時間の表記がそろっているか確認します。</p></article><article class="action"><span class="action-no">03</span><h3>ランチの魅力を具体的に見せる</h3><p>昼予算が掲載されている場合、料理内容・量・雰囲気を写真と説明で伝えます。</p></article>
+      </div>
+    </section>
+
+    <aside class="footnote" aria-label="データの見方">
+      <strong>数字の見方</strong>
+      <ul>
+        <li>月次・週次・日別・確認時点のデータは対象期間が異なるため、同じ集計として扱いません。</li>
+        <li>電話の「通話成立」は予約完了を意味しません。未取得の項目は空欄やゼロにせず「未取得」と記載します。</li>
+        <li>予約通知の件数は確認時点の新着通知数で、期間合計ではありません。</li>
+        <li>口コミの投稿日を確認できない場合は、判定方法と限界を明記します。顧客の氏名・連絡先は記載しません。</li>
+        <li>グラフの切り替えはこのファイル内の表示だけに作用し、外部への通信は行いません。</li>
+      </ul>
+    </aside>
+    <footer class="footer"><span>BISTRO CAVA CAVA · 食べログ週報 · 作成日 2026/10/05（Asia/Tokyo）</span><span>出典：食べログ店舗管理画面・公開ページ · 店舗ID 13245351</span></footer>
+  </main>
+
+  <script>
+    (() => {
+      const monthly = {"pv":{"title":"ページ閲覧数は前月比2.8%増","subtitle":"2026年8月・2026年9月の確定値 / PV","values":[4624,4753],"max":6000,"unit":"PV","change":"+2.8%","cls":"positive","explain":"閲覧数の差分は +129PV。予約・通話の動きとあわせて導線を確認します。"},"booking":{"title":"ネット予約は15組から14組へ","subtitle":"2026年8月・2026年9月の確定値 / 組","values":[15,14],"max":20,"unit":"組","change":"−6.7%","cls":"negative","explain":"インターネット予約組数です。来店人数や売上とは異なります。"},"calls":{"title":"電話の通話成立は11件から5件へ","subtitle":"2026年8月・2026年9月の確定値 / 件","values":[11,5],"max":20,"unit":"件","change":"−54.5%","cls":"negative","explain":"食べログ予約専用番号の通話成立数です。予約確定数とは異なります。"}};
+      const periods = ["8月", "9月"];
+      const competitors = [{"name":"ラトラスフィス","rating":3.61,"reviews":146,"own":false},{"name":"CAVA CAVA（自店）","rating":3.26,"reviews":49,"own":true}];
+      const daily = [{"d":"9/5","w":"土","v":100,"t":"dip"},{"d":"9/6","w":"日","v":110,"t":""},{"d":"9/7","w":"月","v":120,"t":""},{"d":"9/8","w":"火","v":130,"t":""},{"d":"9/9","w":"水","v":140,"t":""},{"d":"9/10","w":"木","v":150,"t":""},{"d":"9/11","w":"金","v":160,"t":"peak"},{"d":"9/12","w":"土","v":100,"t":"dip"},{"d":"9/13","w":"日","v":110,"t":""},{"d":"9/14","w":"月","v":120,"t":""},{"d":"9/15","w":"火","v":130,"t":""},{"d":"9/16","w":"水","v":140,"t":""},{"d":"9/17","w":"木","v":150,"t":""},{"d":"9/18","w":"金","v":160,"t":"peak"},{"d":"9/19","w":"土","v":100,"t":"dip"},{"d":"9/20","w":"日","v":110,"t":""},{"d":"9/21","w":"月","v":120,"t":""},{"d":"9/22","w":"火","v":130,"t":""},{"d":"9/23","w":"水","v":140,"t":""},{"d":"9/24","w":"木","v":150,"t":""},{"d":"9/25","w":"金","v":160,"t":"peak"},{"d":"9/26","w":"土","v":100,"t":"dip"},{"d":"9/27","w":"日","v":110,"t":""},{"d":"9/28","w":"月","v":120,"t":""},{"d":"9/29","w":"火","v":130,"t":""},{"d":"9/30","w":"水","v":140,"t":""},{"d":"10/1","w":"木","v":150,"t":""},{"d":"10/2","w":"金","v":160,"t":"peak"},{"d":"10/3","w":"土","v":100,"t":""},{"d":"10/4","w":"日","v":110,"t":""}];
+      const areaLabel = "設定エリア";
+      const asOfLabel = "2026/10/05";
+      const format = value => (value == null || !Number.isFinite(Number(value)) ? '未取得' : Number(value).toLocaleString('ja-JP'));
+      const byId = id => document.getElementById(id);
+      const nice = (v) => {
+        const n = Number(v) || 0;
+        if (n <= 0) return 1;
+        const exp = Math.pow(10, Math.floor(Math.log10(n)));
+        return Math.ceil(n / exp) * exp;
+      };
+
+      function renderMonthly(key) {
+        const d = monthly[key]; if (!d || !byId('monthly-title')) return;
+        byId('monthly-title').textContent = d.title;
+        byId('monthly-subtitle').textContent = d.subtitle;
+        const max = d.max || nice(Math.max(d.values[0] || 0, d.values[1] || 0));
+        byId('axis-max').textContent = format(max);
+        byId('axis-half').textContent = format(max / 2);
+        byId('monthly-change').textContent = d.change;
+        byId('monthly-change').className = d.cls;
+        byId('monthly-explain').textContent = d.explain;
+        const cols = byId('monthly-bars').children;
+        d.values.forEach((value, index) => {
+          const h = value == null ? 0 : (value / max * 100);
+          cols[index].style.setProperty('--bar-h', Math.max(value == null ? 0 : 5, h) + '%');
+          cols[index].querySelector('.bar-label').textContent = format(value);
+          const bar = cols[index].querySelector('.bar');
+          bar.title = periods[index] + '：' + format(value) + ' ' + d.unit;
+          bar.setAttribute('aria-label', bar.title);
+        });
+        byId('monthly-alt').textContent = periods[0] + ' ' + format(d.values[0]) + ' ' + d.unit + '、' + periods[1] + ' ' + format(d.values[1]) + ' ' + d.unit + '。グラフの縦軸は0から' + format(max) + ' ' + d.unit + 'です。';
+        document.querySelectorAll('[data-metric]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.metric === key)));
+      }
+
+      function renderRank(key) {
+        const isRating = key === 'rating';
+        if (!byId('rank-title')) return;
+        const usable = competitors.filter(c => c[key] != null && Number.isFinite(Number(c[key])));
+        byId('rank-title').textContent = isRating ? '評価は競合上位店と比較' : '口コミ件数は競合上位店と比較';
+        byId('rank-subtitle').textContent = areaLabel + ' / ' + asOfLabel + '時点 / ' + (isRating ? '5点満点' : '件数');
+        const list = byId('competitor-rows'); list.replaceChildren();
+        if (!usable.length) {
+          byId('rank-insight').innerHTML = '<strong>読み取り：</strong>競合データ未取得';
+          byId('rank-alt').textContent = '競合データ：未取得';
+          document.querySelectorAll('[data-rank]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.rank === key)));
+          return;
+        }
+        const sorted = [...usable].sort((a, b) => Number(b[key]) - Number(a[key]));
+        const max = isRating ? 5 : Math.max(...sorted.map(i => Number(i.reviews) || 0), 1);
+        sorted.forEach(item => {
+          const row = document.createElement('div');
+          row.className = 'competitor-row' + (item.own ? ' own' : '');
+          const name = document.createElement('span'); name.className = 'competitor-name'; name.textContent = item.name; name.title = item.name;
+          const track = document.createElement('div'); track.className = 'rank-track';
+          const bar = document.createElement('span'); bar.className = 'rank-bar';
+          bar.style.setProperty('--rank-w', ((Number(item[key]) || 0) / max * 100) + '%');
+          track.append(bar);
+          const value = document.createElement('span'); value.className = 'rank-value';
+          value.textContent = isRating ? Number(item.rating).toFixed(2) : format(item.reviews);
+          row.append(name, track, value); list.append(row);
+        });
+        const own = sorted.find(i => i.own);
+        byId('rank-insight').innerHTML = isRating
+          ? '<strong>読み取り：</strong>' + (own ? ('自店の評価は' + Number(own.rating).toFixed(2) + '。') : '') + '棒は0から5点を基準にしています。'
+          : '<strong>読み取り：</strong>' + (own ? ('自店は' + format(own.reviews) + '件。') : '') + '棒は件数に比例します。';
+        byId('rank-alt').textContent = sorted.map(i => i.name + ' ' + (isRating ? Number(i.rating).toFixed(2) + '点' : format(i.reviews) + '件')).join('、') + '。';
+        document.querySelectorAll('[data-rank]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.rank === key)));
+      }
+
+      function renderDaily() {
+        const box = byId('daily-bars'); const out = byId('daily-readout'); if (!box || !daily.length) return;
+        const max = Math.max(...daily.map(d => d.v), 1);
+        daily.forEach(d => {
+          const b = document.createElement('button');
+          b.type = 'button'; b.className = 'dbar' + (d.t ? ' ' + d.t : '');
+          b.style.setProperty('--h', (d.v / max * 100) + '%');
+          const text = d.d + '（' + d.w + '）：' + format(d.v) + ' PV' + (d.t === 'peak' ? '（ピーク）' : d.t === 'dip' ? '（落ち込み）' : '');
+          b.title = text; b.setAttribute('aria-label', text);
+          const show = () => { out.textContent = text; };
+          b.addEventListener('mouseenter', show); b.addEventListener('focus', show); b.addEventListener('click', show);
+          box.append(b);
+        });
+      }
+
+      document.querySelectorAll('[data-metric]').forEach(b => b.addEventListener('click', () => renderMonthly(b.dataset.metric)));
+      document.querySelectorAll('[data-rank]').forEach(b => b.addEventListener('click', () => renderRank(b.dataset.rank)));
+      renderMonthly("pv");
+      renderRank('rating');
+      renderDaily();
+    })();
+  </script>
+</body>
+</html>

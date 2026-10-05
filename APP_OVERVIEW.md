@@ -1,6 +1,6 @@
 # gourmet アプリ概要（APP_OVERVIEW）
 
-最終更新: 2026-10-05（週報 HTML を全サイト共通テンプレート化し、一休週報を追加。UI=サンプル週報、内容=青写真ルール）。詳しい手順・API の入出力は [README.md](README.md) を見てください。
+最終更新: 2026-10-05（週報を GitHub Pages にホストし、M-talk カードの「週報を開く」で開く。PDF は任意。共通テンプレート＋一休）。詳しい手順・API の入出力は [README.md](README.md) を見てください。
 
 ## 1. 目的
 
@@ -139,7 +139,7 @@ AI は **キャッシュ（取り込み済みの DB）だけ** で答え、質�
 
 ## 11. 週報 HTML（全サイト共通テンプレート）
 
-週報 HTML の見た目は **全サイト共通** の `scripts/shared/weekly-report.js`（`renderWeeklyReportHtml`、CSS は `scripts/shared/weekly-report.css.txt`）。UI はユーザー承認済みのサンプル週報（hero / KPI / panels / charts / competitor bars / actions / footnotes）、内容ルールは青写真（未取得は「未取得」、事実と推測を分離、PII 禁止）。サイトごとの数値・文言は各アダプタが詰めるだけで、食べログ・一休・今後のホットペッパー等はすべて同じ見た目になります。エージェント／ローカルで HTML を作る（Edge Functions は使わない）。
+週報 HTML の見た目は **全サイト共通** の `scripts/shared/weekly-report.js`（`renderWeeklyReportHtml`、CSS は `scripts/shared/weekly-report.css.txt`）。UI はユーザー承認済みのサンプル週報（hero / KPI / panels / charts / competitor bars / actions / footnotes）、内容ルールは青写真（未取得は「未取得」、事実と推測を分離、PII 禁止）。サイトごとの数値・文言は各アダプタが詰めるだけで、食べログ・一休・今後のホットペッパー等はすべて同じ見た目になります。エージェント／ローカルで HTML を作り `public/weekly/<店舗UUID>/<asOf>/` に置いて Pages 公開。M-talk カードは「週報を開く」でその URL（Edge Functions は HTML 生成しない）。
 
 | サイト | アダプタ | エクスポート入口 |
 |---|---|---|

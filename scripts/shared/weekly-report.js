@@ -461,3 +461,69 @@ export function renderWeeklyReportHtml(v) {
 }
 
 export { weeklyPvWindows, sumDailyPv, pctChange, shiftDate, within30Days };
+
+/**
+ * 複数サイトの週報を GitHub Pages で開くためのハブ HTML（カードの「週報を開く」先）。
+ * 各サイトの本体は同じディレクトリの `<site.key>.html`（共通テンプレートのまま）。
+ * サイト別 HTML は ID が衝突するため 1 枚に連結せず、ハブからリンクする。
+ */
+export function renderWeeklyHubHtml(views, { storeName, asOf } = {}) {
+  const list = Array.isArray(views) ? views.filter(Boolean) : [];
+  if (!list.length) throw new Error("views が空です");
+  const name = storeName || list[0].storeName || "店舗";
+  const day = asOf || list[0].asOf;
+  const labels = list.map((v) => v.site?.label || v.site?.key || "サイト");
+  const cards = list.map((v) => {
+    const key = esc(v.site?.key || "site");
+    const label = esc(v.site?.label || key);
+    const href = `${key}.html`;
+    return `<a class="hub-card" href="${href}"><span class="hub-eyebrow">${label}週報</span><strong>${esc(name)}</strong><span class="hub-meta">${esc(slashDate(day))} 作成 · 共通テンプレート</span><span class="hub-cta">開く →</span></a>`;
+  }).join("\n        ");
+  return `<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="robots" content="noindex">
+  <title>${esc(name)} 週報（${esc(labels.join("・"))}） ${esc(slashDate(day))}</title>
+  <style>
+    :root { --ink:#20322e; --muted:#65736d; --paper:#f7f6f1; --card:#fffefa; --line:#e8e7de; --green:#174f46; --mint:#cde7dc; --shadow:0 15px 40px rgba(24,50,41,.07); }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--paper); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", Meiryo, sans-serif; line-height: 1.65; }
+    a { color: inherit; text-decoration: none; }
+    .wrap { width: min(720px, calc(100% - 40px)); margin: auto; padding: 48px 0 64px; }
+    .hero { background: #123c35; color: #fffdf5; padding: 36px 0 40px; }
+    .hero .wrap { padding-top: 0; padding-bottom: 0; }
+    .topline { display: flex; justify-content: space-between; gap: 16px; color: #d7e9dc; font-size: 12px; letter-spacing: .13em; font-weight: 700; }
+    .eyebrow { color: #a4d3ba; font-size: 12px; letter-spacing: .18em; font-weight: 800; margin: 28px 0 10px; }
+    h1 { font-size: clamp(28px, 6vw, 44px); font-weight: 800; letter-spacing: -.04em; line-height: 1.2; margin: 0; }
+    .sub { margin: 14px 0 0; color: #c6d9cd; font-size: 14px; }
+    .hub-grid { display: grid; gap: 16px; margin-top: 28px; }
+    .hub-card { display: grid; gap: 6px; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 22px 22px 18px; box-shadow: var(--shadow); transition: transform .15s ease, border-color .15s ease; }
+    .hub-card:hover, .hub-card:focus-visible { transform: translateY(-2px); border-color: var(--mint); outline: none; }
+    .hub-eyebrow { color: var(--green); font-size: 12px; letter-spacing: .14em; font-weight: 800; }
+    .hub-card strong { font-size: 20px; letter-spacing: -.02em; }
+    .hub-meta { color: var(--muted); font-size: 13px; }
+    .hub-cta { margin-top: 8px; color: var(--green); font-weight: 700; font-size: 14px; }
+    .note { margin-top: 28px; color: var(--muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="wrap">
+      <div class="topline"><span>${esc(name)} · WEEKLY REPORT</span><span>${esc(slashDate(day))}</span></div>
+      <p class="eyebrow">週報を開く</p>
+      <h1>${esc(name)} 週報</h1>
+      <p class="sub">${esc(labels.join("・"))} · 承認済みの共通テンプレート</p>
+    </div>
+  </header>
+  <main class="wrap">
+    <div class="hub-grid">
+        ${cards}
+    </div>
+    <p class="note">各サイトの週報は同じ見た目の共通テンプレートです。数値は各サイトの管理画面・公開ページから取得した値です（取れなかった項目は「未取得」）。お客様の氏名・連絡先は載せていません。</p>
+  </main>
+</body>
+</html>`;
+}

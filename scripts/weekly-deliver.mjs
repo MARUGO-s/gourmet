@@ -1,27 +1,28 @@
 #!/usr/bin/env node
 // 週報を M-talk の店舗Bot のルームへ届ける（Grok Bot の月曜の作業用）。週報のビュー（共通テンプレート）から
-//   ① サイト別の週報 HTML（手元の確認用。M-talk には添付しない）② 全サイトをまとめた PDF ③ カードの要約 を作り、
+//   ① サイト別の週報 HTML ＋ ハブ HTML（GitHub Pages に載せ、「週報を開く」で開く）② 任意の PDF ③ カードの要約 を作り、
 //   agent-api POST /weekly/deliver（X-Ingest-Token）へ渡す。M-talk への署名・GOURMET_MTALK_TOKEN は gourmet の Edge Function だけが持つ。
 // 既定は確認だけ（dryRun: M-talk でも投稿しない）。実際に投稿するのは --send を付けたときだけ。--no-post は agent-api も呼ばない。
+// PDF は任意（--pdf）。本体は HTML（Pages）。M-talk /store-post は HTML 添付不可・marugo-s.github.io リンク可。
 //
 //   INGEST_TOKEN=... node scripts/weekly-deliver.mjs \
 //     --tabelog-input weekly-input.json \
 //     --ikyu-payload payload.json [--ikyu-payload older.json] --ikyu-store 112789 \
-//     --name "BISTRO CAVA CAVA" [--as-of 2026-10-05] [--store-id <gourmet の店舗 UUID>] [--room 30] \
-//     [--out-dir run-xxx/weekly] [--send | --no-post]
+//     --name "BISTRO CAVA CAVA" --store-id <gourmet の店舗 UUID> [--as-of 2026-10-05] [--room 30] \
+//     [--out-dir run-xxx/weekly] [--publish-dir public] [--pdf] [--send | --no-post]
 //
 // 店舗: --store-id、無ければ最初のサイトの店舗キー（食べログの storeKey・一休の店舗ID）からアプリの店舗を探す。
-// 同じ店舗×週（作成日の週の月曜）は1回だけ届く（やり直しても二重に届かない）。詳細: docs/weekly-report.md
+// Pages に載せる HTML は --store-id 必須（URL が店舗 UUID）。同じ店舗×週は1回だけ届く。詳細: docs/weekly-report.md
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { DEFAULT_ENDPOINT, callAgentApi, parseArgs, readToken } from "./agent-common.mjs";
 import { SITES } from "./weekly-report.mjs";
-import { renderWeeklyReportHtml } from "./shared/weekly-report.js";
+import { renderWeeklyHubHtml, renderWeeklyReportHtml } from "./shared/weekly-report.js";
 import { renderWeeklyPdf, weeklyCardSection } from "./shared/weekly-pdf.js";
 import { loadReportFonts, renderReportPdf } from "../supabase/functions/_shared/report-pdf.js";
 import { bytesToBase64 } from "../supabase/functions/_shared/mtalk-share.js";
-import { looksLikePersonalInfo, validateWeeklyDeliverInput, weeklyFileName } from "../supabase/functions/_shared/weekly-delivery.js";
+import { looksLikePersonalInfo, validateWeeklyDeliverInput, weeklyFileName, weeklyHtmlRepoPath, weeklyHtmlUrl } from "../supabase/functions/_shared/weekly-delivery.js";
 
 const japanToday = () => new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Tokyo" }).format(new Date());
 const has = (v) => v !== undefined && v !== true;
@@ -40,7 +41,23 @@ export function buildViews(args) {
   return views;
 }
 
-/** ビュー → agent-api /weekly/deliver の本文（PDF は base64）。 */
+/** ビュー → サイト別 HTML ＋ ハブ HTML（Pages / 手元確認用）。 */
+export function writeWeeklyHtmlFiles(views, destDir, { storeName, asOf } = {}) {
+  fs.mkdirSync(destDir, { recursive: true });
+  const name = storeName || views[0].storeName;
+  const day = asOf || views[0].asOf;
+  const written = [];
+  for (const v of views) {
+    const file = `${v.site.key}.html`;
+    fs.writeFileSync(path.join(destDir, file), renderWeeklyReportHtml(v));
+    written.push(file);
+  }
+  fs.writeFileSync(path.join(destDir, "index.html"), renderWeeklyHubHtml(views, { storeName: name, asOf: day }));
+  written.push("index.html");
+  return written;
+}
+
+/** ビュー → agent-api /weekly/deliver の本文（PDF は任意・base64）。 */
 export function deliverPayload({ views, pdf, args }) {
   const storeName = typeof args.name === "string" ? args.name : views[0].storeName;
   const first = views[0];
@@ -61,19 +78,50 @@ export async function runWeeklyDeliver(argv, { fetcher = fetch, log = console.er
   const views = buildViews(args);
   const storeName = typeof args.name === "string" ? args.name : views[0].storeName;
   const asOf = views[0].asOf;
-  const [PDFLib, fontkit, fontModule] = await Promise.all([import("pdf-lib"), import("fontkit"), import("../supabase/functions/_shared/fonts/noto-sans-jp.js")]);
-  const pdf = await renderWeeklyPdf({ PDFLib, fontkit: fontkit.default ?? fontkit, fonts: await loadReportFonts(fontModule), renderReportPdf, views, storeName, asOf });
-  const body = deliverPayload({ views, pdf, args });
+  const wantPdf = args.pdf === true;
+  let pdf = null;
+  if (wantPdf || typeof args["out-dir"] === "string") {
+    // out-dir があるときは手元確認用に PDF も書く（M-talk へは --pdf のときだけ載せる）
+    const [PDFLib, fontkit, fontModule] = await Promise.all([import("pdf-lib"), import("fontkit"), import("../supabase/functions/_shared/fonts/noto-sans-jp.js")]);
+    pdf = await renderWeeklyPdf({ PDFLib, fontkit: fontkit.default ?? fontkit, fonts: await loadReportFonts(fontModule), renderReportPdf, views, storeName, asOf });
+  }
+  const body = deliverPayload({ views, pdf: wantPdf ? pdf : null, args });
   if (body.sections.some((s) => [...s.fields.flatMap((f) => [f.label, f.value]), ...s.items].some(looksLikePersonalInfo))) throw new Error("カードに個人情報らしき文字列があります");
+
+  const htmlDirs = [];
   if (typeof args["out-dir"] === "string") {
     fs.mkdirSync(args["out-dir"], { recursive: true });
+    // 互換: サイト別ファイルもルートに残す（手元確認）
     for (const v of views) fs.writeFileSync(path.join(args["out-dir"], `${v.site.key}-weekly-${asOf}.html`), renderWeeklyReportHtml(v));
-    fs.writeFileSync(path.join(args["out-dir"], body.pdf.filename), pdf);
+    const localHtmlDir = path.join(args["out-dir"], "html");
+    writeWeeklyHtmlFiles(views, localHtmlDir, { storeName, asOf });
+    htmlDirs.push(localHtmlDir);
+    if (pdf) fs.writeFileSync(path.join(args["out-dir"], weeklyFileName(storeName, asOf)), pdf);
     const { pdf: _omit, ...card } = body;
     fs.writeFileSync(path.join(args["out-dir"], `weekly-card-${asOf}.json`), `${JSON.stringify(card, null, 2)}\n`);
-    log(`週報を書きました: ${args["out-dir"]}（HTML ${views.length}件・PDF ${pdf.length} bytes・カード）`);
+    log(`週報を書きました: ${args["out-dir"]}（HTML ${views.length}サイト＋ハブ・${pdf ? `PDF ${pdf.length} bytes・` : ""}カード）`);
   }
-  if (args["no-post"] === true) return { posted: false, dryRun: true, body: { ...body, pdf: body.pdf ? { filename: body.pdf.filename, bytes: pdf.length } : null } };
+
+  if (typeof args["publish-dir"] === "string") {
+    if (typeof args["store-id"] !== "string") throw new Error("Pages に載せるには --store-id（店舗 UUID）が必要です");
+    const rel = weeklyHtmlRepoPath(args["store-id"], asOf);
+    const dest = path.join(args["publish-dir"], rel);
+    writeWeeklyHtmlFiles(views, dest, { storeName, asOf });
+    htmlDirs.push(dest);
+    log(`Pages 用 HTML: ${dest}/ → ${weeklyHtmlUrl(args["store-id"], asOf)}`);
+  }
+
+  if (args["no-post"] === true) {
+    return {
+      posted: false,
+      dryRun: true,
+      body: {
+        ...body,
+        pdf: body.pdf ? { filename: body.pdf.filename, bytes: pdf?.length ?? null } : null,
+        html: typeof args["store-id"] === "string" ? { url: weeklyHtmlUrl(args["store-id"], asOf), dirs: htmlDirs } : { dirs: htmlDirs },
+      },
+    };
+  }
   const token = readToken(args, env);
   const endpoint = typeof args.endpoint === "string" ? args.endpoint : DEFAULT_ENDPOINT;
   const { status, body: res } = await callAgentApi("/weekly/deliver", body, { endpoint, token, fetcher });
@@ -85,7 +133,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   runWeeklyDeliver(process.argv.slice(2)).then((out) => {
     const r = out.result;
     if (r && r.ok === false) console.error(`送りませんでした: ${r.skipped}`);
-    else if (r) console.error(`${out.dryRun ? "【確認だけ（dryRun）】" : ""}${r.store?.name} → ${r.bot?.name}（${(r.rooms ?? []).map((x) => x.name).join("、") || "ルームなし"}）${r.deduplicated ? "（送信済みのため再投稿なし）" : ""}`);
+    else if (r) console.error(`${out.dryRun ? "【確認だけ（dryRun）】" : ""}${r.store?.name} → ${r.bot?.name}（${(r.rooms ?? []).map((x) => x.name).join("、") || "ルームなし"}）${r.deduplicated ? "（送信済みのため再投稿なし）" : ""}${r.html?.url ? ` / ${r.html.url}` : ""}`);
     process.stdout.write(`${JSON.stringify(out.result ?? out.body, null, 2)}\n`);
   }).catch((error) => { console.error(String(error?.message ?? error)); process.exitCode = 1; });
 }
