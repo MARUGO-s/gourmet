@@ -243,6 +243,7 @@ test("weekly HTML generator embeds offline CSS and sections", () => {
       const d = new Date(Date.UTC(2026, 8, 5 + i));
       return { date: d.toISOString().slice(0, 10), pv: 100 + (i % 7) * 10 };
     }),
+    reviews: [],
     publicProfile: { rating: 3.26, reviewCount: 49, saveCount: 4007, budgetNight: "¥8,000–¥9,999", budgetDay: "¥2,000–¥2,999" },
     notices: { new: 1, changed: 2, cancelled: 1 },
     accessRanking: { area: "曙橋・四ツ谷三丁目", self: { rank: 128, pv: 4753 }, momPct: 3 },
@@ -257,8 +258,15 @@ test("weekly HTML generator embeds offline CSS and sections", () => {
   assert.match(html, /【食べログ週報】BISTRO CAVA CAVA/);
   assert.match(html, /表2/);
   assert.match(html, /保存数/);
-  assert.match(html, /通話成立≠予約確定/);
+  assert.match(html, /通話成立/);
+  assert.match(html, /未取得の項目は空欄やゼロにせず/);
   assert.match(html, /ラトラスフィス/);
+  assert.match(html, /class="hero"/);
+  assert.match(html, /class="kpis"/);
+  assert.match(html, /class="chart-area"/);
+  assert.match(html, /class="action-grid"/);
+  assert.match(html, /class="competitor-rows"/);
+  assert.match(html, /class="footnote"/);
   assert.ok(!html.includes("http://") && !html.includes("https://cdn"), "offline: no external asset URLs in body hooks");
 });
 
