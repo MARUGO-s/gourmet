@@ -1,5 +1,7 @@
-// 食べログ週報 HTML 生成（オフライン。外部リソースなし）。エージェント／ローカル用。
+// 食べログ週報 HTML 生成（オフライン。外部リソースなし）。エージェント／ローカル用の**既定テンプレート**。
 // UI はサンプル週報 HTML（hero / KPI / panels / charts / competitor bars / actions / footnotes）に合わせる。
+// 内容ルールは青写真（未取得は「未取得」、事実と推測を分離、PII 禁止）。エクスポート入口: scripts/tabelog-weekly-report.mjs
+// 詳細: docs/tabelog-weekly-report.md
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

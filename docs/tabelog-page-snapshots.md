@@ -34,6 +34,6 @@
 - 一覧のページタイトル（例「曙橋・四ツ谷三丁目のワインバー ランキング」）でエリア・ジャンルが効いていることを確認できる。「おすすめのグルメ情報」になっていたらジャンル指定が無視されている。
 - 一覧カードは `div.list-rst[data-rst-id]`（1ページ最大20件）。静的HTMLに PR カードは無く、広告は一覧外の GPT バナー。
 
-## 週報 HTML
+## 週報 HTML（既定テンプレート）
 
-`scripts/tabelog/weekly-report.js` の `buildWeeklyReportHtml` / `assembleWeeklyReportInput`。オフライン（外部 CDN なし）。通話成立≠予約確定、通知件数≠期間合計、公開ページに投稿日なし、を脚注に明記。
+**既定**は `scripts/tabelog/weekly-report.js`（`buildWeeklyReportHtml` / `assembleWeeklyReportInput`）。エクスポート入口は `node scripts/tabelog-weekly-report.mjs`。UI＝サンプル週報 HTML、内容＝青写真ルール。オフライン（外部 CDN なし）。通話成立≠予約確定、通知件数≠期間合計、公開ページに投稿日なし、を脚注に明記。詳細: [tabelog-weekly-report.md](tabelog-weekly-report.md)。
