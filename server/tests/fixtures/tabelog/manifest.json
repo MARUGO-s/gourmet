@@ -16,5 +16,6 @@
   ]
  },
  "public": "public.html",
- "myReport": "my-report.html"
+ "myReport": "my-report.html",
+ "ownerHome": "owner-home.html"
 }

@@ -8,7 +8,7 @@
 
 | page | status | PII | 用途 |
 |------|--------|-----|------|
-| `tabelog_owner_home` | raw | **yes** | トップ「新着ご予約情報」。HTML は raw 保存。件数のみ `scripts/tabelog/owner-home.js` → `agent_reports.reservation_notices`（氏名等は取り込まない） |
+| `tabelog_owner_home` | raw | **yes** | トップ（`https://owner.tabelog.com/`。`/owner_rst/` ではない）「新着ご予約情報」（新規ご予約・ご予約内容変更・ご予約キャンセル）。HTML は raw 保存。件数のみ `scripts/tabelog/owner-home.js` → `agent_reports.reservation_notices`（氏名等は取り込まない） |
 | `tabelog_access_total_daily` ほか | parsed / raw | 既存どおり | 既存（PV・来店指標・ランキング・口コミなど） |
 | `tabelog_reservation_results` / `tabelog_cancel_history` | raw | **yes** | 予約者 PII。**AI・構造化禁止** |
 

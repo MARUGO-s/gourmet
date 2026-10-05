@@ -38,7 +38,7 @@ export const PAGE_CATALOG = {
     { page: "ikyu_last_minute", title: "直前割設定", menu: "直前割設定", url: `${IKYU_BASE}/last_minute_promotion`, period: "current", status: "raw", pii: false },
   ],
   tabelog: [
-    { page: "tabelog_owner_home", title: "店舗管理トップ（新着ご予約情報）", menu: "トップ", url: `${TABELOG}/owner_rst/`, period: "current", status: "raw", pii: true, note: "新着ご予約情報は件数のみ構造化（scripts/tabelog/owner-home.js）。氏名等の個人情報は取り込まない。HTMLは contains_pii" },
+    { page: "tabelog_owner_home", title: "店舗管理トップ（新着ご予約情報）", menu: "トップ", url: `${TABELOG}/`, period: "current", status: "raw", pii: true, note: "ログイン後のトップは https://owner.tabelog.com/（/owner_rst/ ではない）。新着ご予約情報（新規ご予約・ご予約内容変更・ご予約キャンセル）は件数のみ構造化（scripts/tabelog/owner-home.js）。氏名等の個人情報は取り込まない。HTMLは contains_pii" },
     { page: "tabelog_access_total_daily", title: "アクセス数レポート（日別・端末別）", menu: "アクセス数レポート", url: `${TABELOG}/owner_rst/access_report_total?display_type=daily&start_month={YYYY}{MM}`, period: "month", status: "parsed", pii: false },
     { page: "tabelog_access_total_monthly", title: "アクセス数レポート（月別）", menu: "アクセス数レポート › 月別", url: `${TABELOG}/owner_rst/access_report_total?display_type=monthly`, period: "current", status: "raw", pii: false },
     { page: "tabelog_conversion", title: "来店指標（TEL数・ネット予約数など）", menu: "来店指標", url: `${TABELOG}/owner_rst/access_report_total_conversion`, period: "current", status: "parsed", pii: false },
