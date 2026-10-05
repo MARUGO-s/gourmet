@@ -96,7 +96,9 @@ test("agent-api / ai-analyst wiring: origin filters kept, followups only, no liv
   const ai = fs.readFileSync(new URL("../../supabase/functions/ai-analyst/index.ts", import.meta.url), "utf8");
   const fn = ai.slice(ai.indexOf("async function mtalkChat"));
   assert.doesNotMatch(fn, /choice:turn\.choice|live:turn\.live_start|live_close/);
-  assert.match(ai, /answerFreshness\(result, ds, \{ todayYear \}\)/, "/ask にも鮮度");
+  assert.match(ai, /answerFreshness\(result, ds, \{ todayYear, coverage, period:\{ from:input\.from, to:input\.to \} \}\)/, "/ask にも鮮度（取り込み済みの範囲と画面の期間）");
+  assert.match(ai, /ctx:askToolContext\(input\)/, "/ask は口コミも画面の期間で数える");
+  assert.match(ai, /systemPrompt\(today, \{ screenPeriod:true \}\)/);
   const sched = fs.readFileSync(new URL("../../supabase/functions/_shared/fetch-schedules.js", import.meta.url), "utf8");
   assert.match(sched, /origin: "schedule"/);
 });

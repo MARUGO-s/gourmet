@@ -1,6 +1,7 @@
 // データの鮮度（Node/Deno 共通）。AI分析の答え（アプリの /ask・M-talk の /mtalk-chat）に、使ったサイトごとの
 // 「最後に取り込めた日時（日本時間）」と「入っている期間」を付ける。例: 「データ：一休 10/1 18:30取得（9/1〜9/30）」
-// 同じ取り込みに日別と月別の両方があれば両方の期間を書く。例: 「食べログ 10/1 15:28取得（日別8/1〜9/30・月別2019/12月〜2026/9月）」
+// 日別と月別の両方があれば両方の期間を書く。例: 「食べログ 10/1 15:28取得（日別8/1〜9/30・月別2019/12月〜2026/9月）」
+// 入っている期間は取り込み済みの全範囲（withCoverage。最後の1回の取り込みの範囲ではない）。答えで使った期間に日別の欠けがあれば※の行で書く（coverageGaps）。
 //
 // ・取り込み = Grok Bot の毎日の取得（ログインして管理画面のHTMLを保存）→ ingest。答えはこの取り込み済みの確定値だけで作る。
 // ・最後の取り込みから36時間を超えたら「古い」、取り込みが1回も無いサイトは「データなし」とはっきり書く。
@@ -96,7 +97,44 @@ export function formatFreshness(entries, { todayYear = null } = {}) {
   return [`データ：${heads.join("／")}`, ...notes].join("\n");
 }
 
-/** モデルへ渡す前提（system）。数値の照合の根拠にもなる。 */
+/**
+ * 入っている期間を、最後の1回の取り込みの範囲ではなく取り込み済みの全範囲にする（coverage = ai-analyst.js の dataCoverage）。
+ * 範囲の分からないサイトは最後の取り込みの範囲のまま。
+ * @param {any[]} entries @param {Record<string, { from: string | null, to: string | null, monthFrom: string | null, monthTo: string | null }> | null | undefined} coverage
+ */
+export function withCoverage(entries, coverage) {
+  const list = Array.isArray(entries) ? entries : [];
+  if (!coverage) return list;
+  return list.map((e) => {
+    const c = coverage[e.source];
+    return c && !e.missing ? { ...e, from: c.from, to: c.to, monthFrom: c.monthFrom, monthTo: c.monthTo } : e;
+  });
+}
+
+const DAY_MS = 86_400_000;
+const shiftDay = (iso, days) => new Date(Date.parse(iso) + days * DAY_MS).toISOString().slice(0, 10);
+/**
+ * 期間（period）のうち日別のデータが無い日（期間の前後の欠け）。例: 「※食べログの日別データは8/1〜10/4です（7/7〜7/31はありません）。」
+ * @param {any[]} entries @param {{ from: string, to: string } | null | undefined} period @param {number | null} [todayYear]
+ */
+export function coverageGaps(entries, period, todayYear = null) {
+  if (!period?.from || !period?.to) return [];
+  const notes = [];
+  for (const e of Array.isArray(entries) ? entries : []) {
+    if (e.missing) continue;
+    if (!e.from || !e.to || e.to < period.from || e.from > period.to) {
+      notes.push(`※${e.label}の日別データは${periodLabel(period.from, period.to, todayYear)}にはありません。`);
+      continue;
+    }
+    const gaps = [];
+    if (e.from > period.from) gaps.push(periodLabel(period.from, shiftDay(e.from, -1), todayYear));
+    if (e.to < period.to) gaps.push(periodLabel(shiftDay(e.to, 1), period.to, todayYear));
+    if (gaps.length) notes.push(`※${e.label}の日別データは${periodLabel(e.from, e.to, todayYear)}です（${gaps.join("・")}はありません）。`);
+  }
+  return notes;
+}
+
+/** モデルへ渡す前提（system）。数値の照合の根拠にもなる。entries は withCoverage 済み（入っている期間＝取り込み済みの範囲）を渡す */
 /** @param {any[]} entries @param {{ todayYear?: number | null }} [options] */
 export function freshnessSystemMessage(entries, { todayYear = null } = {}) {
   const text = formatFreshness(entries, { todayYear });
@@ -104,7 +142,7 @@ export function freshnessSystemMessage(entries, { todayYear = null } = {}) {
   return [
     "取り込み済みデータの鮮度（サイトごとの最後の取得日時・入っている期間）:",
     text,
-    "期間は最後の取り込みで入った範囲（日別・月別は別。月別の記録は日別の範囲より前の月にもある）。数値の有無は関数の結果で確かめ、関数の結果に無い日付・月だけを「わかりません」と答える。鮮度の行はシステムが回答の最後に付けるので、回答では繰り返さなくてよい。",
+    "期間は取り込み済みのデータの範囲（日別・月別は別。月別の記録は日別の範囲より前の月にもある）。数値の有無は関数の結果で確かめ、関数の結果に無い日付・月だけを「わかりません」と答える。鮮度の行はシステムが回答の最後に付けるので、回答では繰り返さなくてよい。",
   ].join("\n");
 }
 
@@ -129,17 +167,34 @@ export function sitesForAnswer(usedLabels, entries) {
 /**
  * 答え（answerWithTools の結果）に付ける鮮度。関数を呼ばなかった答え（あいさつ・使い方）には付けない。
  * 返り値: { text: 鮮度の行（空なら付けない）, links: ログイン情報を更新のボタン }
+ * coverage: 取り込み済みの範囲（dataCoverage）。period: 画面・会話の期間（ctx）。日別の数値を使う関数を呼んだ答えには、使った期間の日別データの欠けを※の行で書く。
+ * @param {any} result @param {any} ds @param {{ todayYear?: number | null, coverage?: any, period?: { from: string, to: string } | null }} [options]
  */
-/** @param {any} result @param {any} ds @param {{ todayYear?: number | null }} [options] */
-export function answerFreshness(result, ds, { todayYear = null } = {}) {
+export function answerFreshness(result, ds, { todayYear = null, coverage = null, period = null } = {}) {
   if (!result || !Array.isArray(result.calls) || !result.calls.length) return { text: "", links: [] };
-  const entries = sitesForAnswer(result.sites ?? [], ds?.freshness ?? []);
+  const entries = sitesForAnswer(result.sites ?? [], withCoverage(ds?.freshness ?? [], coverage));
   const names = {};
   for (const s of ds?.sites ?? []) {
     const store = (ds.stores ?? []).find((x) => x.id === s.storeId || x.id === s.store_id);
     if (store) names[`${s.source}:${s.siteStoreKey ?? s.site_store_key ?? ""}`] = store.name;
   }
-  return { text: formatFreshness(entries, { todayYear }), links: freshnessLinks(entries, names) };
+  const used = dailyPeriodOf(result.calls, period);
+  const text = [formatFreshness(entries, { todayYear }), ...coverageGaps(entries, used, todayYear)].filter(Boolean).join("\n");
+  return { text, links: freshnessLinks(entries, names) };
+}
+// 日別の数値を使う関数で使った期間（引数の from/to、無ければ ctx の期間）をまとめた範囲。呼んでいなければ null
+const DAILY_TOOLS = ["get_kpis", "get_pv_trend", "get_reservation_sales", "get_pv_breakdown"];
+const isoDay = (v) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+function dailyPeriodOf(calls, period) {
+  let from = null, to = null;
+  for (const c of calls) {
+    if (!DAILY_TOOLS.includes(c?.name)) continue;
+    const f = isoDay(c.args?.from) ?? period?.from, t = isoDay(c.args?.to) ?? period?.to;
+    if (!f || !t) continue;
+    if (!from || f < from) from = f;
+    if (!to || t > to) to = t;
+  }
+  return from && to ? { from, to } : null;
 }
 
 // ---------- 読み込み（本人の user_id で絞った SELECT だけ） ----------
