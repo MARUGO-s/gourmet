@@ -46,7 +46,7 @@ export async function loadAnalystDataset(client, { today = japanDate() } = {}) {
 
 // 毎日の取り込み（管理画面の確定値）の詳細: 一休の予約（受付日ベースの件数・金額）・ページ種別×端末のPV、食べログの端末別PV・来店指標、
 // 食べログの詳細レポート（エリア順位・よく見られるページ・端末別ページサマリー）、サイトごとの鮮度。読めない表は空（答えは止めない）。
-const CACHED_REPORT_KINDS = ["area_ranking", "top_pages", "device_summary"];
+const CACHED_REPORT_KINDS = ["area_ranking", "top_pages", "device_summary", "public_profile", "reservation_notices", "public_genre_ranking", "public_competitors", "public_new_opens"];
 /** @param {any} client @param {{ today: string }} options */
 export async function loadCachedDetails(client, { today }) {
   const since = shiftDate(today, -731);

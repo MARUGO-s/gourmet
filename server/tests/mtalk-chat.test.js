@@ -83,7 +83,7 @@ test("report context and prompt stay within bounds and keep scope to PV/reservat
   assert.match(mtalkChatPrompt(), /最新データを取り直すことはできない/);
   assert.match(mtalkChatPrompt(), /番号で選ぶ選択肢も無い/, "選択肢（1/2）は廃止");
   assert.doesNotMatch(mtalkChatPrompt(), /1\. サイトにログインして最新を調べる/);
-  assert.equal(AI_TOOLS.length, 12, "same 12 safe data tools as /ask");
+  assert.equal(AI_TOOLS.length, 18, "same safe data tools as /ask");
 });
 
 test("data owner: last sender of a report to this room, otherwise the default ingest user, otherwise none", () => {

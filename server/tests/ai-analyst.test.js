@@ -107,7 +107,9 @@ test("関数呼び出しは検証した引数で本人のデータの集計だ�
   const ctx = { store: CAVA, from: day(1), to: day(28) };
   const names = AI_TOOLS.map((t) => t.function.name);
   assert.deepEqual(names, ["list_stores", "get_kpis", "get_pv_trend", "get_monthly_metrics", "get_review_stats", "get_reviews", "compare_stores",
-    "get_reservation_sales", "get_pv_breakdown", "get_site_reports", "get_monthly_conversion", "get_data_freshness"]);
+    "get_reservation_sales", "get_pv_breakdown", "get_site_reports", "get_monthly_conversion",
+    "get_weekly_pv_windows", "get_public_profile", "get_reservation_notices", "get_competitor_snapshot", "get_genre_rank", "get_area_new_opens",
+    "get_data_freshness"]);
   for (const t of AI_TOOLS) assert.equal(t.function.parameters.additionalProperties, false);
   const trend = JSON.parse(runTool(ds, "get_pv_trend", JSON.stringify({ granularity: "month", source: "tabelog" }), ctx));
   assert.equal(trend.rows[0].total, 2800);

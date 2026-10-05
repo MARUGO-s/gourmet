@@ -166,7 +166,7 @@ test("page catalog: every menu page is listed once; reservations are PII; accoun
       assert.ok(!/password|credit|bank|api_tokens|owner_info|change_loginid/i.test(p.url), p.url);
     }
   }
-  for (const pg of ["ikyu_reservations", "ikyu_reservations_today", "ikyu_billing", "tabelog_reservation_results", "tabelog_cancel_history"]) {
+  for (const pg of ["ikyu_reservations", "ikyu_reservations_today", "ikyu_billing", "tabelog_reservation_results", "tabelog_cancel_history", "tabelog_owner_home"]) {
     assert.equal([...PAGE_CATALOG.ikyu, ...PAGE_CATALOG.tabelog].find((p) => p.page === pg).pii, true, pg);
   }
   assert.ok(rawPages("ikyu").some((p) => p.page === "ikyu_plans") && rawPages("tabelog").some((p) => p.page === "tabelog_courses"));

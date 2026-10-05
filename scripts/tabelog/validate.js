@@ -6,9 +6,10 @@ const validDate = (value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.
 
 export function validateTabelogResult(result) {
   if (!result.data || !Array.isArray(result.daily) || !Array.isArray(result.monthly)) throw new Error("取得結果の形式が不正です");
-  const { rating, reviews } = result.data;
+  const { rating, reviews, saveCount } = result.data;
   if ((rating != null && (!Number.isFinite(rating) || rating < 0 || rating > 5))
-    || (reviews != null && !count(reviews))) throw new Error("評価または口コミ数を正しく取得できませんでした");
+    || (reviews != null && !count(reviews))
+    || (saveCount != null && !count(saveCount))) throw new Error("評価または口コミ数を正しく取得できませんでした");
   const missing = rating == null || reviews == null || !result.daily.length || !result.monthly.length || result.monthly.some(m=>m.reservations==null);
   if (missing && (result.status !== "partial" || !result.warning)) throw new Error("評価・口コミ数・日別PV・月別予約組数に未取得の項目があります");
   if (rating == null && reviews == null && !result.daily.length && !result.monthly.length && !result.reviews?.length) throw new Error("保存できる数値がありません");

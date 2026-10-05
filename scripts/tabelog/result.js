@@ -31,6 +31,13 @@ export async function collectTabelogMetrics(collectors, onProgress = () => {}) {
   const daily = pv.daily ?? [];
   const monthly = reservations.months ?? [];
   const data = { rating: publicData.rating ?? null, reviews: publicData.reviews ?? null };
+  for (const [k, v] of Object.entries({
+    saveCount: publicData.saveCount ?? null,
+    budgetNight: publicData.budgetNight ?? null,
+    budgetDay: publicData.budgetDay ?? null,
+    station: publicData.station ?? null,
+    openedOn: publicData.openedOn ?? null,
+  })) if (v != null) data[k] = v;
   const missing = [];
   if (data.rating == null) missing.push('評価');
   if (data.reviews == null) missing.push('口コミ数');

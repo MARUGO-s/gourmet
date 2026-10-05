@@ -6,7 +6,6 @@ const isoDate = (text) => {
   const m = String(text ?? "").match(/(\d{4})[/.-](\d{1,2})[/.-](\d{1,2})/);
   return m ? `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}` : null;
 };
-// 3端末がそろっていれば pvOther（未分類の差）を明示し、合計が pv と一致することをサーバーでも確認できるようにする
 const devices = (row) => {
   const all = [row.pc, row.sp, row.app].every((v) => v != null);
   return { pvPc: row.pc ?? null, pvSp: row.sp ?? null, pvApp: row.app ?? null, pvOther: row.unclassified ?? (all ? 0 : null) };
@@ -25,10 +24,64 @@ export function tabelogResultToPayload(result, { storeKey, name = null, publicUr
   if (r.deviceSummary) reports.push({ kind: "device_summary", period: r.deviceSummary.to.slice(0, 7), data: r.deviceSummary });
   if (r.ownerReviews) reports.push({ kind: "owner_reviews", period: captureDay, data: r.ownerReviews });
   if (r.pageHistory) reports.push({ kind: "page_history", period: `${r.pageHistory.first}-${r.pageHistory.last}`, data: r.pageHistory });
+  const d = result.data ?? {};
+  if (d.saveCount != null || d.budgetNight != null || d.budgetDay != null || d.station != null || d.openedOn != null) {
+    reports.push({
+      kind: "public_profile",
+      period: captureDay,
+      data: {
+        rating: d.rating ?? null,
+        reviewCount: d.reviews ?? null,
+        saveCount: d.saveCount ?? null,
+        budgetNight: d.budgetNight ?? null,
+        budgetDay: d.budgetDay ?? null,
+        station: d.station ?? null,
+        openedOn: d.openedOn ?? null,
+        capturedAt,
+      },
+    });
+  }
+  if (r.reservationNotices) {
+    reports.push({
+      kind: "reservation_notices",
+      period: r.reservationNotices.capturedAt?.slice?.(0, 10) ?? captureDay,
+      data: {
+        new: r.reservationNotices.new ?? 0,
+        changed: r.reservationNotices.changed ?? 0,
+        cancelled: r.reservationNotices.cancelled ?? 0,
+        capturedAt: r.reservationNotices.capturedAt ?? capturedAt,
+      },
+    });
+  }
+  if (Array.isArray(r.publicGenreRankings)) {
+    for (const row of r.publicGenreRankings) {
+      const period = `${captureDay}_${row.areaKey ?? "area"}_${row.genreKey ?? "genre"}`.slice(0, 40);
+      reports.push({ kind: "public_genre_ranking", period, data: row });
+    }
+  }
+  if (r.publicCompetitors) {
+    reports.push({ kind: "public_competitors", period: captureDay, data: r.publicCompetitors });
+  }
+  if (Array.isArray(r.publicNewOpens)) {
+    for (const row of r.publicNewOpens) {
+      const period = `${captureDay}_${row.areaKey ?? "area"}_${row.genreKey ?? "genre"}`.slice(0, 40);
+      reports.push({ kind: "public_new_opens", period, data: row });
+    }
+  }
+  const summary = (d.rating != null || d.reviews != null || d.saveCount != null || d.budgetNight != null || d.budgetDay != null)
+    ? {
+      rating: d.rating ?? null,
+      reviewCount: d.reviews ?? null,
+      ...(d.saveCount != null ? { saveCount: d.saveCount } : {}),
+      ...(d.budgetNight != null ? { budgetNight: d.budgetNight } : {}),
+      ...(d.budgetDay != null ? { budgetDay: d.budgetDay } : {}),
+      ...(d.station != null ? { station: d.station } : {}),
+    }
+    : null;
   const store = {
     storeKey: String(storeKey ?? ""), name, ...(publicUrl ? { publicUrl } : {}),
-    summary: result.data.rating != null || result.data.reviews != null ? { rating: result.data.rating ?? null, reviewCount: result.data.reviews ?? null } : null,
-    daily: result.daily.map((d) => ({ date: d.date, pv: d.pv, ...devices(d) })),
+    summary,
+    daily: result.daily.map((day) => ({ date: day.date, pv: day.pv, ...devices(day) })),
     monthly: result.monthly.map((m) => ({
       month: m.month, pv: m.pv ?? null, ...devices(m), reservations: m.reservations ?? null, calls: m.calls ?? null,
       ...(m.mapPrints != null ? { extra: { mapPrints: m.mapPrints } } : {}),
