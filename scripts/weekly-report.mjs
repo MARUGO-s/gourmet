@@ -9,8 +9,9 @@
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "./agent-common.mjs";
-import { assembleWeeklyReportInput, buildWeeklyReportHtml } from "./tabelog/weekly-report.js";
-import { assembleIkyuWeeklyInput, buildIkyuWeeklyReportHtml } from "./ikyu/weekly-report.js";
+import { renderWeeklyReportHtml } from "./shared/weekly-report.js";
+import { assembleWeeklyReportInput, buildTabelogWeeklyView } from "./tabelog/weekly-report.js";
+import { assembleIkyuWeeklyInput, buildIkyuWeeklyView } from "./ikyu/weekly-report.js";
 
 const japanToday = () => new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Tokyo" }).format(new Date());
 const list = (v) => (v === undefined || v === true ? [] : [].concat(v));
@@ -20,19 +21,21 @@ export const SITES = {
   tabelog: {
     label: "食べログ",
     usage: "--site tabelog --input weekly-input.json [--out weekly-report.html]",
-    build(args) {
+    /** 共通テンプレートのビュー（HTML と PDF・M-talk のカードの元。scripts/weekly-deliver.mjs も使う） */
+    view(args) {
       if (typeof args.input !== "string") throw new Error("--input（assembleWeeklyReportInput に渡す JSON）を指定してください");
       const raw = readJson(args.input);
       if (!raw?.storeKey || !raw?.storeName || !raw?.asOf) throw new Error("storeKey / storeName / asOf が必要です");
       // monthlyRows/dailyRows 付き、または monthly 未整形なら assemble。それ以外は build 用入力としてそのまま使う。
       const needsAssemble = Array.isArray(raw.monthlyRows) || Array.isArray(raw.dailyRows) || raw.monthly == null;
-      return buildWeeklyReportHtml(needsAssemble ? assembleWeeklyReportInput(raw) : raw);
+      return buildTabelogWeeklyView(needsAssemble ? assembleWeeklyReportInput(raw) : raw);
     },
+    build(args) { return renderWeeklyReportHtml(this.view(args)); },
   },
   ikyu: {
     label: "一休",
     usage: "--site ikyu (--input ikyu-weekly-input.json | --payload payload.json [--payload …] --store 112789) [--name 店舗名] [--as-of YYYY-MM-DD] [--out ikyu-weekly.html]",
-    build(args) {
+    view(args) {
       const raw = typeof args.input === "string" ? readJson(args.input) : {};
       const payloads = [...(raw.payloads ?? []), ...list(args.payload).map(readJson)];
       const storeKey = String(args.store ?? raw.storeKey ?? "");
@@ -46,8 +49,9 @@ export const SITES = {
       const input = raw.monthly != null && !payloads.length
         ? { ...raw, storeKey, asOf, storeName: storeName ?? raw.storeName }
         : assembleIkyuWeeklyInput({ ...raw, payloads, storeKey, storeName, asOf });
-      return buildIkyuWeeklyReportHtml(input);
+      return buildIkyuWeeklyView(input);
     },
+    build(args) { return renderWeeklyReportHtml(this.view(args)); },
   },
 };
 
