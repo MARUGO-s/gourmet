@@ -73,32 +73,21 @@ function withDocument(html, fn) {
       if (sel.includes("iframe")) return false;
       return false;
     };
-    // Owner-home notices
-    if (/data-notice=/.test(src)) {
-      const items = [];
-      for (const m of src.matchAll(/<li([^>]*)>([\s\S]*?)<\/li>/g)) {
-        const attrs = {};
-        for (const a of m[1].matchAll(/(\w[\w-]*)="([^"]*)"/g)) attrs[a[1]] = a[2];
-        const text = m[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-        items.push(pushEl("li", attrs, text, m[2]));
+    // Owner-home notices（実画面の形）: <dl class="owner-side__today-news"><dt>ラベル</dt><dd><span>N</span>件</dd>…</dl>
+    if (/owner-side__today-news/.test(src)) {
+      const strip = (h) => h.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      const lists = [];
+      for (const m of src.matchAll(/<dl class="([^"]*owner-side__today-news[^"]*)"[^>]*>([\s\S]*?)<\/dl>/g)) {
+        const pairs = [...m[2].matchAll(/<(dt|dd)[^>]*>([\s\S]*?)<\/\1>/g)].map((x) => pushEl(x[1], {}, strip(x[2]), x[2]));
+        const dl = pushEl("dl", { class: m[1] }, strip(m[2]), m[2], pairs);
+        dl.querySelectorAll = (sel) => (sel === "dt" ? pairs.filter((el) => el.tagName === "DT") : []);
+        lists.push(dl);
       }
-      const body = pushEl("body", {}, src.replace(/<[^>]+>/g, " "), src, items);
       return {
         title: src.match(/<title>([^<]*)/)?.[1] ?? "",
-        body,
-        querySelectorAll: (sel) => {
-          if (sel.includes("a, button")) return items;
-          return items.filter((el) => matchSel(el, sel) || true).filter((el) => {
-            // For generic node list used by pick(), return all items
-            return true;
-          });
-        },
-        querySelector: (sel) => {
-          if (sel.includes('iframe')) return null;
-          const key = sel.match(/data-notice="(\w+)"/)?.[1];
-          if (key) return items.find((el) => el.getAttribute("data-notice") === key) ?? null;
-          return null;
-        },
+        body: { innerText: strip(src) },
+        querySelectorAll: (sel) => (sel === ".owner-side__today-news" ? lists : []),
+        querySelector: () => null,
       };
     }
     // Ranking / newopen cards
@@ -138,11 +127,16 @@ function withDocument(html, fn) {
   try { return fn(); } finally { globalThis.document = previous; }
 }
 
-test("owner-home parser returns counts only (ignores guest names)", () => {
+test("owner-home parser reads live labels (新規ご予約 / ご予約内容変更 / ご予約キャンセル) as counts only", () => {
+  // フィクスチャは 2026-10-05 の実画面のマークアップを写したもの（件数 2 / 2 / 1）。
   const result = withDocument(fixture("owner-home.html"), () => readReservationNotices());
-  assert.deepEqual({ new: result.new, changed: result.changed, cancelled: result.cancelled }, { new: 1, changed: 2, cancelled: 1 });
-  assert.equal(result.found, true);
-  assert.ok(!JSON.stringify(result).includes("山田"));
+  assert.deepEqual(result, { new: 2, changed: 2, cancelled: 1, found: true });
+  assert.ok(!/架空|様|名/.test(JSON.stringify(result)), "氏名などは返さない");
+});
+
+test("owner-home parser reports found=false when the notices block is missing", () => {
+  const result = withDocument('<html><body><dl class="owner-side__today-news"><dt>キャンセル料請求</dt><dd>2件</dd></dl></body></html>', () => readReservationNotices());
+  assert.deepEqual(result, { new: 0, changed: 0, cancelled: 0, found: false });
 });
 
 test("public genre ranking skips PR/ad slots and finds self rank", () => {
@@ -168,7 +162,7 @@ test("public list readers are self-contained for page.evaluate (no module-scope 
   const opens = withDocument(fixture("newopen.html"), () => isolated(readPublicNewOpenList)({ limit: 10 }));
   assert.equal(opens.entries[0].openedOn, "2026-08-27");
   const owner = withDocument(fixture("owner-home.html"), () => isolated(readReservationNotices)());
-  assert.equal(owner.found, true);
+  assert.deepEqual(owner, { new: 2, changed: 2, cancelled: 1, found: true });
 });
 
 test("store config for CAVA exposes areas/genres and fetch plan URLs", () => {
@@ -227,6 +221,7 @@ test("page catalog includes owner home (pii raw); public fetch catalog documente
   assert.ok(home);
   assert.equal(home.pii, true);
   assert.equal(home.status, "raw");
+  assert.equal(home.url, "https://owner.tabelog.com/", "ログイン後のトップ（/owner_rst/ ではない）");
   assert.ok(routinePageList("tabelog", "13245351").some((p) => p.page === "tabelog_owner_home"));
   assert.ok(PUBLIC_FETCH_CATALOG.some((p) => p.page === "tabelog_public_store"));
   assert.ok(PUBLIC_FETCH_CATALOG.every((p) => p.host === "tabelog.com"));

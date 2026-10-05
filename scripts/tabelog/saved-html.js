@@ -30,7 +30,8 @@ export async function openSavedReader(browser) {
 
 // manifest（パスは manifest のあるディレクトリ基準）:
 // { storeKey, name?, daily: [..], conversion?, myReport?, accessRanking?, reviews?: {reply:[..], pickup:[..]},
-//   pageHistory?: {first:"YYYYMM", last:"YYYYMM", pc, sp, app}, public?, topPages?: "top-pages.json" }
+//   pageHistory?: {first:"YYYYMM", last:"YYYYMM", pc, sp, app}, public?, topPages?: "top-pages.json",
+//   ownerHome?: "owner-home.html"（https://owner.tabelog.com/ の保存HTML。新着ご予約情報の件数のみ） }
 export async function readSavedTabelog(manifest, baseDir, { browser, today, onProgress } = {}) {
   const file = (f) => path.resolve(baseDir, f);
   const reader = await openSavedReader(browser);
@@ -84,8 +85,10 @@ export async function readSavedTabelog(manifest, baseDir, { browser, today, onPr
     const publicUrl = manifest.daily?.[0] ? await reader.read(file(manifest.daily[0]), `${OWNER}/owner_rst/access_report_total`, readOwnerPublicUrl).catch(() => null) : null;
     const result = await collectTabelogMetrics(collectors, onProgress);
     if (manifest.ownerHome) {
-      const notices = await reader.read(file(manifest.ownerHome), `${OWNER}/owner_rst/`, readReservationNotices);
-      result.reports = { ...(result.reports ?? {}), reservationNotices: { ...notices, capturedAt: new Date().toISOString() } };
+      // 店舗管理トップは https://owner.tabelog.com/（/owner_rst/ ではない）
+      const notices = await reader.read(file(manifest.ownerHome), `${OWNER}/`, readReservationNotices);
+      // 「新着ご予約情報」の欄が見つからないときは 0 件として取り込まない
+      if (notices?.found) result.reports = { ...(result.reports ?? {}), reservationNotices: { new: notices.new, changed: notices.changed, cancelled: notices.cancelled, capturedAt: new Date().toISOString() } };
     }
     return { result, publicUrl };
   } finally {

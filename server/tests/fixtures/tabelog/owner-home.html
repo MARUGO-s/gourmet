@@ -1,13 +1,63 @@
 <!DOCTYPE html>
-<!-- SYNTHETIC fixture: owner top reservation notices; counts only (fake guest names present to ensure parser ignores them). -->
+<!-- SCRUBBED fixture: 店舗管理トップ（https://owner.tabelog.com/）のサイドバー「ネット予約」欄のマークアップ（クラス名・要素の形）だけを
+     2026-10-05 のログイン後の実画面から写したもの。件数（新規2・変更2・キャンセル1）は実画面と同じ。店舗名・お客様の情報は含まない。
+     「本日のご予約」の氏名は架空（パーサーが拾わないことの確認用）。「キャンセル料請求」は旧パーサーが誤って拾った欄。 -->
 <html lang="ja"><head><meta charset="UTF-8"><title>店舗管理トップ | 食べログ</title></head><body>
-<h1>店舗管理</h1>
-<section id="new-reservations">
-  <h2>新着ご予約情報</h2>
-  <ul>
-    <li data-notice="new" data-count="1">新規予約 <span>1件</span>（山田太郎 18:00）</li>
-    <li data-notice="changed" data-count="2">予約内容の変更 <span>2件</span>（佐藤花子）</li>
-    <li data-notice="cancelled" data-count="1">キャンセル <span>1件</span>（鈴木一郎）</li>
-  </ul>
-</section>
+<div class="owner-side-column">
+  <h3 class="owner-side-heading">ネット予約</h3>
+  <div class="owner-side-wrap">
+    <div class="owner-side">
+      <div class="top-yoyaku-state top-yoyaku-state--ok">
+        <p class="top-yoyaku-state__info">ネット予約受付中</p>
+        <a class="oc-btn oc-btn--primary oc-btn--full top-yoyaku-state__btn" href="/tn">予約台帳へ</a>
+      </div>
+    </div>
+    <div class="owner-side">
+      <h4 class="owner-heading3 ogly-b-board owner-heading-gly">本日のご予約</h4>
+      <div class="owner-side__today-yoyaku">
+        <ul>
+          <li>18:00 架空 太郎 様 2名</li>
+          <li>19:30 架空 花子 様 3名</li>
+        </ul>
+      </div>
+      <p class="owner-side__today-yoyaku-btn"><a class="oc-btn oc-btn--full owner-side__yoyaku-info-btn" href="/tn">予約台帳を見る</a></p>
+    </div>
+    <div class="owner-side">
+      <h4 class="owner-heading3 ogly-b-bell owner-heading-gly">
+        新着ご予約情報
+      </h4>
+      <dl class="owner-side__today-news clearfix">
+        <dt class="owner-side__today-news-title">
+          新規ご予約
+        </dt>
+        <dd class="owner-side__today-news-count">
+          <span class="badge badge--circle today-news-badge is-highlight">2</span>件
+        </dd>
+        <dt class="owner-side__today-news-title">
+          ご予約内容変更
+        </dt>
+        <dd class="owner-side__today-news-count">
+          <span class="badge badge--circle today-news-badge is-highlight">2</span>件
+        </dd>
+        <dt class="owner-side__today-news-title">
+          ご予約キャンセル
+        </dt>
+        <dd class="owner-side__today-news-count">
+          <span class="badge badge--circle today-news-badge is-highlight">1</span>件
+        </dd>
+      </dl>
+      <p class="owner-side__today-news-btn"><a class="btn btn--default" href="https://owner.tabelog.com/tn/time-schedule/2026-10-05?calendar=true">予約台帳で確認する</a></p>
+    </div>
+  </div>
+  <h3 class="owner-side-heading">ネット予約関連の決済機能</h3>
+  <div class="owner-side-wrap">
+    <div class="owner-side">
+      <h4 class="owner-heading3--bg">キャンセル料請求</h4>
+      <div class="top-cancel-refund top-cancel-refund--noset top-yoyaku-state">
+        <p class="top-cancel-refund__lead">ご利用には、お申し込みが必要です。過去2件の請求はありません。</p>
+        <a class="oc-btn oc-btn--full oc-btn--primary top-yoyaku-state__btn" href="/owner_rst/owner_cancel_refund/basic_info_input">申し込む</a>
+      </div>
+    </div>
+  </div>
+</div>
 </body></html>

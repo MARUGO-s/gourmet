@@ -31,6 +31,9 @@ test("saved Tabelog owner pages convert offline to a valid ingest payload", { sk
       devices: { pc: { topPage: 321, allPages: 1234 }, sp: { topPage: 210, allPages: 567 }, app: { topPage: 1100, allPages: 2900 } },
       conversion: { from: "2026-08-01", to: "2026-08-31", calls: 4, netReservations: 9, mapPrintsPc: 2 },
     }, "マイレポートの端末別ページサマリー");
+    const { capturedAt: noticesAt, ...notices } = result.reports.reservationNotices;
+    assert.deepEqual(notices, { new: 2, changed: 2, cancelled: 1 }, "店舗管理トップ（https://owner.tabelog.com/）の新着ご予約情報");
+    assert.ok(noticesAt);
     const payload = tabelogResultToPayload(result, { storeKey: manifest.storeKey, name: manifest.name, publicUrl, runId: "fixture", capturedAt: "2026-09-29T09:00:00+09:00", today: "2026-09-29" });
     const checked = normalizeSourceIngest(payload, "2026-09-29");
     assert.equal(checked.stores[0].days.length, 59);
