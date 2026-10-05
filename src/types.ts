@@ -167,6 +167,8 @@ export type RefetchResult = { status: "queued" | "already_open" | "not_supported
 
 // 自動取得の設定（fetch_schedules）。型は共通モジュールの宣言を使う
 export type { PublicSchedule as FetchSchedule, ScheduleInput, ScheduleMode } from "../supabase/functions/_shared/fetch-schedules.js";
+// 週報の配信予定（weekly_delivery_schedules）
+export type { PublicWeeklySchedule as WeeklySchedule, WeeklyScheduleInput, WeeklyStatus } from "../supabase/functions/_shared/weekly-schedules.js";
 
 // 店舗マスタ（stores / store_sites）と全店舗の比較。型は共通モジュールの宣言を使う
 export type { PublicStore as Store, PublicStoreSite as StoreSite, Overview, OverviewRow, OverviewSite, OverviewTotals, StoreKeys } from "../supabase/functions/_shared/stores.js";

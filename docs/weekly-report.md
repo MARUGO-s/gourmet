@@ -64,10 +64,10 @@ const html = buildIkyuWeeklyReportHtml(assembleIkyuWeeklyInput({ storeKey: "1127
 公開 URL: `https://marugo-s.github.io/gourmet/weekly/<店舗UUID>/<asOf>/`（`public/weekly/.../index.html` ハブ＋`tabelog.html` / `ikyu.html`）。main へのマージで Pages が配置します。
 
 ```sh
-# 手元で HTML・カードを作り、Pages 用に public/ へ書く（agent-api も呼ばない）
+# 手元で HTML・カードを作り、Pages 用に public/ へ書く（agent-api も呼ばない）。入力は weekly-assemble.mjs の出力だけ
 node scripts/weekly-deliver.mjs \
-  --tabelog-input weekly-input.json \
-  --ikyu-payload payload.json [--ikyu-payload older.json] --ikyu-store 112789 \
+  --tabelog-input <assemble>/tabelog-input.json \
+  --ikyu-input <assemble>/ikyu-input.json \
   --name "BISTRO CAVA CAVA" --store-id <店舗UUID> [--as-of 2026-10-05] \
   --out-dir run-xxx/weekly --publish-dir public --no-post
 
@@ -84,7 +84,7 @@ INGEST_TOKEN=... node scripts/weekly-deliver.mjs …同じ引数… --pdf --send
 - 作るもの: サイト別の週報 HTML＋ハブ（Pages / 手元確認）、カードの要約（サイトごとに KPI 4つ＋直近7日のPV、今週のポイント2つ）。`--pdf` または `--out-dir` のとき PDF も生成（M-talk へ載せるのは `--pdf` のときだけ）。
 - 送り先: `agent-api POST /weekly/deliver`（`X-Ingest-Token`）→ gourmet が店舗Bot・ルームを決めて line_report の `mtalk-external-post POST /store-post` へ署名つきで送る。カードの links は `{ label: "週報を開く", url: https://marugo-s.github.io/gourmet/weekly/<店舗UUID>/<asOf>/ }`。`GOURMET_MTALK_TOKEN` は gourmet の Edge Function だけが持ち、Grok Bot には渡しません。
 - 店舗: `--store-id`（gourmet の店舗 UUID）、無ければ最初のサイトの店舗キーからアプリの店舗を探します。**Pages 公開（`--publish-dir`）には `--store-id` が必須**です。
-- 店舗Bot・ルーム: 口コミ通知と同じ設定。ルームの既定は「設定で選んだルーム → Bot の店舗ルーム（`is_store_room`）→ Bot が参加している全グループ」。`--room <ID>` で指定（BistroCAVACAVA は 30）。
+- 店舗Bot・ルーム: 店舗Bot は口コミ通知と同じ設定。ルームは「`--room <ID>` → 画面「週報の配信」で選んだルーム → 口コミ通知で選んだルーム → Bot の店舗ルーム（`is_store_room`）→ Bot が参加している全グループ」（BistroCAVACAVA は 30）。
 - 二重送信の防止: 店舗×週（作成日の週の月曜、日本時間）で同じ `dedupe_key`（`gourmet-weekly:<店舗 UUID>:<月曜>`）。月曜の作業をやり直しても、同じ週はルームごとにカードが 1 回だけ届きます。
 - カードに載せるのは件数・評価・PV などの集計だけ。メールアドレス・電話番号らしき文字列があれば gourmet と M-talk の両方で送りません。
 
@@ -108,6 +108,57 @@ INGEST_TOKEN=... node scripts/weekly-deliver.mjs …同じ引数… --pdf --send
 応答: `{ ok, store: { id, name }, asOf, week, dedupeKey, dryRun, bot: { id, name, how }, roomIds, rooms: [...], html: { url }, pdf: { filename } | null, preview? | deduplicated? }`。送らなかったときは `{ ok: false, skipped: "理由" }`。
 エラー: 422（入力・個人情報・HTML の添付）、404（店舗・店舗Bot・ルームが無い）、409（同じ PDF を処理中）、413（PDF 5MB 超）、502（M-talk に届かない。同じ週ならやり直しても二重に届かない）、503（M-talk 連携が未設定）。
 
+## 実データからの組み立て（stub 禁止）と、予定時刻の配信
+
+2026-10-05 の事故: Pages に載せた週報が、手書きの薄い入力（`tabelog-input.json` に月次3項目だけ・日別は 100,110,120… の合成値、一休は runId `t`・架空クチコミ）から作られ、大半が「未取得」になった。実データ（`run-20261005-tabelog/payload.json` ほか）は既にあった。
+再発防止として、**週報の入力は必ず `scripts/weekly-assemble.mjs` で最新の取得フォルダから組み立てる**。`weekly-deliver.mjs` は `--publish-dir`（Pages 公開）と `--send` のとき、assemble の印（`assembled`）が無い・必須データが欠けている入力を拒否します（`--allow-unassembled` はテスト・手元確認専用）。
+
+```sh
+# 1) 組み立て（ネットワークなし）。runs-dir 直下の取得フォルダの payload*.json・owner-home*.html・pages/tabelog_access_ranking-YYYY-MM.html を読む
+node scripts/weekly-assemble.mjs --runs-dir /workspace \
+  --tabelog-store 13245351 --ikyu-store 112789 --name "BISTRO CAVA CAVA" --as-of 2026-10-05 \
+  --out-dir /workspace/run-20261005-weekly-cava
+#   終了コード 0 = 送ってよい / 1 = 必須の実データ欠け・stub（送らない。当日の取得が終わるのを待つ）/ 3 = 取れるはずの項目が欠け（取り直す。だめなら --allow-gaps で「未取得」のまま）
+#   assemble-report.json に元ファイル・取得日時・足りない項目・拒否したファイル（stub など）が残る
+
+# 2) HTML を作って Pages 用に public/ へ（agent-api は呼ばない）
+node scripts/weekly-deliver.mjs --tabelog-input /workspace/run-20261005-weekly-cava/tabelog-input.json \
+  --ikyu-input /workspace/run-20261005-weekly-cava/ikyu-input.json --name "BISTRO CAVA CAVA" \
+  --store-id 89831708-aeac-4d1d-a345-8b345579a27f --as-of 2026-10-05 \
+  --out-dir /workspace/run-20261005-weekly-cava/weekly --publish-dir public --no-post
+```
+
+| 組み立ての元 | 使う項目 |
+|---|---|
+| 食べログ 取り込み JSON（`run-*-tabelog/payload*.json`。複数を capturedAt 順に重ねる） | 月別（PV・端末・ネット予約・通話）、日別 PV・端末内訳、口コミ（投稿日・評価だけ）、レポート `public_profile`・`reservation_notices`・`public_competitors`・`public_genre_ranking`・`public_new_opens`・`area_ranking` |
+| 食べログ 管理トップの保存 HTML（`owner-home*.html`、2日以内） | 新着ご予約情報の件数（新規・変更・キャンセル） |
+| 食べログ アクセス数ランキングの保存 HTML（`pages/tabelog_access_ranking-<確定月>.html`） | 確定月の自店順位・PV・前月比 |
+| 一休 取り込み JSON（当日・バックフィル・公開ページ・クチコミ。capturedAt 順） | 月別・日別（PV・ページ種別・端末・予約・金額）、公開評価、管理画面クチコミ |
+
+受け付けない入力: `schemaVersion`/`agent`/`runId`（`tabelog-…`・`ikyu-…`）が取り込み JSON の形でないもの、日別 PV が周期的・等差の合成値、作成日より後の取得、配信の出力フォルダ（`weekly-card-*.json` がある）の中身。
+必須（欠けたら送らない）: 確定月と前月の月別、直近14日の日別 PV（食べログ）／作成日の3日前以降まである日別（一休）。
+取れるはずの項目（欠けたら終了コード 3）: 食べログの公開ページ・新着ご予約・アクセス数ランキング・競合・ジャンル順位・ニューオープン・口コミ、一休の公開評価・管理画面クチコミ。公開ページ・一覧は 8 日以内、新着ご予約は 2 日以内の取得だけ使う。
+
+### 実取得があっても「未取得」になる項目（2026-10 時点・作らない）
+
+- 一休: 競合比較（評価上位店・競合表・プラン価格）、エリア内順位、直近30日の新規オープン（一休の公開一覧の取得が未対応）。
+- 一休: 直近7日の新着クチコミは管理画面クチコミの投稿日で数える（取得が無い週は「未取得」）。
+- 食べログ: 日別の「端末内訳」以外の内訳（ページ種別の日別）は管理画面に無い。予約通知は確認時点の件数で、期間合計ではない。
+- 食べログのジャンル順位は、主エリア（曙橋・四ツ谷三丁目）の評価順一覧の上位20件に自店が無いと「掲載なし」。
+
+### 配信の予定（画面「自動取得の設定」→「週報の配信」、migration 023）
+
+- 店舗ごとに **曜日・時刻（日本時間）・送り先ルーム・PDF の有無・有効** を保存します（表 `weekly_delivery_schedules`、保存は `review-api POST /weekly-schedules`）。この曜日・時刻が配信のタイミングを決めます（ルーチンの固定時刻ではない）。
+- 送り先ルームの優先順: `--room` → 画面の「週報の配信」で選んだルーム → 「口コミ通知」で選んだルーム → 店舗Botの店舗ルーム。BISTRO CAVACAVA は **ルーム 30**（`supabase/seed/023_weekly_delivery_cava.sql` か画面で保存）。
+- Grok Bot は稼働時間（日本時間 9:00〜22:59）の確認のたびに `node scripts/agent-queue.mjs --weekly-due` を呼び、予定を過ぎた店舗があれば次の手順で配信します:
+  1. `--weekly-claim --schedule-id <id>`（作業中の印 claimId、期限2時間。asOf = その週の予定日の日本時間）。
+  2. `weekly-assemble.mjs`（due の `sites.tabelog` / `sites.ikyu` の店舗コード）。終了コード 1 なら当日の取得（`agent-queue --claim` の依頼）が終わっていない → `--weekly-finish --outcome deferred --reason …`（30分後にもう一度、最大12回）。3 なら足りない公開ページ等を取り直し、だめなら `--allow-gaps` で続けて、足りない項目を報告に書く。
+  3. `weekly-deliver.mjs … --publish-dir public --no-post` → `public/weekly/<店舗UUID>/<asOf>/` だけを含むブランチ `weekly/<asOf>-<店舗>` を作り PR → CI 成功後に main へマージ → Pages の URL が 200 を返すまで待つ（HTML だけの PR。コード変更を混ぜない）。
+  4. 確認: `INGEST_TOKEN=… weekly-deliver.mjs …同じ引数… --store-id <UUID>`（dryRun。Bot・ルーム・カードの文を確認。`alreadySent` なら送信済み）。
+  5. 送信: 同じ引数に `--send`（ルームは画面の設定。CAVA は 30。明示するなら `--room 30`）。応答の `rooms[].cardMessageId` と `html.url` を控える。
+  6. `--weekly-finish --schedule-id <id> --claim-id <claimId> --outcome delivered --html-url <URL> --card-ids <cardMessageId>`。送らない判断（店舗Bot なし等）は `skipped`、失敗は `failed --reason …`（30分後にもう一度）。
+- 二重送信は店舗×週の `dedupe_key` で M-talk 側でも防ぎます（同じ週をやり直しても1回だけ）。
+
 ## 新しいサイトを足すとき
 
 1. `scripts/<site>/weekly-report.js` に `build<Site>WeeklyView(input)` を作り、`renderWeeklyReportHtml` のビュー（JSDoc 参照）を詰める。`site: { key, label }`、KPI 4枚、月次の指標 2〜3 個、表、脚注、次の3アクション。
@@ -115,4 +166,4 @@ INGEST_TOKEN=... node scripts/weekly-deliver.mjs …同じ引数… --pdf --send
 3. `scripts/weekly-report.mjs` の `SITES` に登録し、必要ならラッパー `scripts/<site>-weekly-report.mjs` を置く。
 4. テストで骨格の同一性（`server/tests/weekly-report-shared.test.js` の chrome 比較）と未取得・PII を確認する。
 
-テスト: `server/tests/weekly-delivery.test.js`（M-talk への配信・PDF・カード・CLI）、`server/tests/weekly-report-shared.test.js`（共通テンプレート・食べログの薄いラッパー・骨格の同一性・CLI）、`server/tests/ikyu-weekly-report.test.js`（一休の組み立て・未取得・PII・CLI）、`server/tests/tabelog-weekly-parity.test.js`（食べログの内容）。
+テスト: `server/tests/weekly-assemble.test.js`（実データの組み立て・stub の拒否）、`server/tests/weekly-schedules.test.js`（配信予定・due/claim/finish・ルームの優先順）、`server/tests/weekly-delivery.test.js`（M-talk への配信・PDF・カード・CLI）、`server/tests/weekly-report-shared.test.js`（共通テンプレート・食べログの薄いラッパー・骨格の同一性・CLI）、`server/tests/ikyu-weekly-report.test.js`（一休の組み立て・未取得・PII・CLI）、`server/tests/tabelog-weekly-parity.test.js`（食べログの内容）。

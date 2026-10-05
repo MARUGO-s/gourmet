@@ -247,20 +247,20 @@ test("weekly-deliver CLI: dry run by default, --send to post, --no-post stays lo
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "weekly-card-2026-10-05.json"), "utf8")).pdf, undefined, "カードの JSON に PDF の中身を書かない");
 
   const pub = path.join(dir, "public");
-  await runWeeklyDeliver([...argv, "--no-post", "--store-id", STORE, "--publish-dir", pub], { fetcher, env: {}, log: () => {} });
+  await runWeeklyDeliver([...argv, "--no-post", "--store-id", STORE, "--publish-dir", pub, "--allow-unassembled"], { fetcher, env: {}, log: () => {} });
   const published = path.join(pub, "weekly", STORE, "2026-10-05");
   assert.ok(fs.existsSync(path.join(published, "index.html")));
   assert.ok(fs.existsSync(path.join(published, "tabelog.html")) && fs.existsSync(path.join(published, "ikyu.html")));
   assert.match(fs.readFileSync(path.join(published, "index.html"), "utf8"), /週報を開く|食べログ週報|一休週報/);
 
-  await runWeeklyDeliver([...argv, "--send", "--store-id", STORE, "--room", "30"], { fetcher, env, log: () => {} });
+  await runWeeklyDeliver([...argv, "--send", "--store-id", STORE, "--room", "30", "--allow-unassembled"], { fetcher, env, log: () => {} });
   const live = JSON.parse(calls[1].init.body);
   assert.equal(live.dryRun, false);
   assert.equal(live.storeId, STORE);
   assert.deepEqual(live.roomIds, [30]);
   assert.equal(live.pdf, undefined, "--pdf 無しでは添付なし");
 
-  await runWeeklyDeliver([...argv, "--send", "--pdf", "--store-id", STORE, "--room", "30"], { fetcher, env, log: () => {} });
+  await runWeeklyDeliver([...argv, "--send", "--pdf", "--store-id", STORE, "--room", "30", "--allow-unassembled"], { fetcher, env, log: () => {} });
   const withPdf = JSON.parse(calls[2].init.body);
   assert.equal(Buffer.from(withPdf.pdf.base64, "base64").subarray(0, 5).toString(), "%PDF-");
 

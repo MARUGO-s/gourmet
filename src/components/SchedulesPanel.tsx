@@ -3,6 +3,7 @@ import { deleteSchedule, getSchedules, saveSchedule } from "../api";
 import type { CredentialRow, FetchSchedule, ScheduleMode, SourceMeta, Store, StoreKeys } from "../types";
 import { filterByStore, storeLabelFor } from "../../supabase/functions/_shared/stores.js";
 import StorePicker, { commitPick, emptyPick } from "./StorePicker";
+import WeeklyDeliveryPanel from "./WeeklyDeliveryPanel";
 import {
   AGENT_WINDOW_NOTE, INTERVAL_CHOICES, MODE_LABELS, SCHEDULE_MODES, SCHEDULE_SOURCES, SUPPORTED_SCHEDULE_SOURCES, WEEKDAY_LABELS,
   describeSchedule, timeOutsideAgentWindow,
@@ -12,6 +13,8 @@ type Props = {
   sources: SourceMeta[]; credentials: CredentialRow[];
   // 店舗マスタ・表示中の店舗の店舗コード（null=全店舗）・追加時の既定の店舗
   stores: Store[]; scopeKeys: StoreKeys | null; defaultStoreId: string; onStoresChanged: () => void;
+  // 表示中の店舗（店舗 UUID・"all"・null）。週報の配信の絞り込み用
+  scope?: string | null;
 };
 type Draft = { mode: ScheduleMode; intervalHours: number; timeOfDay: string; weekday: number; enabled: boolean };
 type Row = { key: string; source: string; storeId: string; label: string; schedule: FetchSchedule | null };
@@ -32,7 +35,7 @@ const formatJst = (iso: string | null | undefined) => iso ? jst.format(new Date(
 const inputClass = "rounded border border-line bg-card px-2 py-1 text-[11px]";
 
 // 店舗×サイトごとの自動取得の周期。保存した周期で、Grok Botが予定時刻を過ぎた設定を取得依頼にする。
-export default function SchedulesPanel({ sources, credentials, stores, scopeKeys, defaultStoreId, onStoresChanged }: Props) {
+export default function SchedulesPanel({ sources, credentials, stores, scopeKeys, defaultStoreId, onStoresChanged, scope = null }: Props) {
   const [schedules, setSchedules] = useState<FetchSchedule[]>([]);
   const [loading, setLoading] = useState(true);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
@@ -228,6 +231,7 @@ export default function SchedulesPanel({ sources, credentials, stores, scopeKeys
           <span className="text-[10px] text-faint">アカウント未登録の店舗も設定できます（取得にはアカウント管理での登録が必要です）</span>
         </form>
       </section>
+      <WeeklyDeliveryPanel stores={stores} scope={scope} />
     </div>
   );
 }

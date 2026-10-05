@@ -11,6 +11,9 @@
 //     401・認証エラー・ログイン画面に戻された・原因不明は other。
 //     省略すると理由の文から判定する（サイトの「正しくありません」→ needs_relogin、「私は人間です」「captcha」「認証コード」→ needs_human_check、それ以外 → other）
 //   node scripts/agent-queue.mjs --enqueue-due [--limit 20] [--dry-run]   自動取得の設定のうち予定時刻を過ぎたものを取得依頼にする（--claim の前に実行）
+//   node scripts/agent-queue.mjs --weekly-due                            週報の配信予定（画面「自動取得の設定」→「週報の配信」）のうち予定時刻を過ぎた店舗
+//   node scripts/agent-queue.mjs --weekly-claim --schedule-id <uuid>     その店舗の週報の作業中の印（claimId）を付ける
+//   node scripts/agent-queue.mjs --weekly-finish --schedule-id <uuid> --claim-id <uuid> --outcome delivered|skipped|deferred|failed [--reason …] [--html-url …] [--card-ids 1,2]
 // 共通: INGEST_TOKEN（環境変数）または --token-file、--endpoint / AGENT_API_URL。出力はJSON（秘密情報なし）。
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -20,8 +23,8 @@ export const FAILURE_KINDS = ["needs_relogin", "needs_human_check", "other"];
 
 export function queueCommand(args) {
   const one = (v) => (Array.isArray(v) ? v.at(-1) : v);
-  const modes = ["list", "claim", "complete", "fail", "enqueue-due"].filter((m) => args[m] !== undefined);
-  if (modes.length !== 1) throw new Error("--list / --claim / --complete / --fail / --enqueue-due のいずれか1つを指定してください");
+  const modes = ["list", "claim", "complete", "fail", "enqueue-due", "weekly-due", "weekly-claim", "weekly-finish"].filter((m) => args[m] !== undefined);
+  if (modes.length !== 1) throw new Error("--list / --claim / --complete / --fail / --enqueue-due / --weekly-due / --weekly-claim / --weekly-finish のいずれか1つを指定してください");
   const mode = modes[0], source = typeof args.source === "string" ? args.source : undefined;
   const origin = args.origin === undefined ? undefined : one(args.origin);
   if (origin !== undefined && !["app", "schedule", "mtalk_live"].includes(origin)) throw new Error("--origin は app / schedule / mtalk_live です");
@@ -30,6 +33,21 @@ export function queueCommand(args) {
     const limit = args.limit === undefined ? undefined : Number(one(args.limit));
     if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1 || limit > 50)) throw new Error("--limit は1〜50です");
     return { path: "/schedules/enqueue-due", body: { ...(limit !== undefined ? { limit } : {}), ...(args["dry-run"] !== undefined ? { dryRun: true } : {}) } };
+  }
+  if (mode === "weekly-due") return { path: "/weekly/due", body: {} };
+  if (mode === "weekly-claim") {
+    const scheduleId = one(args["schedule-id"]);
+    if (typeof scheduleId !== "string") throw new Error("--schedule-id <uuid> を指定してください");
+    return { path: "/weekly/claim", body: { scheduleId } };
+  }
+  if (mode === "weekly-finish") {
+    const scheduleId = one(args["schedule-id"]), claimId = one(args["claim-id"]), outcome = one(args.outcome);
+    if (typeof scheduleId !== "string" || typeof claimId !== "string") throw new Error("--schedule-id と --claim-id を指定してください");
+    if (!["delivered", "skipped", "deferred", "failed"].includes(outcome)) throw new Error("--outcome は delivered / skipped / deferred / failed です");
+    const reason = args.reason === undefined ? undefined : String(one(args.reason));
+    const htmlUrl = args["html-url"] === undefined ? undefined : String(one(args["html-url"]));
+    const cardIds = args["card-ids"] === undefined ? undefined : String(one(args["card-ids"])).split(/[\s,]+/).filter(Boolean).map(Number);
+    return { path: "/weekly/finish", body: { scheduleId, claimId, outcome, ...(reason !== undefined ? { reason } : {}), ...(htmlUrl !== undefined ? { htmlUrl } : {}), ...(cardIds !== undefined ? { cardMessageIds: cardIds } : {}) } };
   }
   if (mode === "list") return { path: "/requests/pending", body: { ...(source ? { source } : {}), ...(origin ? { origin } : {}) } };
   if (mode === "claim") {
