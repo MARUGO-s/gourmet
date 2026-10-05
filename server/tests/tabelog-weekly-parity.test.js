@@ -159,11 +159,24 @@ test("public new-open list reads openedOn when present", () => {
   assert.equal(result.entries[0].openedOn, "2026-08-27");
 });
 
+test("public list readers are self-contained for page.evaluate (no module-scope helpers)", () => {
+  // page.evaluate はソース文字列だけを送る。モジュール外の関数を参照すると実ブラウザで ReferenceError になる（2026-10-05 live で発生）。
+  const isolated = (fn) => new Function(`return (${fn.toString()});`)();
+  const ranking = withDocument(fixture("rank-genre.html"), () => isolated(readPublicGenreRanking)({ selfStoreId: "13245351", limit: 10 }));
+  assert.equal(ranking.entries[0].name, "ラトラスフィス");
+  assert.equal(ranking.selfRank, 3);
+  const opens = withDocument(fixture("newopen.html"), () => isolated(readPublicNewOpenList)({ limit: 10 }));
+  assert.equal(opens.entries[0].openedOn, "2026-08-27");
+  const owner = withDocument(fixture("owner-home.html"), () => isolated(readReservationNotices)());
+  assert.equal(owner.found, true);
+});
+
 test("store config for CAVA exposes areas/genres and fetch plan URLs", () => {
   const cfg = storePublicConfig("13245351");
   assert.equal(cfg.name, "BISTRO CAVA CAVA");
   assert.ok(cfg.areas.some((a) => /曙橋|四ツ谷/.test(a.areaLabel)));
-  assert.deepEqual(cfg.genres.map((g) => g.slug).sort(), ["bistro", "french", "winebar"]);
+  assert.deepEqual(cfg.genres.map((g) => g.slug).sort(), ["BC0103", "bistro", "french"]);
+  assert.deepEqual(cfg.areas.map((a) => a.path), ["tokyo/A1309/A130903", "tokyo/A1309/A130902", "tokyo/A1309/A130904"]);
   const plan = publicFetchPlan("13245351");
   assert.ok(plan.pages.some((p) => p.page === "tabelog_public_store"));
   assert.ok(plan.pages.every((p) => p.url.startsWith("https://tabelog.com/")));

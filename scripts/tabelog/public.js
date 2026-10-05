@@ -40,23 +40,40 @@ export function readTabelogPublicDocument() {
     saveCount = number(m?.[1] ?? m?.[2], true);
   }
 
-  // 予算（夜／昼）。「¥8,000～¥9,999」形式をそのままテキストで保持
+  // 予算（夜／昼）。「¥8,000～¥9,999」形式をテキストで保持。
+  // 実画面（2026-10）はラベル文字ではなくアイコン i.c-rating-v3__time--dinner / --lunch の隣の値（ヘッダー .rdheader-budget、
+  // 店舗情報表 .rstinfo-table__budget-item）。最初の .rstinfo-table__budget が店の設定、2つ目は口コミ集計。
+  const normBudget = (raw) => {
+    const m = String(raw ?? "").match(/[¥￥]\s*[\d,]+(?:\s*[〜～\-–]\s*[¥￥]?\s*[\d,]+)?/);
+    return m ? m[0].replace(/￥/g, "¥").replace(/[〜～]/g, "–").replace(/\s+/g, "") : null;
+  };
+  const budgetByIcon = (kind) => {
+    for (const icon of document.querySelectorAll(`.rdheader-budget .c-rating-v3__time--${kind}, .rstinfo-table__budget-item .c-rating-v3__time--${kind}`)) {
+      const item = icon.closest?.(".rdheader-budget__icon, .rstinfo-table__budget-item") ?? icon.parentElement;
+      const value = normBudget(item?.textContent);
+      if (value) return value;
+      if (item) return null; // 「-」（設定なし）
+    }
+    return undefined;
+  };
   const budgetCell = (label) => {
     const rows = [...document.querySelectorAll("tr, .rdheader-budget__item, .rstinfo-table__budget, dl")];
     for (const row of rows) {
       const t = (row.textContent ?? "").replace(/\s+/g, " ");
       if (!t.includes(label)) continue;
-      const m = t.match(/[¥￥][\d,]+(?:\s*[〜～\-–]\s*[¥￥]?[\d,]+)?/);
-      if (m) return m[0].replace(/￥/g, "¥").replace(/[〜～]/g, "–").replace(/\s+/g, "");
+      const value = normBudget(t);
+      if (value) return value;
     }
     return null;
   };
-  const budgetNight = budgetCell("夜") ?? budgetCell("ディナー") ?? text(".rdheader-budget__price") ?? null;
-  const budgetDay = budgetCell("昼") ?? budgetCell("ランチ") ?? text(".rdheader-budget__price--lunch") ?? null;
+  const nightIcon = budgetByIcon("dinner"), dayIcon = budgetByIcon("lunch");
+  const budgetNight = nightIcon !== undefined ? nightIcon : (budgetCell("夜") ?? budgetCell("ディナー") ?? normBudget(text(".rdheader-budget__price-target") ?? text(".rdheader-budget__price")) ?? null);
+  const budgetDay = dayIcon !== undefined ? dayIcon : (budgetCell("昼") ?? budgetCell("ランチ") ?? normBudget(text(".rdheader-budget__price--lunch")) ?? null);
 
-  // 最寄駅
-  let station = text(".rdheader-subinfo__item-station")
-    ?? text("[class*='station']")
+  // 最寄駅（実画面: dl.rdheader-subinfo__item--station .linktree__parent-target-text。子メニュー「駅×ジャンル」は読まない）
+  const oneLine = (s) => (s ?? "").replace(/\s+/g, " ").trim() || null;
+  let station = oneLine(text(".rdheader-subinfo__item--station .linktree__parent-target-text"))
+    ?? oneLine(text(".rdheader-subinfo__item-station"))
     ?? null;
   if (!station) {
     const sub = [...document.querySelectorAll(".rdheader-subinfo__item, .rstinfo-table__data, .linktree__parent-target-text")]
@@ -67,7 +84,7 @@ export function readTabelogPublicDocument() {
 
   // オープン日（あれば）
   let openedOn = null;
-  const openMatch = (document.body?.innerText ?? "").match(/オープン日[：:\s]*(\d{4})[年/.-](\d{1,2})[月/.-](\d{1,2})/);
+  const openMatch = (text(".rstinfo-opened-date") ? `オープン日 ${text(".rstinfo-opened-date")}` : (document.body?.innerText ?? "")).match(/オープン日[：:\s]*(\d{4})[年/.-](\d{1,2})[月/.-](\d{1,2})/);
   if (openMatch) openedOn = `${openMatch[1]}-${openMatch[2].padStart(2, "0")}-${openMatch[3].padStart(2, "0")}`;
 
   const reviewItems = [restaurant?.review].flat().filter(Boolean).slice(0, 10).map((review) => ({

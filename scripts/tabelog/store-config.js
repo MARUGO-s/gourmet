@@ -11,13 +11,15 @@ export const STORE_PUBLIC_CONFIG = {
     publicUrl: "https://tabelog.com/tokyo/A1309/A130903/13245351/",
     competitorCap: 5,
     areas: [
-      { areaKey: "akebonobashi_yotsuya3", areaLabel: "曙橋・四ツ谷三丁目", path: "tokyo/A1304/A130404" },
-      { areaKey: "yotsuya", areaLabel: "四ツ谷", path: "tokyo/A1304/A130401" },
-      { areaKey: "ichigaya", areaLabel: "市ヶ谷", path: "tokyo/A1309/A130902" },
+      // 2026-10-05 tabelog.com の一覧タイトルで確認（A1309 = 四ツ谷・市ヶ谷・飯田橋）。A1304/A130404 は大久保、A1304/A130401 は新宿なので使わない。
+      { areaKey: "akebonobashi_yotsuya3", areaLabel: "曙橋・四ツ谷三丁目", path: "tokyo/A1309/A130903" },
+      { areaKey: "yotsuya", areaLabel: "四ツ谷", path: "tokyo/A1309/A130902" },
+      { areaKey: "ichigaya", areaLabel: "市ヶ谷", path: "tokyo/A1309/A130904" },
     ],
     genres: [
       { genreKey: "bistro", genreLabel: "ビストロ", slug: "bistro" },
-      { genreKey: "winebar", genreLabel: "ワインバー", slug: "winebar" },
+      // ワインバーは英字スラッグが無くジャンルコード BC0103（"winebar" は無視されて全ジャンル一覧になる）
+      { genreKey: "winebar", genreLabel: "ワインバー", slug: "BC0103" },
       { genreKey: "french", genreLabel: "フレンチ", slug: "french" },
     ],
   },
