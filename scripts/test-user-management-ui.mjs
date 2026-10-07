@@ -122,6 +122,8 @@ try {
     assert.equal(f.calls.includes('/users') || f.calls.includes('/credentials') || f.calls.includes('/requests'), false);
     if (mode === 'pending') assert.equal(f.calls.includes('/stores'), false);
     else {
+      // The selection heading renders before the asynchronous store list arrives.
+      await f.page.getByText('テスト店舗A', { exact: true }).waitFor();
       assert.equal(await f.page.getByText('テスト店舗A', { exact: true }).count(), 1);
       assert.equal(await f.page.getByText('テスト店舗B', { exact: true }).count(), 0);
     }
