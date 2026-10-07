@@ -1,11 +1,13 @@
 import { useEffect, useRef, type ReactNode } from "react";
 
-type ViewId = "overview" | "dashboard" | "ai" | "requests" | "schedules" | "alerts" | "accounts" | "stores";
+type ViewId = "overview" | "dashboard" | "ai" | "requests" | "schedules" | "alerts" | "accounts" | "stores" | "users";
 type Props = {
   // null = 店舗の選択画面
   view: ViewId | null;
   onView: (v: ViewId) => void;
   signedIn: boolean;
+  isAdmin: boolean;
+  canUseApp: boolean;
   // 表示中の店舗（'全店舗' / 店舗名）
   storeName: string | null;
   // スマートフォン幅のメニュー（ドロワー）の開閉
@@ -99,18 +101,19 @@ function NavIcon({ name }: { name: string }) {
   );
 }
 
-const ITEMS: { id: ViewId; label: string; signedIn?: boolean }[] = [
+const ITEMS: { id: ViewId; label: string; signedIn?: boolean; adminOnly?: boolean }[] = [
   { id: "overview", label: "全店舗の比較", signedIn: true },
   { id: "dashboard", label: "ダッシュボード" },
-  { id: "ai", label: "AI分析", signedIn: true },
-  { id: "requests", label: "取得依頼" },
-  { id: "schedules", label: "自動取得の設定" },
-  { id: "alerts", label: "口コミ通知", signedIn: true },
-  { id: "accounts", label: "アカウント管理" },
-  { id: "stores", label: "店舗管理", signedIn: true },
+  { id: "ai", label: "AI分析", signedIn: true, adminOnly: true },
+  { id: "requests", label: "取得依頼", adminOnly: true },
+  { id: "schedules", label: "自動取得の設定", adminOnly: true },
+  { id: "alerts", label: "口コミ通知", signedIn: true, adminOnly: true },
+  { id: "accounts", label: "アカウント管理", adminOnly: true },
+  { id: "stores", label: "店舗管理", signedIn: true, adminOnly: true },
+  { id: "users", label: "ユーザー管理", signedIn: true, adminOnly: true },
 ];
 
-export default function Sidebar({ view, onView, signedIn, storeName, mobileOpen = false, onClose, onReselect }: Props) {
+export default function Sidebar({ view, onView, signedIn, isAdmin, canUseApp, storeName, mobileOpen = false, onClose, onReselect }: Props) {
   const closeButton = useRef<HTMLButtonElement>(null);
 
   // スマートフォン幅のメニュー（ドロワー）: 開いている間は背景のスクロールを止め、Escapeで閉じる
@@ -139,7 +142,7 @@ export default function Sidebar({ view, onView, signedIn, storeName, mobileOpen 
   return (
     <>
       <aside className="no-print hidden w-[232px] shrink-0 flex-col border-r border-line bg-card md:flex">
-        <SidebarContent view={view} onView={onView} signedIn={signedIn} storeName={storeName} />
+        <SidebarContent view={view} onView={onView} signedIn={signedIn} isAdmin={isAdmin} canUseApp={canUseApp} storeName={storeName} />
       </aside>
 
       {/* スマートフォン幅: 左から開くメニュー（ドロワー）と暗い背景 */}
@@ -160,6 +163,8 @@ export default function Sidebar({ view, onView, signedIn, storeName, mobileOpen 
             view={view}
             onView={choose}
             signedIn={signedIn}
+            isAdmin={isAdmin}
+            canUseApp={canUseApp}
             storeName={storeName}
             onReselect={onReselect ? () => { onReselect(); onClose?.(); } : undefined}
             closeButton={
@@ -183,7 +188,7 @@ export default function Sidebar({ view, onView, signedIn, storeName, mobileOpen 
   );
 }
 
-function SidebarContent({ view, onView, signedIn, storeName, onReselect, closeButton }: Pick<Props, "view" | "onView" | "signedIn" | "storeName" | "onReselect"> & { closeButton?: ReactNode }) {
+function SidebarContent({ view, onView, signedIn, isAdmin, canUseApp, storeName, onReselect, closeButton }: Pick<Props, "view" | "onView" | "signedIn" | "isAdmin" | "canUseApp" | "storeName" | "onReselect"> & { closeButton?: ReactNode }) {
   return (
     <>
       <div className="px-5 pt-6 pb-5">
@@ -210,6 +215,7 @@ function SidebarContent({ view, onView, signedIn, storeName, onReselect, closeBu
 
       {signedIn ? (
         <div className="border-t border-line px-5 py-3">
+          <p className="mb-2 text-[11px] font-bold text-brand">{isAdmin ? "管理者" : canUseApp ? "閲覧ユーザー" : "閲覧不可"}</p>
           <div className="text-[10px] font-bold tracking-wide text-faint">表示中の店舗</div>
           <div className="mt-0.5 truncate text-[13px] font-bold text-brand" title={storeName ?? ""}>{storeName ?? "未選択"}</div>
           {onReselect ? (
@@ -220,7 +226,7 @@ function SidebarContent({ view, onView, signedIn, storeName, onReselect, closeBu
         </div>
       ) : null}
       <nav className="flex flex-col gap-1 border-t border-line px-3 py-4" aria-label="メインメニュー">
-        {ITEMS.filter((it) => signedIn || !it.signedIn).map((it) => {
+        {ITEMS.filter((it) => canUseApp && (signedIn || !it.signedIn) && (!it.adminOnly || isAdmin)).map((it) => {
           const active = view === it.id;
           return (
             <button

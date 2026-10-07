@@ -7,7 +7,7 @@ type Props = {
   loading: boolean;
   error: string | null;
   onSelect: (scope: string) => void;
-  onManage: () => void;
+  onManage?: () => void;
   onRetry: () => void;
 };
 
@@ -21,7 +21,7 @@ export default function StoreSelect({ stores, sources, loading, error, onSelect,
           <h2 className="text-[16px] font-bold tracking-tight">店舗を選択してください</h2>
           <p className="mt-1 text-[12px] text-subtle">選んだ店舗のデータだけを各画面に表示します。選択はこのブラウザに保存され、画面上部からいつでも切り替えられます。</p>
         </div>
-        <button onClick={onManage} className="rounded-md border border-line bg-card px-3 py-2 text-[12px] font-bold text-subtle hover:text-ink">店舗管理</button>
+        {onManage && <button onClick={onManage} className="rounded-md border border-line bg-card px-3 py-2 text-[12px] font-bold text-subtle hover:text-ink">店舗管理</button>}
       </div>
       {error ? (
         <p className="rounded-md bg-danger-soft px-4 py-3 text-[12px] font-bold text-danger">⚠ {error} <button onClick={onRetry} className="ml-2 underline">再読み込み</button></p>
@@ -57,7 +57,7 @@ export default function StoreSelect({ stores, sources, loading, error, onSelect,
         </ul>
       ) : (
         <div className="rounded-md border border-line bg-card px-6 py-10 text-center text-[12px] text-subtle">
-          店舗が登録されていません。<button onClick={onManage} className="ml-1 font-bold text-brand underline">店舗管理</button>で店舗と各サイトの店舗IDを登録してください。
+          {onManage ? <>店舗が登録されていません。<button onClick={onManage} className="ml-1 font-bold text-brand underline">店舗管理</button>で店舗と各サイトの店舗IDを登録してください。</> : "閲覧できる店舗がありません。管理者に店舗の割り当てをご依頼ください。"}
         </div>
       )}
     </section>

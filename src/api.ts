@@ -1,5 +1,7 @@
 import { supabase, supabaseUrl, publishableKey } from "./lib/supabase";
 import type {
+  ManagedUsers,
+  MyAccess,
   CredentialRow,
   DashboardData,
   SourceMeta,
@@ -40,6 +42,25 @@ async function authHeaders(): Promise<Record<string, string>> {
 
 export class ApiError extends Error {
   constructor(message: string, public status: number) { super(message); }
+}
+
+export async function getMyRole() {
+  return apiFetch("/me", { headers: await authHeaders() }).then(r => json<MyAccess>(r));
+}
+export async function getManagedUsers(page = 1) {
+  return apiFetch(`/users?page=${page}`, { headers: await authHeaders() }).then(r => json<ManagedUsers>(r));
+}
+export async function setUserAdmin(userId: string, enabled: boolean) {
+  return apiFetch("/users/admin", { method: "POST", headers: { ...await authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ userId, enabled }) }).then(r => json<{ ok: boolean }>(r));
+}
+export async function setUserAccess(userId: string, status: "approved" | "revoked", storeIds: string[]) {
+  return apiFetch("/users/access", { method: "POST", headers: { ...await authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ userId, status, storeIds }) }).then(r => json<{ ok: boolean }>(r));
+}
+export async function deleteManagedUser(userId: string, email: string) {
+  return apiFetch("/users/delete", { method: "POST", headers: { ...await authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ userId, email }) }).then(r => json<{ ok: boolean }>(r));
 }
 
 const apiFetch = (path: string, options: RequestInit = {}) => fetch(
