@@ -20,6 +20,7 @@ import { STORE_BOTS_PATH, normalizeStoreBots, publicAlertEvent, publicAlertSetti
 import { mtalkConfig, mtalkRequest } from "../_shared/mtalk-share.js";
 import { queueRefetchAfterSave } from "../_shared/mtalk-followups.js";
 import { isUuid } from "../_shared/login-help.js";
+import { userManagement, viewingAccess } from "../_shared/user-management.js";
 
 // M-talk の店舗Bot（と参加しているグループのルーム）。読めなければ bots=null と理由（画面は保存済みの設定だけ出す）
 async function loadStoreBots(): Promise<{ bots: any[] | null; botsError: string | null }> {
@@ -58,6 +59,25 @@ Deno.serve(async req => {
     global: { headers: token ? { Authorization:`Bearer ${token}` } : {} }, auth:{persistSession:false,autoRefreshToken:false},
   });
   try {
+    if (path === "/me" || path === "/users" || path.startsWith("/users/")) {
+      if (!user) return json(req, { error: "ログインが必要です" }, 401);
+      let input = null;
+      if (["/users/admin", "/users/access", "/users/delete"].includes(path) && req.method === "POST") {
+        try { input = await body(req, 12000); }
+        catch { return json(req, { error: "ユーザーと権限の指定が不正です" }, 400); }
+      }
+      const result = await userManagement(client, path, req.method, input, new URL(req.url).searchParams.get("page") ?? "1");
+      return json(req, result.data, result.status);
+    }
+    let isAdmin = false;
+    if (user) {
+      const denied = await viewingAccess(client);
+      if (denied) return json(req, denied.data, denied.status);
+      isAdmin = await must(client.rpc("gourmet_is_admin"));
+      if (!isAdmin && (req.method !== "GET" || !["/sources", "/dashboard", "/overview", "/stores"].includes(path))) {
+        return json(req, { error: "この操作は管理者のみ利用できます" }, 403);
+      }
+    }
     if (path === "/sources" && req.method === "GET") {
       const creds = user ? await must(client.from("credentials").select("source")) : [];
       // 全サイトとも外部エージェント（Grok Bot）が取り込む。最終取り込み日時は sync_log の成功記録。
@@ -94,7 +114,7 @@ Deno.serve(async req => {
         merged=[...dropPublicDuplicates(merged,owner),...owner];
       }
       const logs=await must(client.from('sync_log').select('at').in('source',targets).in('status',['ok','partial']).order('at',{ascending:false}).limit(1));
-      if (scope !== ALL_STORES) {
+      if (scope !== ALL_STORES || !isAdmin || snapshots.length === 0) {
         // 店舗単位: 店舗コードのある取り込み行から集計し、旧データ（店舗コードなし）は既定の店舗コード '' として扱う（stores.js）
         const master=await loadStoreMaster(client);
         if (isStoreId(scope) && !master.stores.some((s:any)=>s.id===scope)) return json(req,{error:"店舗が見つかりません。店舗を選び直してください"},404);
@@ -102,7 +122,7 @@ Deno.serve(async req => {
         const observed=[...inputs.daily,...inputs.monthly].map((r:any)=>({source:r.source,key:r.key}))
           .concat(snapshots.filter((s:any)=>s.source!=="ikyu").map((s:any)=>({source:s.source,key:""})))
           .concat(merged.map((r:any)=>({source:r.source,key:String(r.details?.storeId ?? "")})));
-        const keys=scopeKeys(scope,master.sites,observed)!;
+        const keys=scope === ALL_STORES ? Object.fromEntries(SOURCE_IDS.map(s => [s, new Set(master.sites.filter((x:any) => x.source === s).map((x:any) => x.site_store_key as string))])) : scopeKeys(scope,master.sites,observed)!;
         const rows=storeSnapshots({targets,keys,daily:inputs.daily,monthly:inputs.monthly,legacy:snapshots.filter((s:any)=>s.source!=="ikyu")});
         const dashboard=computeDashboard(rows,filterReviews(merged,keys),logs[0]?.at??null,targets,false);
         const tabelogKeys:Set<string>|undefined=keys.tabelog;

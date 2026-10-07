@@ -184,3 +184,11 @@ export type AiReportShare = { id: string; reportId: string | null; reportTitle: 
 
 // 口コミ通知（新着口コミ・食べログ総合点の変化 → M-talk の店舗Bot が参加しているルーム）。型は共通モジュールの宣言を使う
 export type { AlertBot, AlertBotMode, AlertSetting, AlertSettingInput, AlertDelivery, AlertEvent, StoreBot, StoreBotRoom } from "../supabase/functions/_shared/review-alerts.js";
+export type ManagedUser = {
+  id: string; email: string; createdAt: string; lastSignInAt: string | null;
+  confirmed: boolean; isAdmin: boolean; grantedAt: string | null; storeCount: number;
+  accessStatus: "pending" | "approved" | "revoked";
+  storeIds: string[]; deletable: boolean;
+};
+export type ManagedUsers = { users: ManagedUser[]; total: number; page: number; stores: { id: string; name: string }[] };
+export type MyAccess = { isAdmin: boolean; canView: boolean; status: "pending" | "approved" | "revoked"; revision: string };

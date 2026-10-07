@@ -4,7 +4,7 @@ import type { Overview, OverviewRow, OverviewSite, OverviewTotals, SourceMeta } 
 import { sortOverviewRows } from "../../supabase/functions/_shared/stores.js";
 import { formatTime } from "../lib/agent-requests";
 
-type Props = { sources: SourceMeta[]; onSelectStore: (id: string) => void; onManage: () => void };
+type Props = { sources: SourceMeta[]; onSelectStore: (id: string) => void; onManage?: () => void };
 type Metric = { id: keyof OverviewSite & keyof OverviewTotals; label: string; kind: "count" | "change" | "rating" | "time" };
 
 const TOTAL_COLUMNS: Metric[] = [
@@ -80,7 +80,7 @@ export default function OverviewPage({ sources, onSelectStore, onManage }: Props
             <span className="text-[10px] text-faint">
               {Object.entries(r.sites).map(([id, s]) => `${names.get(id)?.name ?? id} ${s.keys.map((k) => k.key || "既定").join("・")}`).join(" / ")}
             </span>
-            <button onClick={onManage} className="self-start text-[10px] font-bold text-brand underline">店舗管理で割り当てる</button>
+            {onManage && <button onClick={onManage} className="self-start text-[10px] font-bold text-brand underline">店舗管理で割り当てる</button>}
           </span>
         ) : (
           <button onClick={() => onSelectStore(r.id)} className="text-left font-bold text-brand hover:underline" title="この店舗の画面へ切り替えます">{r.name}</button>
@@ -134,7 +134,7 @@ export default function OverviewPage({ sources, onSelectStore, onManage }: Props
               {rows.map((r) => row(r))}
               {data.unassigned ? row(data.unassigned, true) : null}
               {!rows.length && !data.unassigned ? (
-                <tr><td colSpan={99} className="cell-wrap px-5 py-8 text-center text-faint">店舗が登録されていません（<button onClick={onManage} className="font-bold text-brand underline">店舗管理</button>）</td></tr>
+                <tr><td colSpan={99} className="cell-wrap px-5 py-8 text-center text-faint">閲覧できる店舗がありません。{onManage && <button onClick={onManage} className="font-bold text-brand underline">店舗管理</button>}</td></tr>
               ) : null}
             </tbody>
             <tfoot>

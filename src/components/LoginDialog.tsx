@@ -73,7 +73,7 @@ export default function LoginDialog() {
         const { error, data } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: authRedirect() } });
         if (error) throw error;
         if (data.session) dialog.current?.close();
-        else setMessage("確認メールを送信しました。メール内のリンクを開いて登録を完了してください。");
+        else setMessage("確認メールを送信しました。メール確認後、管理者の承認と閲覧店舗の割り当てをお待ちください。");
         setPassword("");
       } else if (mode === "reset") {
         const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: authRedirect() });
@@ -98,6 +98,7 @@ export default function LoginDialog() {
       <form onSubmit={submit} className="flex flex-col gap-4">
         <div className="flex justify-between"><h2 className="font-bold">{title}</h2><button type="button" aria-label="閉じる" onClick={() => dialog.current?.close()}>×</button></div>
         <p className="text-xs leading-relaxed text-subtle">gourmet専用アカウントです。旧サービスのログインは引き継がれません。食べログのIDは、ログイン後の「アカウント設定」に登録します。</p>
+        {mode === "signup" && <p className="text-xs leading-relaxed text-subtle">新規登録後は閲覧不可です。管理者が承認すると、許可された店舗のデータを閲覧できます。</p>}
         {googleAuthEnabled && (mode === "login" || mode === "signup") && <>
           <button type="button" disabled={busy} onClick={() => void googleLogin()} className="rounded border border-line bg-surface p-2 font-bold disabled:opacity-50">Googleで続ける</button>
           <p className="text-center text-xs text-subtle">またはメールアドレスで続ける</p>

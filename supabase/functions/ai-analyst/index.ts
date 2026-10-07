@@ -31,6 +31,7 @@ import { handleMtalkTurn, supabaseLiveStore } from "../_shared/mtalk-live.js";
 import { answerFreshness, freshnessSystemMessage, withCoverage } from "../_shared/data-freshness.js";
 import { safeParts } from "../_shared/failure-text.js";
 import * as fontModule from "../_shared/fonts/noto-sans-jp.js";
+import { viewingAccess } from "../_shared/user-management.js";
 
 const reportPath = /^\/reports\/([0-9a-f-]{36})$/;
 const listColumns = "id,title,store_id,store_name,period_from,period_to,model,created_at";
@@ -68,6 +69,9 @@ Deno.serve(async req => {
     prompt_tokens:usage?.prompt_tokens ?? null, completion_tokens:usage?.completion_tokens ?? null }).then(({ error }) => { if (error) console.warn("[ai-analyst] usage log failed"); });
 
   try {
+    const denied = await viewingAccess(client);
+    if (denied) return json(req, denied.data, denied.status);
+    if (!await must(client.rpc("gourmet_is_admin"))) return json(req, { error: "AI分析の操作は管理者のみ利用できます" }, 403);
     if (path === "/status" && req.method === "GET") return json(req, { configured:!!config.apiKey, model:config.model, limits:{ askPerHour:AI_LIMITS.askPerHour, reportsPerHour:AI_LIMITS.reportsPerHour } });
 
     if (path === "/ask" && req.method === "POST") {

@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ApiError, createRequest, getCredentials, getDashboard, getRequests, getSources, getStores } from "./api";
-import type { AgentRequest, AgentRequestAction, CredentialRow, DashboardData, SourceMeta, Store } from "./types";
+import { ApiError, createRequest, getCredentials, getDashboard, getRequests, getSources, getStores, getMyRole } from "./api";
+import type { AgentRequest, AgentRequestAction, CredentialRow, DashboardData, SourceMeta, Store, MyAccess } from "./types";
+import UserManager from "./components/UserManager";
 import { ALL_STORES, filterByStore, keysForStore } from "../supabase/functions/_shared/stores.js";
 import { loadSelection, saveSelection } from "./lib/store-selection";
 import StoreSelect from "./components/StoreSelect";
@@ -21,13 +22,15 @@ import RequestsPanel from "./components/RequestsPanel";
 import SchedulesPanel from "./components/SchedulesPanel";
 import AlertsPanel from "./components/AlertsPanel";
 import { DEEP_LINK_PARAMS, parseDeepLink } from "../supabase/functions/_shared/login-help.js";
+import { isUserManagementLink } from "../supabase/functions/_shared/user-management-links.js";
 // 一休の詳細分析は選択時だけ読み込む（初期バンドルを小さく保つ）
 const IkyuDetails = lazy(() => import("./components/IkyuDetails"));
 // AI分析も選択時だけ読み込む
 const AiAnalystPage = lazy(() => import("./components/AiAnalystPage"));
 
-export type View = "overview" | "dashboard" | "ai" | "requests" | "schedules" | "alerts" | "accounts" | "stores";
+export type View = "overview" | "dashboard" | "ai" | "requests" | "schedules" | "alerts" | "accounts" | "stores" | "users";
 const VIEW_TITLES: Record<View, [string, string | null]> = {
+  users: ["ユーザー管理", "登録ユーザーの承認・閲覧店舗の設定・管理者への任命・削除"],
   overview: ["全店舗の比較", "店舗×サイトの月別PV・前月比・予約・評価・口コミ・未返信"], stores: ["店舗管理", "店舗の追加・並び替えと、各サイトの店舗ID"],
   dashboard: ["ダッシュボード", null], ai: ["AI分析", "AIによる質問への回答と分析レポート（OpenAI）"], requests: ["取得依頼", "Grok Botへの取得依頼と履歴"], schedules: ["自動取得の設定", "店舗×サイトごとの自動取得の周期と、店舗ごとの週報の配信（日本時間）"], alerts: ["口コミ通知", "新着口コミ・食べログ総合点の変化を M-talk の店舗Botからルームへ"], accounts: ["アカウント管理", "口コミサイトのアカウント（店舗×サイト）"],
 };
@@ -35,6 +38,15 @@ const VIEW_TITLES: Record<View, [string, string | null]> = {
 // M-talk の「ログイン情報を更新」から開いたときの画面（?view=accounts&source=…&store=…&retry=…）。使い終わったら URL から消す
 type DeepLink = ReturnType<typeof parseDeepLink>;
 const initialDeepLink: DeepLink = typeof window === "undefined" ? null : parseDeepLink(window.location.search);
+const managementReturnKey = "gourmet.userManagementReturn";
+function managementIntent() {
+  if (typeof window === "undefined") return false;
+  const requested = isUserManagementLink(window.location.search);
+  try {
+    if (requested) sessionStorage.setItem(managementReturnKey, "users");
+    return requested || sessionStorage.getItem(managementReturnKey) === "users";
+  } catch { return requested; }
+}
 function clearDeepLinkFromUrl() {
   const u = new URL(window.location.href);
   for (const k of DEEP_LINK_PARAMS) u.searchParams.delete(k);
@@ -43,6 +55,7 @@ function clearDeepLinkFromUrl() {
 
 export default function App() {
   const [view, setView] = useState<View>("dashboard");
+  const [managementRequested, setManagementRequested] = useState(managementIntent);
   const [deepLink, setDeepLink] = useState<DeepLink>(initialDeepLink);
   const [credPreset, setCredPreset] = useState<{ source: string; storeKey: string; retry: string | null } | null>(null);
   // スマートフォン幅のメニュー（ドロワー）の開閉
@@ -53,6 +66,20 @@ export default function App() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
+  const [access, setAccess] = useState<(MyAccess & { userId: string }) | null>(null);
+  const [accessError, setAccessError] = useState<string | null>(null);
+  const canView = !!userId && access?.userId === userId && access.canView;
+  const isAdmin = canView && access?.isAdmin === true;
+  const refreshAccess = useCallback(async () => {
+    if (!userId) return;
+    try {
+      const result = await getMyRole();
+      if (currentUser.current === userId) { setAccess({ ...result, userId }); setAccessError(null); }
+    } catch (e) {
+      if (currentUser.current === userId) { setAccess(null); setAccessError(e instanceof Error ? e.message : "利用権限を確認できませんでした"); }
+    }
+  }, [userId]);
+  const lostAdmin = useCallback(() => { setAccess(null); void refreshAccess(); }, [refreshAccess]);
   const [credentials, setCredentials] = useState<CredentialRow[]>([]);
   const [requests, setRequests] = useState<AgentRequest[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(false);
@@ -75,11 +102,38 @@ export default function App() {
   const refreshAll = useCallback(() => setRefreshKey((k) => k + 1), []);
 
   useEffect(() => {
+    setData(null); setStores([]); setStoresLoaded(false); setScope(null);
+    refreshStores(); refreshAll();
+  }, [access?.revision, refreshStores, refreshAll]);
+
+  useEffect(() => {
     let alive = true;
     supabase.auth.getSession().then(({ data }) => { if (alive) setUserId(data.session?.user.id ?? null); });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => setUserId(session?.user.id ?? null));
     return () => { alive = false; subscription.unsubscribe(); };
   }, []);
+
+  useEffect(() => {
+    setAccess(null); setAccessError(null);
+    if (!userId) return;
+    void refreshAccess();
+    const timer = setInterval(() => void refreshAccess(), 30_000);
+    const onFocus = () => void refreshAccess();
+    window.addEventListener("focus", onFocus);
+    return () => { clearInterval(timer); window.removeEventListener("focus", onFocus); };
+  }, [userId, refreshAccess]);
+
+  useEffect(() => {
+    if (!canView) { setData(null); setStores([]); setScope(null); setCredentials([]); setRequests([]); }
+    if (!isAdmin) setView(v => v === "dashboard" || v === "overview" ? v : "dashboard");
+  }, [canView, isAdmin]);
+
+  useEffect(() => {
+    if (!managementRequested || !access || access.userId !== userId) return;
+    if (isAdmin) setView("users");
+    setManagementRequested(false);
+    try { sessionStorage.removeItem(managementReturnKey); } catch { /* optional return intent */ }
+  }, [managementRequested, access, userId, isAdmin]);
 
   useEffect(() => {
     setData(null);
@@ -94,7 +148,7 @@ export default function App() {
   }, [userId]);
 
   useEffect(() => {
-    if (!userId) return;
+    if (!userId || !canView) return;
     let alive = true;
     setStoresError(null);
     getStores()
@@ -106,12 +160,12 @@ export default function App() {
         if (cur === ALL_STORES || (cur && rows.some((s) => s.id === cur))) return;
         const restored = loadSelection(userId, rows);
         setScope(restored);
-        if (!cur && restored === ALL_STORES) setView("overview");
+        if (!cur && restored === ALL_STORES) setView(v => v === "users" ? v : "overview");
       })
       .catch((e) => { if (alive) setStoresError(e instanceof Error ? e.message : "店舗を読み込めませんでした"); })
       .finally(() => { if (alive) setStoresLoaded(true); });
     return () => { alive = false; };
-  }, [userId, storesKey]);
+  }, [userId, canView, storesKey]);
 
   const selectScope = useCallback((next: string) => {
     setScope(next);
@@ -125,13 +179,13 @@ export default function App() {
   }, [userId]);
   // 「ログイン情報を更新」のリンク: ログインして店舗を読み込んだら、その店舗のアカウント管理を開く（未ログインならログイン後に）
   useEffect(() => {
-    if (!userId || !storesLoaded || deepLink?.kind !== "credentials") return;
+    if (!userId || !isAdmin || !storesLoaded || deepLink?.kind !== "credentials") return;
     const st = stores.find((s) => s.sites.some((x) => x.source === deepLink.source && x.siteStoreKey === deepLink.storeKey));
     selectScope(st?.id ?? ALL_STORES);
     setView("accounts");
     setCredPreset({ source: deepLink.source, storeKey: deepLink.storeKey, retry: deepLink.retry });
     setDeepLink(null);
-  }, [userId, storesLoaded, stores, deepLink, selectScope]);
+  }, [userId, isAdmin, storesLoaded, stores, deepLink, selectScope]);
   const currentStore = stores.find((s) => s.id === scope);
   const scopeKeys = useMemo(() => (scope && scope !== ALL_STORES ? keysForStore(scope, stores.flatMap((s) => s.sites)) : null), [scope, stores]);
   const defaultStoreId = currentStore?.id ?? "";
@@ -140,14 +194,15 @@ export default function App() {
 
   useEffect(() => {
     let alive = true;
+    if (userId && !canView) return;
     getSources().then((rows) => { if (alive) setSources(rows); }).catch(() => { if (alive) setSources([]); });
-    if (userId) getCredentials().then((rows) => { if (alive) setCredentials(rows); }).catch(() => { if (alive) setCredentials([]); });
+    if (isAdmin) getCredentials().then((rows) => { if (alive) setCredentials(rows); }).catch(() => { if (alive) setCredentials([]); });
     return () => { alive = false; };
-  }, [refreshKey, userId]);
+  }, [refreshKey, userId, canView, isAdmin]);
 
   // 店舗の割り当てを変えたら表示中の店舗のデータも変わるため、storesKey でも読み直す
   useEffect(() => {
-    if (userId && !scope) return;
+    if (userId && (!canView || !scope)) return;
     let alive = true;
     setLoading(true);
     getDashboard(filter, userId ? scope ?? ALL_STORES : ALL_STORES)
@@ -159,7 +214,7 @@ export default function App() {
       })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [filter, refreshKey, userId, scope, storesKey, reselect, refreshStores]);
+  }, [filter, refreshKey, userId, canView, scope, storesKey, reselect, refreshStores]);
 
   // 取得依頼: 処理待ちがある間は30秒ごとに確認し、完了したらダッシュボードを読み直す
   const loadRequests = useCallback(async () => {
@@ -180,13 +235,13 @@ export default function App() {
     }
   }, [refreshAll]);
 
-  useEffect(() => { if (userId) void loadRequests(); }, [userId, loadRequests]);
+  useEffect(() => { if (userId && isAdmin) void loadRequests(); }, [userId, isAdmin, loadRequests]);
   const pending = hasOpenRequests(requests);
   useEffect(() => {
-    if (!userId || !pending) return;
+    if (!userId || !isAdmin || !pending) return;
     const timer = setInterval(() => void loadRequests(), 30_000);
     return () => clearInterval(timer);
-  }, [userId, pending, loadRequests]);
+  }, [userId, isAdmin, pending, loadRequests]);
 
   const onRequest = useCallback(async (source: string, storeId: string, action: AgentRequestAction = "sync_now", params?: { fromMonth?: string; note?: string }) => {
     if (!userId) return;
@@ -205,10 +260,10 @@ export default function App() {
   }, [userId, loadRequests]);
 
   const filteredSrc = filter === "all" ? "すべてのサイト" : (sources.find((s) => s.id === filter)?.name ?? "");
-  const choosing = !!userId && !scope && view !== "stores";
+  const choosing = canView && !scope && view !== "stores" && view !== "users";
   const [baseTitle, subtitle] = choosing ? ["店舗の選択", "表示する店舗を選んでください"] as const : VIEW_TITLES[view];
   const scopeName = !userId ? null : scope === ALL_STORES ? "全店舗" : currentStore?.name ?? null;
-  const title = scopeName && !choosing && view !== "overview" && view !== "stores" && view !== "ai" && view !== "alerts" ? `${scopeName} · ${baseTitle}` : baseTitle;
+  const title = scopeName && !choosing && view !== "overview" && view !== "stores" && view !== "ai" && view !== "alerts" && view !== "users" ? `${scopeName} · ${baseTitle}` : baseTitle;
   const openCount = scopedRequests.filter((r) => r.status === "queued" || r.status === "claimed").length;
   const onView = (v: View) => {
     if (v === "overview") { selectScope(ALL_STORES); return; }
@@ -218,7 +273,7 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen">
-      <Sidebar view={choosing ? null : view} onView={onView} signedIn={!!userId} storeName={scopeName}
+      <Sidebar view={choosing ? null : view} onView={onView} signedIn={!!userId} isAdmin={isAdmin} canUseApp={!userId || canView} storeName={scopeName}
         mobileOpen={menuOpen} onClose={closeMenu} onReselect={userId && scope ? reselect : undefined} />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
@@ -226,12 +281,12 @@ export default function App() {
           subtitle={subtitle ?? filteredSrc}
           lastSync={data?.lastSync ?? null}
           demo={data?.demo ?? false}
-          signedIn={!!userId}
+          signedIn={isAdmin}
           openRequests={openCount}
           onRequests={() => setView("requests")}
           onMenu={() => setMenuOpen(true)}
           menuOpen={menuOpen}
-          switcher={userId && scope ? <StoreSwitcher stores={stores} scope={scope} onChange={selectScope} onReselect={reselect} /> : null}
+          switcher={canView && scope ? <StoreSwitcher stores={stores} scope={scope} onChange={selectScope} onReselect={reselect} /> : null}
         />
 
         {notice ? (
@@ -250,10 +305,18 @@ export default function App() {
           {!userId && deepLink?.kind === "credentials" ? (
             <p className="rounded-md border border-line bg-warn-soft px-4 py-2.5 text-[12px] font-bold text-warn">右上の「ログイン」からログインすると、ログイン情報の更新画面を開きます。</p>
           ) : null}
-          {choosing ? (
-            <StoreSelect stores={stores} sources={sources} loading={!storesLoaded} error={storesError} onSelect={selectScope} onManage={() => setView("stores")} onRetry={refreshStores} />
+          {userId && !canView ? (
+            <section className="rounded-md border border-line bg-card p-8 text-center text-[13px]">
+              <h2 className="font-bold">{accessError ? "利用権限を確認できませんでした" : !access ? "利用権限を確認中…" : access.status === "revoked" ? "閲覧を停止しています" : "管理者の承認待ちです"}</h2>
+              <p className="mt-3 text-subtle">{accessError ?? "登録申請を受け付けています。管理者が承認し、閲覧する店舗を指定すると利用できます。"}</p>
+              <button onClick={() => void refreshAccess()} className="mt-4 rounded border border-line px-4 py-2 font-bold text-brand">承認状況を確認</button>
+            </section>
+          ) : choosing ? (
+            <StoreSelect stores={stores} sources={sources} loading={!storesLoaded} error={storesError} onSelect={selectScope} onManage={isAdmin ? () => setView("stores") : undefined} onRetry={refreshStores} />
+          ) : view === "users" ? (
+            isAdmin && userId ? <UserManager key={userId} userId={userId} onForbidden={lostAdmin} /> : signInFirst
           ) : view === "overview" ? (
-            userId ? <OverviewPage key={`${userId}/${storesKey}`} sources={sources} onSelectStore={selectScope} onManage={() => setView("stores")} /> : signInFirst
+            userId ? <><p className="text-[12px] text-subtle">{isAdmin ? "管理者として閲覧しています。" : "管理者が許可した店舗だけを表示しています。"}</p><OverviewPage key={`${userId}/${storesKey}`} sources={sources} onSelectStore={selectScope} onManage={isAdmin ? () => setView("stores") : undefined} /></> : signInFirst
           ) : view === "ai" ? (
             userId ? (
               <Suspense fallback={<div className="rounded-md border border-line bg-card px-6 py-8 text-center text-[12px] font-semibold text-faint">読み込み中…</div>}>
@@ -297,9 +360,9 @@ export default function App() {
                 ))}
               </nav>
 
-              <IngestPanel filter={filter} signedIn={!!userId} sources={sources} credentials={scopedCredentials} requests={scopedRequests} busyKey={busyKey} stores={stores}
+              {(!userId || isAdmin) && <IngestPanel filter={filter} signedIn={!!userId} sources={sources} credentials={scopedCredentials} requests={scopedRequests} busyKey={busyKey} stores={stores}
                 onFilter={setFilter}
-                onRequest={(source, storeId) => void onRequest(source, storeId)} onRequests={() => setView("requests")} onAccounts={() => setView("accounts")} />
+                onRequest={(source, storeId) => void onRequest(source, storeId)} onRequests={() => setView("requests")} onAccounts={() => setView("accounts")} />}
 
               {loading ? (
                 <div className="rounded-md border border-line bg-card px-6 py-12 text-center text-[12px] font-semibold text-faint">
