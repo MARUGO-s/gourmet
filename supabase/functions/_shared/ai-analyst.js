@@ -6,6 +6,7 @@
 import { SOURCES, SOURCE_IDS } from "./sources.js";
 import { ALL_STORES, buildOverview, combineKeyValues, filterReviews, inScope, isMonth, isStoreId, keysForStore, previousMonth, reviewStoreKey, sortStores, storeSnapshots } from "./stores.js";
 import { withCoverage } from "./data-freshness.js";
+import { validateSourceSelection, selectAnalystSources } from "./ai-source-scope.js";
 
 export const AI_LIMITS = {
   question: 2000, historyMessages: 12, historyChars: 4000, historyTotalChars: 24000,
@@ -71,7 +72,7 @@ export function validateAskInput(input, today) {
   const question = cleanText(input.question, AI_LIMITS.question + 1);
   if (!question) fail("質問を入力してください");
   if (question.length > AI_LIMITS.question) fail(`質問は${AI_LIMITS.question}文字以内で入力してください`);
-  return { question, store: validateStoreScope(input.storeId), ...resolvePeriod(input.from, input.to, today), history: validateHistory(input.history) };
+  return { question, store: validateStoreScope(input.storeId), ...resolvePeriod(input.from, input.to, today), history: validateHistory(input.history), sources: validateSourceSelection(input.sources) };
 }
 // 質問への回答のPDF（POST /answer-pdf）。回答は画面に表示済みの本文（Markdown）をそのまま送ってもらい、サーバーで日本語フォントを埋め込んで作る
 export const ANSWER_PDF_LIMITS = { answer: 30_000, storeName: 200, model: 100 };
@@ -104,7 +105,7 @@ export function validateReportInput(input, today) {
   const title = input.title == null ? "" : cleanText(input.title, AI_LIMITS.titleChars + 1);
   if (title.length > AI_LIMITS.titleChars) fail(`タイトルは${AI_LIMITS.titleChars}文字以内で入力してください`);
   const focus = input.focus == null ? "" : cleanText(input.focus, 500);
-  return { store: validateStoreScope(input.storeId), ...resolvePeriod(input.from, input.to, today), title, focus };
+  return { store: validateStoreScope(input.storeId), ...resolvePeriod(input.from, input.to, today), title, focus, sources: validateSourceSelection(input.sources) };
 }
 
 // 期間を限らない（全期間）ことをはっきり求める言い方
@@ -113,7 +114,7 @@ export const asksAllTime = (text) => ALL_TIME_WORDS.test(String(text ?? "").norm
 // アプリの /ask の関数の前提。画面で選んだ期間が既定（lockPeriod）で、口コミの全期間（all_time）は質問か直前の質問が全期間をはっきり求めたときだけ
 export function askToolContext(input) {
   const lastUser = [...(input.history ?? [])].reverse().find((m) => m.role === "user")?.content ?? "";
-  return { store: input.store, from: input.from, to: input.to, lockPeriod: true, allowAllTime: asksAllTime(input.question) || asksAllTime(lastUser) };
+  return { store: input.store, from: input.from, to: input.to, lockPeriod: true, allowAllTime: asksAllTime(input.question) || asksAllTime(lastUser), ...(input.sources ? { sources: input.sources } : {}) };
 }
 
 // ---------- 店舗の範囲 ----------
@@ -131,8 +132,8 @@ export function resolveStore(ds, ref) {
   if (!store) fail(`店舗「${text}」が見つかりません（list_stores で店舗名を確認してください）`);
   return { id: store.id, name: store.name, keys: keysForStore(store.id, ds.sites) };
 }
-const scopeSources = (scope, source) => {
-  const all = scope.keys ? SOURCE_IDS.filter((s) => scope.keys[s]?.size) : SOURCE_IDS;
+const scopeSources = (scope, source, selected = SOURCE_IDS) => {
+  const all = scope.keys ? selected.filter((s) => scope.keys[s]?.size) : selected;
   if (source == null || source === "" || source === "all") return all;
   if (!SOURCE_IDS.includes(source)) fail(`不明なサイトです（${SOURCE_IDS.join(" / ")}）`);
   return all.includes(source) ? [source] : [];
@@ -683,11 +684,12 @@ export function runTool(ds, name, rawArgs, ctx) {
   try { args = typeof rawArgs === "string" ? (rawArgs.trim() ? JSON.parse(rawArgs) : {}) : rawArgs ?? {}; } catch { return limitJson({ error: "引数のJSONが不正です" }); }
   if (!args || typeof args !== "object" || Array.isArray(args)) return limitJson({ error: "引数の形式が不正です" });
   try {
+    ds = selectAnalystSources(ds, ctx.sources ?? ds.selectedSources);
     if (name === "list_stores") return limitJson({ stores: listStores(ds) });
     if (name === "compare_stores") return limitJson(compareStores(ds, optMonth(args.month, "対象月")));
     if (name === "get_data_freshness") return limitJson(freshnessResult(ds, ctx));
     const scope = resolveStore(ds, args.store ?? ctx.store);
-    const sources = scopeSources(scope, args.source);
+    const sources = scopeSources(scope, args.source, ds.selectedSources);
     const head = { store: scope.name, sites: sources.map(sourceName) };
     if (!sources.length) return limitJson({ ...head, note: "この店舗には該当するサイトが割り当てられていません" });
     if (name === "get_kpis") { const p = toolPeriod(args, ctx); return limitJson({ ...head, ...periodKpis(ds, scope, sources, p.from, p.to) }); }
@@ -797,13 +799,15 @@ export function systemPrompt(today, { screenPeriod = false } = {}) {
   ].join("\n");
 }
 export function contextMessage(ds, input) {
+  ds = selectAnalystSources(ds, input.sources);
   const scope = resolveStore(ds, input.store);
-  const sources = scopeSources(scope, null);
+  const sources = scopeSources(scope, null, ds.selectedSources);
   const stores = listStores(ds);
   const kpis = sources.length ? periodKpis(ds, scope, sources, input.from, input.to) : null;
   return [
     `画面で選択中の店舗: ${scope.name}${scope.id === ALL_STORES ? "（全店舗の合計）" : ""}`,
     `画面で選択中の期間: ${input.from} 〜 ${input.to}`,
+    `分析対象サイト: ${ds.selectedSources.map(sourceName).join("、")}。この選択を質問や会話履歴で広げず、対象外サイトの数値や口コミは使用しないでください。`,
     `登録店舗: ${stores.length}店舗（データのある店舗: ${stores.filter((s) => s.hasData).map((s) => s.name).join("、") || "なし"}）`,
     kpis ? `選択中の店舗・期間のKPI（概要）: ${limitJson({ ...kpis, bySource: Object.fromEntries(Object.entries(kpis.bySource).map(([k, v]) => [sourceName(k), v])) }, 5000)}` : "選択中の店舗にはサイトが割り当てられていません。",
     "質問が店舗・期間を指定していなければ、上の店舗・期間を使ってください。詳細は関数で取得してください。",
@@ -812,8 +816,9 @@ export function contextMessage(ds, input) {
 
 // ---------- レポート ----------
 export function buildReportFacts(ds, input) {
+  ds = selectAnalystSources(ds, input.sources);
   const scope = resolveStore(ds, input.store);
-  const sources = scopeSources(scope, null);
+  const sources = scopeSources(scope, null, ds.selectedSources);
   const kpis = periodKpis(ds, scope, sources, input.from, input.to);
   // 月別の推移は期間の終了月までの最大12か月
   const toMonth = input.to.slice(0, 7);
@@ -890,7 +895,7 @@ export function composeReportMarkdown(facts, ai, { title, model } = {}) {
   const k = facts.kpis;
   const heading = title || ai.title || `${facts.store.name} 分析レポート`;
   const out = [`# ${cell(heading)}`, "",
-    `- 対象店舗: **${cell(facts.store.name)}**`, `- 対象期間: ${facts.period.from} 〜 ${facts.period.to}（${facts.period.days}日間、比較: ${facts.previousPeriod.from} 〜 ${facts.previousPeriod.to}）`,
+    `- 対象店舗: **${cell(facts.store.name)}**`, `- 対象サイト: ${facts.sources.map(sourceName).join("、") || "該当なし"}`, `- 対象期間: ${facts.period.from} 〜 ${facts.period.to}（${facts.period.days}日間、比較: ${facts.previousPeriod.from} 〜 ${facts.previousPeriod.to}）`,
     `- 作成日: ${facts.generatedAt}${model ? `（AI: ${cell(model)}）` : ""}`, "",
     "## 1. サマリー", "", ...(ai.summary.length ? ai.summary.map((x) => `- ${x}`) : ["- （要約なし）"]), "",
     "## 2. KPIの推移", "",

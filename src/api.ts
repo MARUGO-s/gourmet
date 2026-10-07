@@ -235,7 +235,7 @@ const aiFetch = async <T>(path: string, options: RequestInit = {}, timeoutMs = 3
   return json<T>(res);
 };
 export const getAiStatus = () => aiFetch<AiStatus>("/status");
-export const askAi = (input: { question: string; storeId: string; from: string; to: string; history: { role: "user" | "assistant"; content: string }[] }) =>
+export const askAi = (input: { question: string; storeId: string; from: string; to: string; sources?: string[]; history: { role: "user" | "assistant"; content: string }[] }) =>
   aiFetch<AiAskResult>("/ask", { method: "POST", body: JSON.stringify(input) }, 150_000);
 // 質問への回答をPDFにする（サーバーで日本語フォントを埋め込む）。PDFのBlobを返す
 export async function downloadAnswerPdf(input: { question: string; answer: string; storeName?: string; from?: string; to?: string; askedAt?: string; answeredAt?: string; model?: string }) {
@@ -248,7 +248,7 @@ export async function downloadAnswerPdf(input: { question: string; answer: strin
 }
 export const getAiReports = () => aiFetch<{ reports: AiReportSummary[] }>("/reports");
 export const getAiReport = (id: string) => aiFetch<{ report: AiReport }>(`/reports/${encodeURIComponent(id)}`);
-export const createAiReport = (input: { storeId: string; from: string; to: string; title?: string; focus?: string }) =>
+export const createAiReport = (input: { storeId: string; from: string; to: string; sources?: string[]; title?: string; focus?: string }) =>
   aiFetch<{ report: AiReport }>("/reports", { method: "POST", body: JSON.stringify(input) }, 160_000);
 export const deleteAiReport = (id: string) => aiFetch<{ ok: boolean }>(`/reports/${encodeURIComponent(id)}`, { method: "DELETE" });
 // M-talk へ送る（ai-analyst が M-talk の接続情報を持ち、ブラウザは本人のJWTで呼ぶだけ）

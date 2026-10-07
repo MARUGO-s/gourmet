@@ -19,7 +19,9 @@ if (server) {
 }
 const adminId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const viewerId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
-const stores = [{ id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', name: 'テスト店舗A', sites: [], sortOrder: 0 },
+const sources = [['tabelog', '食べログ', '#dc8500'], ['hotpepper', 'ホットペッパーグルメ', '#ef4088'], ['google', 'Google マップ', '#3980ee'], ['toreta', 'トレタ', '#13a6c0'], ['ikyu', '一休.comレストラン', '#8e793e'], ['retty', 'Retty', '#ec4242']].map(([id, name, color]) => ({ id, name, color, hasCredential: ['tabelog', 'ikyu'].includes(id) }));
+const credentials = ['tabelog', 'ikyu'].map(source => ({ id: `fixture-${source}`, source, label: 'テスト店舗A', storeKey: source === 'ikyu' ? '112789' : '13245351', credentialsVersion: 1, canDelete: false }));
+const stores = [{ id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', name: 'テスト店舗A', sites: credentials.map(c => ({ id: c.id, storeId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', source: c.source, siteStoreKey: c.storeKey })), sortOrder: 0 },
   { id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', name: 'テスト店舗B', sites: [], sortOrder: 1 }];
 const browser = await chromium.launch({ headless: true }).catch(e => { server?.kill(); throw e; });
 
@@ -41,7 +43,7 @@ async function fixture(mode, width = 1280, path = '') {
   await context.route('https://ycsqfajidusuibqljjwr.supabase.co/**', async route => {
     const req = route.request();
     const url = new URL(req.url());
-    const path = url.pathname.replace('/functions/v1/review-api', '');
+    const path = url.pathname.replace(/^\/functions\/v1\/(review-api|ai-analyst)/, '');
     calls.push(path);
     if (req.method() === 'OPTIONS') {
       await route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS', 'access-control-allow-headers': req.headers()['access-control-request-headers'] || '*' } });
@@ -53,7 +55,15 @@ async function fixture(mode, width = 1280, path = '') {
     }
     let data;
     if (path === '/me') data = { isAdmin, canView: mode !== 'pending', status: mode === 'pending' ? 'pending' : 'approved', revision: mode };
-    else if (path === '/sources' || path === '/credentials') data = [];
+    else if (path === '/sources') data = sources;
+    else if (path === '/credentials') data = credentials;
+    else if (path === '/status') data = { configured: true, model: 'fixture-model', limits: {} };
+    else if (path === '/ask') { mutations.push({ path, input: req.postDataJSON() }); data = { answer: 'テスト回答です。', calls: [], period: { from: '2026-07-09', to: '2026-10-06' } }; }
+    else if (path === '/reports' && req.method() === 'GET') data = { reports: [] };
+    else if (path === '/reports' && req.method() === 'POST') {
+      const input = req.postDataJSON(); mutations.push({ path, input });
+      data = { report: { id: 'fixture-report', title: '対象サイト確認', storeId: input.storeId, storeName: 'テスト店舗A', from: input.from, to: input.to, model: 'fixture-model', createdAt: new Date().toISOString(), markdown: '# 対象サイト確認\n食べログのテストレポート', content: {} } };
+    } else if (path === '/shares') data = { shares: [] };
     else if (path === '/requests') data = { requests: [] };
     else if (path === '/stores') data = { stores: isAdmin ? stores : stores.slice(0, 1) };
     else if (path === '/users') data = { users, total: users.length, stores, page: 1 };
@@ -74,6 +84,50 @@ async function fixture(mode, width = 1280, path = '') {
 }
 
 try {
+  for (const width of [1280, 375]) {
+    const f = await fixture('admin', width);
+    await f.page.getByRole('heading', { name: '店舗の選択', exact: true }).waitFor();
+    await f.page.getByRole('button').filter({ hasText: 'テスト店舗A' }).click();
+    const registeredTab = f.page.getByRole('button', { name: /食べログ.*登録済み/ });
+    await registeredTab.waitFor({ timeout: 10000 }).catch(async error => { console.error('Source fixture diagnostic:', { calls: f.calls, errors: f.errors, text: await f.page.locator('body').innerText() }); throw error; });
+    assert.equal(await f.page.getByRole('button', { name: /一休.comレストラン.*登録済み/ }).count(), 1);
+    assert.equal(await f.page.getByRole('button', { name: /Retty.*未登録/ }).count(), 1);
+    if (process.env.GOURMET_UI_PROOF_DIR) { await mkdir(process.env.GOURMET_UI_PROOF_DIR, { recursive: true }); await f.page.screenshot({ path: join(process.env.GOURMET_UI_PROOF_DIR, `site-status-${width}.png`) }); }
+    if (width === 375) await f.page.getByRole('button', { name: 'メニュー', exact: true }).click();
+    await f.page.getByRole('button', { name: 'AI分析', exact: true }).click();
+    await f.page.getByText('分析対象：全サイト（取り込み済みデータのみ）', { exact: true }).waitFor();
+    await f.page.getByText(/取得用アカウント：2サイト登録済み/).waitFor();
+    const mode = f.page.getByLabel('分析サイトの選び方');
+    await mode.selectOption('specific');
+    assert.equal(await f.page.getByLabel('食べログを分析対象にする', { exact: true }).isChecked(), true);
+    await f.page.getByLabel('一休.comレストランを分析対象にする', { exact: true }).uncheck();
+    await f.page.getByText('分析対象：食べログ', { exact: true }).waitFor();
+    assert.equal(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'AI source panel mobile overflow');
+    if (process.env.GOURMET_UI_PROOF_DIR) await f.page.screenshot({ path: join(process.env.GOURMET_UI_PROOF_DIR, `analysis-sites-${width}.png`) });
+    const question = f.page.getByPlaceholder(/例: 先月と比べてPV/);
+    await question.fill('選択サイトのPVを教えて');
+    await f.page.getByRole('button', { name: '送信', exact: true }).click();
+    await f.page.getByText('テスト回答です。', { exact: true }).waitFor();
+    assert.deepEqual(f.mutations.at(-1).input.sources, ['tabelog']);
+    await f.page.getByRole('button', { name: 'レポート作成', exact: true }).click();
+    await f.page.getByRole('button', { name: 'レポートを作成', exact: true }).click();
+    await f.page.getByText(/レポートを作成して保存しました/).waitFor();
+    assert.deepEqual(f.mutations.find(m => m.path === '/reports').input.sources, ['tabelog']);
+    await f.page.getByRole('button', { name: '質問する', exact: true }).click();
+    await f.page.getByLabel('食べログを分析対象にする', { exact: true }).uncheck();
+    assert.equal(await f.page.getByRole('button', { name: '送信', exact: true }).isDisabled(), true);
+    await f.page.getByText('分析対象：サイトを1つ以上選択してください', { exact: true }).waitFor();
+    await mode.selectOption('all');
+    assert.equal(await f.page.getByText('テスト回答です。', { exact: true }).count(), 0, 'different source scope must not share chat');
+    await question.fill('全サイトのPVを教えて');
+    await f.page.getByRole('button', { name: '送信', exact: true }).click();
+    await f.page.getByText('テスト回答です。', { exact: true }).waitFor();
+    assert.equal('sources' in f.mutations.at(-1).input, false);
+    await f.page.getByLabel('分析する店舗', { exact: true }).selectOption(stores[1].id);
+    await f.page.getByText(/取得用アカウント：0サイト登録済み/).waitFor();
+    assert.deepEqual(f.errors, []);
+    await f.context.close();
+  }
   for (const width of [1280, 375]) {
     const auth = await fixture('auth', width);
     await auth.page.getByRole('button', { name: 'ログイン', exact: true }).click();
@@ -170,7 +224,7 @@ try {
     assert.deepEqual(f.errors, []);
     await f.context.close();
   }
-  console.log('PASS: desktop/mobile actionable auth errors; admin approval, store selection, stop, promotion/demotion, typed-email deletion, self protection; pending/viewer UI and request restrictions');
+  console.log('PASS: desktop/mobile registration badges, scoped site selection, ask/report payloads, empty selection and isolated chat; actionable auth errors; admin approval, stop, promotion/demotion, deletion; pending/viewer restrictions');
 } finally {
   await browser.close();
   server?.kill();

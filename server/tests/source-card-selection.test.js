@@ -22,9 +22,12 @@ function compile(path, imports = {}) {
   return module.exports;
 }
 const agent = compile("../../src/lib/agent-requests.ts");
+const Badge = compile("../../src/components/SourceRegistrationBadge.tsx").default;
+const { scopedSourceRegistration } = compile("../../src/lib/source-registration.ts", { "../../supabase/functions/_shared/stores.js": stores });
 const IngestPanel = compile("../../src/components/IngestPanel.tsx", {
   "../../supabase/functions/_shared/stores.js": stores,
   "../lib/agent-requests": agent,
+  "./SourceRegistrationBadge": compile("../../src/components/SourceRegistrationBadge.tsx"),
 }).default;
 function nodes(node, ancestors = []) {
   if (!node || typeof node !== "object") return [];
@@ -34,6 +37,24 @@ const sources = [
   ["tabelog", "食べログ"], ["hotpepper", "ホットペッパーグルメ"], ["google", "Google マップ"],
   ["toreta", "トレタ"], ["ikyu", "一休.comレストラン"], ["retty", "Retty"],
 ].map(([id, name]) => ({ id, name, color: "#333", hasCredential: id === "tabelog", lastUpdatedAt: null }));
+test("registration status is scoped to the selected store, including legacy empty keys", () => {
+  const master = [{ id: "a", sites: [{ storeId: "a", source: "tabelog", siteStoreKey: "" }] }, { id: "b", sites: [{ storeId: "b", source: "ikyu", siteStoreKey: "112789" }] }];
+  const credentials = [{ source: "tabelog", storeKey: "" }, { source: "ikyu", storeKey: "112789" }];
+  const selected = id => scopedSourceRegistration(sources, credentials, master, id).filter(s => s.hasCredential).map(s => s.id).join(",");
+  assert.equal(selected("a"), "tabelog");
+  assert.equal(selected("b"), "ikyu");
+  assert.equal(selected("all"), "tabelog,ikyu");
+  assert.equal(selected("missing"), "");
+});
+test("loading and failed registration checks never claim a site is unregistered", () => {
+  for (const state of ["loading", "error"]) {
+    const label = Badge({ registered: false, state }).props.children;
+    assert.doesNotMatch(label, /未登録/);
+    assert.match(label, /確認/);
+  }
+  assert.equal(Badge({ registered: false }).props.children, "未登録");
+  assert.match(JSON.stringify(Badge({ registered: true })), /登録済み/);
+});
 function harness(overrides = {}) {
   const selected = [], requested = [];
   const props = {
