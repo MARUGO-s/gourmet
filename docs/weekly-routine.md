@@ -13,6 +13,7 @@
    - 終了コード 1（当日の取得が終わっていない・日別が欠けている・stub を検出）: その日の食べログ・一休の取得依頼（`agent-queue --claim`）が終わっているか確かめ、終わっていなければ `--weekly-finish --outcome deferred --reason "<理由>"` で終える（30分後に再び予定になる）。
    - 終了コード 3（公開ページ・新着ご予約・アクセス数ランキング・競合・ニューオープンなど取れるはずの項目が欠けている）: その項目を通常の取得手順で取り直してから組み立て直す。取り直せなければ `--allow-gaps` で続け、足りない項目を最後の報告に書く。
    - 一休の競合・エリア順位・新規オープンは取得の仕組みが無いため「未取得」のままでよい（作らない）。
+   - 作成日より後の取得（取得が遅れた日の分）も、作成日より前の日別・確定月の月別だけは自動で使われる（公開ページ・通知・口コミなど取得時点の値は使わない）。補った日は出力の `notes`（ℹ の行）に出るので、最後の報告に書く。
 4. HTML: `node scripts/weekly-deliver.mjs --tabelog-input <out>/tabelog-input.json --ikyu-input <out>/ikyu-input.json --name "<店舗名>" --store-id <storeId> --as-of <asOf> --out-dir <out>/weekly --publish-dir public --no-post`。
    PDF は画面で「PDF」にチェックがある店舗だけ（`includePdf`）。
 5. Pages へ公開: main から `weekly/<asOf>-<店舗>` ブランチを作り、`public/weekly/<storeId>/<asOf>/` だけをコミットして PR → CI 成功後に main へマージ（HTML だけの PR。コード変更を混ぜない）→ `https://marugo-s.github.io/gourmet/weekly/<storeId>/<asOf>/` が 200 を返すまで待つ。main はきれいに保つ（作業後は main に戻す）。
