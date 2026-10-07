@@ -10,6 +10,7 @@
 // データの質問にもすぐ答える（毎日の取り込み＝確定値のキャッシュ）。「最新を調べる／今あるデータで答える」の選択は 2026-10-01 に廃止。
 // データを使った答えには、サイトごとの最後の取得日時（日本時間）と期間をサーバーが付ける（data-freshness.js）。
 import { createClient } from "npm:@supabase/supabase-js@2.116.0";
+import { selectAnalystSources } from "../_shared/ai-source-scope.js";
 import * as PDFLib from "npm:pdf-lib@1.17.1";
 import * as fontkit from "npm:fontkit@2.0.4";
 import { service, json, body, cors } from "../_shared/http.ts";
@@ -80,7 +81,7 @@ Deno.serve(async req => {
       catch (error) { return json(req, { error:(error as Error).message }, 400); }
       if (!config.apiKey) return json(req, { error:"AI分析は未設定です（管理者がサーバーに OPENAI_API_KEY を設定すると利用できます）" }, 503);
       if (await overLimit("ask")) return json(req, { error:`質問は1時間に${AI_LIMITS.askPerHour}回までです。しばらくしてからお試しください` }, 429);
-      const ds = await loadAnalystDataset(client, { today });
+      const ds = selectAnalystSources(await loadAnalystDataset(client, { today }), input.sources);
       if (input.store !== "all" && !ds.stores.some((s: any) => s.id === input.store)) return json(req, { error:"店舗が見つかりません。店舗を選び直してください" }, 404);
       const todayYear = Number(today.slice(0, 4));
       const coverage = dataCoverage(ds, input.store);
@@ -132,7 +133,7 @@ Deno.serve(async req => {
       catch (error) { return json(req, { error:(error as Error).message }, 400); }
       if (!config.apiKey) return json(req, { error:"AI分析は未設定です（管理者がサーバーに OPENAI_API_KEY を設定すると利用できます）" }, 503);
       if (await overLimit("report")) return json(req, { error:`レポートは1時間に${AI_LIMITS.reportsPerHour}件まで作成できます。しばらくしてからお試しください` }, 429);
-      const ds = await loadAnalystDataset(client, { today });
+      const ds = selectAnalystSources(await loadAnalystDataset(client, { today }), input.sources);
       if (input.store !== "all" && !ds.stores.some((s: any) => s.id === input.store)) return json(req, { error:"店舗が見つかりません。店舗を選び直してください" }, 404);
       const facts = buildReportFacts(ds, input);
       const promptFacts = reportPromptFacts(facts);

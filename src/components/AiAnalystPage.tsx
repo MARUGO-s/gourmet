@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { askAi, createAiReport, deleteAiReport, downloadAnswerPdf, getAiReport, getAiReports, getAiStatus } from "../api";
-import type { AiChatMessage, AiReport, AiReportSummary, AiStatus, Store } from "../types";
+import type { AiChatMessage, AiReport, AiReportSummary, AiStatus, Store, SourceMeta, CredentialRow } from "../types";
+import AnalysisSources from "./AnalysisSources";
+import type { RegistrationState } from "./SourceRegistrationBadge";
+import { scopedSourceRegistration } from "../lib/source-registration";
 import { markdownToHtml, reportHtmlDocument } from "../../supabase/functions/_shared/markdown.js";
 import { formatTime } from "../lib/agent-requests";
 import MtalkShareDialog, { ShareHistory, ShareToast, useReportShares } from "./MtalkShare";
 
-type Props = { userId: string; stores: Store[]; scope: string };
+type Props = { userId: string; stores: Store[]; scope: string; sources: SourceMeta[]; credentials: CredentialRow[]; credentialState: RegistrationState };
 type Preset = "7" | "30" | "90" | "thisMonth" | "lastMonth" | "12m" | "custom";
 
 const PRESETS: { id: Preset; label: string }[] = [
@@ -59,14 +62,22 @@ function Markdown({ text, className = "" }: { text: string; className?: string }
 }
 
 // AI分析: 店舗・期間を選んで質問（チャット）と、分析レポートの作成・保存・印刷
-export default function AiAnalystPage({ userId, stores, scope }: Props) {
+export default function AiAnalystPage({ userId, stores, scope, sources, credentials, credentialState }: Props) {
   const [status, setStatus] = useState<AiStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [tab, setTab] = useState<"chat" | "report">("chat");
   const [storeId, setStoreId] = useState(scope === "all" || stores.some((s) => s.id === scope) ? scope : "all");
   const [preset, setPreset] = useState<Preset>("90");
   const [range, setRange] = useState(() => presetRange("90"));
+  const [selectedSources, setSelectedSources] = useState<string[] | null>(null);
+  const sourceRows = useMemo(() => scopedSourceRegistration(sources, credentials, stores, storeId), [sources, credentials, stores, storeId]);
+  const sourceIds = selectedSources === null ? undefined : sources.filter(s => selectedSources.includes(s.id)).map(s => s.id);
+  const sourceKey = sourceIds?.join(",") ?? "all";
+  const sourceLabel = sourceIds ? sources.filter(s => sourceIds.includes(s.id)).map(s => s.name).join("・") : "全サイト";
+  const unavailable = selectedSources?.length === 0 || (status ? !status.configured : false);
   const storeName = storeId === "all" ? "全店舗" : stores.find((s) => s.id === storeId)?.name ?? "店舗";
+
+  useEffect(() => { setStoreId(scope === "all" || stores.some(s => s.id === scope) ? scope : "all"); }, [scope]);
 
   useEffect(() => {
     let alive = true;
@@ -78,7 +89,7 @@ export default function AiAnalystPage({ userId, stores, scope }: Props) {
   const selectors = (
     <div className="flex flex-wrap items-center gap-2">
       <label className="flex items-center gap-1.5 text-[11px] font-bold text-subtle">店舗
-        <select value={storeId} onChange={(e) => setStoreId(e.target.value)} className={`${selectClass} max-w-[220px]`}>
+        <select aria-label="分析する店舗" value={storeId} onChange={(e) => setStoreId(e.target.value)} className={`${selectClass} max-w-[220px]`}>
           <option value="all">全店舗</option>
           {stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
@@ -103,6 +114,7 @@ export default function AiAnalystPage({ userId, stores, scope }: Props) {
         </div>
         <div className="ml-auto">{selectors}</div>
       </div>
+      <AnalysisSources sources={sourceRows} state={credentialState} selected={selectedSources} onChange={setSelectedSources} />
       {statusError ? <p className="no-print rounded-md bg-danger-soft px-4 py-2.5 text-[11px] font-bold text-danger">⚠ {statusError}</p> : null}
       {status && !status.configured ? (
         <p className="no-print rounded-md bg-warn-soft px-4 py-2.5 text-[11px] font-bold text-warn">
@@ -110,39 +122,39 @@ export default function AiAnalystPage({ userId, stores, scope }: Props) {
         </p>
       ) : null}
       {tab === "chat"
-        ? <Chat userId={userId} storeId={storeId} storeName={storeName} range={range} disabled={status ? !status.configured : false} model={status?.model} />
-        : <Reports storeId={storeId} storeName={storeName} range={range} disabled={status ? !status.configured : false} />}
+        ? <Chat key={`${userId}.${storeId}.${sourceKey}`} storageScope={`${userId}.${storeId}.${sourceKey}`} storeId={storeId} storeName={storeName} range={range} sources={sourceIds} sourceLabel={sourceLabel} disabled={unavailable} model={status?.model} />
+        : <Reports storeId={storeId} storeName={storeName} range={range} sources={sourceIds} sourceLabel={sourceLabel} disabled={unavailable} />}
     </section>
   );
 }
 
-function Chat({ userId, storeId, storeName, range, disabled, model }: { userId: string; storeId: string; storeName: string; range: { from: string; to: string }; disabled: boolean; model?: string }) {
-  const [messages, setMessages] = useState<AiChatMessage[]>(() => loadChat(userId));
+function Chat({ storageScope, storeId, storeName, range, sources, sourceLabel, disabled, model }: { storageScope: string; storeId: string; storeName: string; range: { from: string; to: string }; sources?: string[]; sourceLabel: string; disabled: boolean; model?: string }) {
+  const [messages, setMessages] = useState<AiChatMessage[]>(() => loadChat(storageScope));
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   // 回答のPDF（作成中の回答の番号と、失敗の文）
   const [pdfBusy, setPdfBusy] = useState<number | null>(null);
   const [pdfError, setPdfError] = useState<{ index: number; text: string } | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { saveChat(userId, messages); endRef.current?.scrollIntoView({ block: "nearest" }); }, [userId, messages]);
+  useEffect(() => { saveChat(storageScope, messages); endRef.current?.scrollIntoView({ block: "nearest" }); }, [storageScope, messages]);
 
   const send = useCallback(async (question: string) => {
     const q = question.trim();
-    if (!q || busy) return;
+    if (!q || busy || disabled) return;
     const at = new Date().toISOString();
     const history = messages.filter((m) => !m.error).slice(-12).map((m) => ({ role: m.role, content: m.content }));
     setMessages((rows) => [...rows, { role: "user", content: q, at, storeName, period: range }]);
     setText("");
     setBusy(true);
     try {
-      const r = await askAi({ question: q, storeId, from: range.from, to: range.to, history });
+      const r = await askAi({ question: q, storeId, from: range.from, to: range.to, history, sources });
       setMessages((rows) => [...rows, { role: "assistant", content: r.answer, at: new Date().toISOString(), calls: r.calls, period: r.period, storeName }]);
     } catch (e) {
       setMessages((rows) => [...rows, { role: "assistant", content: e instanceof Error ? e.message : "回答を取得できませんでした", at: new Date().toISOString(), error: true }]);
     } finally {
       setBusy(false);
     }
-  }, [busy, messages, range, storeId, storeName]);
+  }, [busy, disabled, messages, range, storeId, storeName, sources]);
 
   // 回答 i をPDFでダウンロードする（質問は直前の自分の発言）
   const savePdf = async (i: number) => {
@@ -166,17 +178,17 @@ function Chat({ userId, storeId, storeName, range, disabled, model }: { userId: 
     <div className="rounded-md border border-line bg-card">
       <header className="no-print flex flex-wrap items-center gap-2 border-b border-line px-5 py-3">
         <h2 className="text-[13px] font-bold tracking-tight">AIに質問</h2>
-        <span className="text-[11px] text-subtle">{storeName} · {range.from} 〜 {range.to}</span>
+        <span className="text-[11px] text-subtle">{storeName} · {sourceLabel || "サイト未選択"} · {range.from} 〜 {range.to}</span>
         {model ? <span className="rounded bg-surface px-1.5 py-0.5 text-[10px] font-bold text-faint">{model}</span> : null}
         {messages.length ? <button onClick={() => setMessages([])} className={`${btn} ml-auto`}>会話を消去</button> : null}
       </header>
       <div className="flex max-h-[62vh] min-h-[240px] flex-col gap-3 overflow-y-auto px-5 py-4">
         {!messages.length ? (
           <div className="no-print">
-            <p className="text-[12px] text-subtle">店舗・期間を選んで、PV・予約・口コミについて自由に質問できます。AIが必要なデータ（店舗・サイト・期間別の集計）を取得して回答します。会話はこのタブを閉じるまで保存されます。</p>
+            <p className="text-[12px] text-subtle">上で選んだ店舗・サイト・期間の取り込み済みデータを使って回答します。対象サイトを追加するときは上の選択を変更してください。会話は店舗・分析サイトごとに分かれ、このタブを閉じるまで保存されます。</p>
             <p className="mt-3 text-[11px] font-bold text-faint">質問の例</p>
             <div className="mt-1.5 flex flex-wrap gap-1.5">
-              {EXAMPLES.map((q) => <button key={q} disabled={disabled || busy} onClick={() => void send(q)} className="rounded-full border border-line bg-surface px-3 py-1 text-[11px] font-semibold text-subtle transition hover:border-brand hover:text-brand disabled:opacity-50">{q}</button>)}
+              {EXAMPLES.filter(q => !q.startsWith("食べログと一休") || !sources || ["tabelog", "ikyu"].every(id => sources.includes(id))).map((q) => <button key={q} disabled={disabled || busy} onClick={() => void send(q)} className="rounded-full border border-line bg-surface px-3 py-1 text-[11px] font-semibold text-subtle transition hover:border-brand hover:text-brand disabled:opacity-50">{q}</button>)}
             </div>
           </div>
         ) : messages.map((m, i) => (
@@ -204,7 +216,7 @@ function Chat({ userId, storeId, storeName, range, disabled, model }: { userId: 
       <form className="no-print flex items-end gap-2 border-t border-line px-5 py-3" onSubmit={(e) => { e.preventDefault(); void send(text); }}>
         <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} maxLength={2000} disabled={disabled}
           onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) { e.preventDefault(); void send(text); } }}
-          placeholder={disabled ? "AI分析は未設定です" : "例: 先月と比べてPVが落ちた理由は？（⌘/Ctrl+Enterで送信）"}
+          placeholder={disabled ? "分析サイトの選択とAIの設定を確認してください" : "例: 先月と比べてPVが落ちた理由は？（⌘/Ctrl+Enterで送信）"}
           className="min-h-[44px] flex-1 resize-y rounded-md border border-line px-3 py-2 text-[12px] focus:border-brand focus:outline-none" />
         <button type="submit" disabled={disabled || busy || !text.trim()} className={primary}>{busy ? "回答中…" : "送信"}</button>
       </form>
@@ -212,7 +224,7 @@ function Chat({ userId, storeId, storeName, range, disabled, model }: { userId: 
   );
 }
 
-function Reports({ storeId, storeName, range, disabled }: { storeId: string; storeName: string; range: { from: string; to: string }; disabled: boolean }) {
+function Reports({ storeId, storeName, range, sources, sourceLabel, disabled }: { storeId: string; storeName: string; range: { from: string; to: string }; sources?: string[]; sourceLabel: string; disabled: boolean }) {
   const [list, setList] = useState<AiReportSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [current, setCurrent] = useState<AiReport | null>(null);
@@ -233,9 +245,10 @@ function Reports({ storeId, storeName, range, disabled }: { storeId: string; sto
   useEffect(() => { void load(); }, [load]);
 
   const create = async () => {
+    if (disabled || busy) return;
     setBusy("create"); setNotice(null);
     try {
-      const { report } = await createAiReport({ storeId, from: range.from, to: range.to, ...(title.trim() ? { title: title.trim() } : {}), ...(focus.trim() ? { focus: focus.trim() } : {}) });
+      const { report } = await createAiReport({ storeId, from: range.from, to: range.to, sources, ...(title.trim() ? { title: title.trim() } : {}), ...(focus.trim() ? { focus: focus.trim() } : {}) });
       setCurrent(report); setTitle(""); setFocus("");
       setNotice({ text: "レポートを作成して保存しました", error: false });
       void load();
@@ -262,7 +275,7 @@ function Reports({ storeId, storeName, range, disabled }: { storeId: string; sto
         <section className="rounded-md border border-line bg-card p-5">
           <h2 className="text-[13px] font-bold tracking-tight">レポート作成</h2>
           <p className="mt-1 text-[11px] leading-relaxed text-subtle">
-            <b>{storeName}</b> の <b>{range.from} 〜 {range.to}</b> について、サマリー・KPIの推移・サイト別の比較・口コミの傾向・未返信の口コミ・改善提案をまとめます。数値の表は集計データから作成し、文章をAIが書きます（1〜2分かかることがあります）。
+            <b>{storeName}</b> · <b>{sourceLabel || "サイト未選択"}</b> の <b>{range.from} 〜 {range.to}</b> について、サマリー・KPIの推移・サイト別の比較・口コミの傾向・未返信の口コミ・改善提案をまとめます。数値の表は集計データから作成し、文章をAIが書きます（1〜2分かかることがあります）。
           </p>
           <label className="mt-3 block text-[11px] font-bold text-subtle">タイトル（任意）
             <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={100} placeholder={`${storeName} 分析レポート`} className="mt-1 w-full rounded-md border border-line px-2.5 py-1.5 text-[12px] font-normal" />

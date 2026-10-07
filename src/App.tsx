@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { ApiError, createRequest, getCredentials, getDashboard, getRequests, getSources, getStores, getMyRole } from "./api";
 import type { AgentRequest, AgentRequestAction, CredentialRow, DashboardData, SourceMeta, Store, MyAccess } from "./types";
 import UserManager from "./components/UserManager";
+import SourceRegistrationBadge, { type RegistrationState } from "./components/SourceRegistrationBadge";
 import { ALL_STORES, filterByStore, keysForStore } from "../supabase/functions/_shared/stores.js";
 import { loadSelection, saveSelection } from "./lib/store-selection";
 import StoreSelect from "./components/StoreSelect";
@@ -81,6 +82,7 @@ export default function App() {
   }, [userId]);
   const lostAdmin = useCallback(() => { setAccess(null); void refreshAccess(); }, [refreshAccess]);
   const [credentials, setCredentials] = useState<CredentialRow[]>([]);
+  const [credentialState, setCredentialState] = useState<RegistrationState>("loading");
   const [requests, setRequests] = useState<AgentRequest[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -190,13 +192,18 @@ export default function App() {
   const scopeKeys = useMemo(() => (scope && scope !== ALL_STORES ? keysForStore(scope, stores.flatMap((s) => s.sites)) : null), [scope, stores]);
   const defaultStoreId = currentStore?.id ?? "";
   const scopedCredentials = useMemo(() => filterByStore(credentials, scopeKeys), [credentials, scopeKeys]);
+  const scopedSources = useMemo(() => sources.map(s => ({ ...s, hasCredential: scopedCredentials.some(c => c.source === s.id) })), [sources, scopedCredentials]);
   const scopedRequests = useMemo(() => filterByStore(requests, scopeKeys, (r) => r.storeId), [requests, scopeKeys]);
 
   useEffect(() => {
     let alive = true;
     if (userId && !canView) return;
     getSources().then((rows) => { if (alive) setSources(rows); }).catch(() => { if (alive) setSources([]); });
-    if (isAdmin) getCredentials().then((rows) => { if (alive) setCredentials(rows); }).catch(() => { if (alive) setCredentials([]); });
+    if (isAdmin) {
+      setCredentialState("loading");
+      getCredentials().then((rows) => { if (alive) { setCredentials(rows); setCredentialState("ready"); } })
+        .catch(() => { if (alive) { setCredentials([]); setCredentialState("error"); } });
+    }
     return () => { alive = false; };
   }, [refreshKey, userId, canView, isAdmin]);
 
@@ -320,7 +327,7 @@ export default function App() {
           ) : view === "ai" ? (
             userId ? (
               <Suspense fallback={<div className="rounded-md border border-line bg-card px-6 py-8 text-center text-[12px] font-semibold text-faint">読み込み中…</div>}>
-                <AiAnalystPage key={userId} userId={userId} stores={stores} scope={scope ?? ALL_STORES} />
+                <AiAnalystPage key={userId} userId={userId} stores={stores} scope={scope ?? ALL_STORES} sources={sources} credentials={credentials} credentialState={credentialState} />
               </Suspense>
             ) : signInFirst
           ) : view === "stores" ? (
@@ -339,12 +346,12 @@ export default function App() {
                 >
                   すべて
                 </button>
-                {sources.map((s) => (
+                {scopedSources.map((s) => (
                   <button
                     key={s.id}
                     onClick={() => setFilter(s.id)}
                     aria-pressed={filter === s.id}
-                    title={s.hasCredential ? "" : "アカウント未登録"}
+                    title={isAdmin ? "表示中の店舗の取得用アカウント登録状態" : "サイト別にデータを表示"}
                     className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[12px] font-bold transition ${
                       filter === s.id
                         ? "border-brand bg-brand-soft text-brand"
@@ -353,14 +360,12 @@ export default function App() {
                   >
                     <span className="h-2 w-2 rounded-full" style={{ background: s.color }} />
                     {s.name}
-                    {!s.hasCredential ? (
-                      <span className="text-[9px] font-bold text-faint">未登録</span>
-                    ) : null}
+                    {isAdmin ? <SourceRegistrationBadge registered={s.hasCredential} state={credentialState} /> : null}
                   </button>
                 ))}
               </nav>
 
-              {(!userId || isAdmin) && <IngestPanel filter={filter} signedIn={!!userId} sources={sources} credentials={scopedCredentials} requests={scopedRequests} busyKey={busyKey} stores={stores}
+              {(!userId || isAdmin) && <IngestPanel filter={filter} signedIn={!!userId} sources={scopedSources} credentialState={credentialState} credentials={scopedCredentials} requests={scopedRequests} busyKey={busyKey} stores={stores}
                 onFilter={setFilter}
                 onRequest={(source, storeId) => void onRequest(source, storeId)} onRequests={() => setView("requests")} onAccounts={() => setView("accounts")} />}
 

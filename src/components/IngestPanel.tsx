@@ -1,11 +1,13 @@
 import type { AgentRequest, CredentialRow, SourceMeta, Store } from "../types";
 import { storeLabelFor } from "../../supabase/functions/_shared/stores.js";
 import { AGENT_POLL_MINUTES, INGEST_NOTE, formatTime, openRequestFor, requestLabel, statusTone } from "../lib/agent-requests";
+import SourceRegistrationBadge, { type RegistrationState } from "./SourceRegistrationBadge";
 
 type Props = {
   filter: string;
   signedIn: boolean;
   sources: SourceMeta[];
+  credentialState?: RegistrationState;
   credentials: CredentialRow[];
   requests: AgentRequest[];
   busyKey: string | null;
@@ -18,10 +20,11 @@ type Props = {
 };
 
 // ダッシュボード上部: 取り込み元（Grok Bot）と最終更新、店舗ごとの「今すぐ取得を依頼」
-export default function IngestPanel({ filter, signedIn, sources, credentials, requests, busyKey, onFilter, onRequest, onRequests, onAccounts, stores }: Props) {
+export default function IngestPanel({ filter, signedIn, sources, credentialState = "ready", credentials, requests, busyKey, onFilter, onRequest, onRequests, onAccounts, stores }: Props) {
   const allSites = stores.flatMap((s) => s.sites);
   const storeName = (c: CredentialRow) => `${storeLabelFor(stores, allSites, c.source, c.storeKey)}${c.label ? `（${c.label}）` : ""}`;
-  const shown = filter === "all" ? sources : sources.filter((s) => s.id === filter);
+  const shown = (filter === "all" ? [...sources] : sources.filter((s) => s.id === filter))
+    .sort((a, b) => Number(credentials.some(c => c.source === b.id)) - Number(credentials.some(c => c.source === a.id)));
   return (
     <section className="rounded-md border border-line bg-card p-5" aria-label="データの取り込み">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -48,7 +51,7 @@ export default function IngestPanel({ filter, signedIn, sources, credentials, re
         {shown.map((s) => {
           const stores = credentials.filter((c) => c.source === s.id);
           return (
-            <div key={s.id} className={`relative rounded border px-3 py-2.5 transition hover:border-brand ${filter === s.id ? "border-brand bg-brand-soft" : "border-line"}`}>
+            <div key={s.id} className={`relative rounded border px-3 py-2.5 transition hover:border-brand ${filter === s.id ? "border-brand bg-brand-soft" : stores.length ? "border-ok/30" : "border-line"}`}>
               <button
                 type="button"
                 aria-label={`${s.name}のダッシュボードを表示`}
@@ -61,7 +64,7 @@ export default function IngestPanel({ filter, signedIn, sources, credentials, re
               <div className="flex items-center gap-2">
                 <span className="h-2 w-2 rounded-full" style={{ background: s.color }} />
                 <span className="text-[12px] font-bold">{s.name}</span>
-                <span className="ml-auto text-[10px] font-semibold text-faint">{INGEST_NOTE}</span>
+                {signedIn ? <span className="ml-auto"><SourceRegistrationBadge registered={stores.length > 0} state={credentialState} /></span> : null}
               </div>
               <p className="mt-1 text-[11px] text-subtle">最終更新：{s.lastUpdatedAt ? formatTime(s.lastUpdatedAt) : signedIn ? "まだ取り込まれていません" : "—"}</p>
               {signedIn ? (
@@ -87,7 +90,7 @@ export default function IngestPanel({ filter, signedIn, sources, credentials, re
                     })}
                   </ul>
                 ) : (
-                  <p className="mt-2 text-[11px] text-faint">店舗のアカウントが未登録です（「取得依頼」から店舗を選んで依頼することもできます）</p>
+                  <p className="mt-2 text-[11px] text-faint">{credentialState === "ready" ? "取得用アカウントは未登録です" : credentialState === "loading" ? "登録状態を確認中です" : "登録状態を確認できませんでした。画面を再読み込みしてください"}</p>
                 )
               ) : null}
               </div>
