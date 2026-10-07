@@ -139,6 +139,7 @@ export type CredentialRow = {
   storeKey: string;
   credentialsVersion: number;
   updatedAt: string;
+  canDelete: boolean;
 };
 
 // アプリ → Grok Bot の取得依頼（agent_requests）

@@ -21,6 +21,7 @@ import { mtalkConfig, mtalkRequest } from "../_shared/mtalk-share.js";
 import { queueRefetchAfterSave } from "../_shared/mtalk-followups.js";
 import { isUuid } from "../_shared/login-help.js";
 import { userManagement, viewingAccess } from "../_shared/user-management.js";
+import { CREDENTIAL_METADATA_COLUMNS, publicCredentialMetadata } from "../_shared/credential-metadata.js";
 
 // M-talk の店舗Bot（と参加しているグループのルーム）。読めなければ bots=null と理由（画面は保存済みの設定だけ出す）
 async function loadStoreBots(): Promise<{ bots: any[] | null; botsError: string | null }> {
@@ -33,7 +34,7 @@ async function loadStoreBots(): Promise<{ bots: any[] | null; botsError: string 
 
 const demo = buildSeed();
 // ログインID・暗号文はブラウザへ返さない（登録済み・更新日時のみ）
-const credentialColumns = "id,source,label,store_key,credentials_version,updated_at";
+const credentialColumns = CREDENTIAL_METADATA_COLUMNS;
 const ikyuDemo = buildIkyuDemo();
 // 一休の前年比には前年同月の日別値が必要なため、前年同月1日以降を読む
 const ikyuFromDate = () => { const d = new Date(Date.now() + 9 * 3600_000); return `${d.getUTCFullYear() - 1}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`; };
@@ -149,7 +150,7 @@ Deno.serve(async req => {
     if (!user) return json(req,{error:"ログインが必要です"},401);
     if (path === "/credentials" && req.method === "GET") {
       const rows=await must(client.from("credentials").select(credentialColumns).order("updated_at",{ascending:false}));
-      return json(req,rows.map((r:any)=>({id:r.id,source:r.source,label:r.label,storeKey:r.store_key,credentialsVersion:r.credentials_version,updatedAt:r.updated_at})));
+      return json(req,rows.map((r:any)=>publicCredentialMetadata(r,user.id)));
     }
     if (path === "/credentials" && req.method === "POST") {
       const input=await body(req);

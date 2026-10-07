@@ -161,12 +161,12 @@ export default function CredentialsPanel({ sources, onChanged, stores, scopeKeys
                       })}
                     </td>
                     <td className="px-5 py-2.5 text-right">
-                      <button
+                      {r.canDelete ? <button
                         onClick={() => onDelete(r.id)}
                         className="rounded px-2 py-1 text-[10px] font-bold text-danger transition hover:bg-danger-soft"
                       >
                         削除
-                      </button>
+                      </button> : <span className="text-[10px] text-faint">他の管理者が登録（閲覧のみ）</span>}
                     </td>
                   </tr>
                 );
