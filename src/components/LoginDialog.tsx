@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase, authRedirect, googleAuthEnabled } from "../lib/supabase";
 import { googleIdentityEmails, googleLinkErrorMessage, googleLinkOptions, googleLoginOptions, readGoogleCallbackError } from "../lib/google-auth";
+import { authErrorMessage } from "../lib/auth-errors";
 
 export default function LoginDialog() {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -11,6 +12,7 @@ export default function LoginDialog() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
+  const [messageIsError, setMessageIsError] = useState(false);
   const [busy, setBusy] = useState(false);
   const [signedInEmail, setSignedInEmail] = useState<string | null>(null);
   useEffect(() => {
@@ -21,7 +23,7 @@ export default function LoginDialog() {
       if (!callbackError) return;
       // ログイン中ならGoogleの連携から戻ってきた失敗（すでに別のアカウントで使われている など）
       if (data.session) { setLinkMessage(callbackError.message); void openLink(); }
-      else { setMessage(callbackError.message); if (!dialog.current?.open) dialog.current?.showModal(); }
+      else { setMessageIsError(true); setMessage(callbackError.message); if (!dialog.current?.open) dialog.current?.showModal(); }
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSignedInEmail(session?.user.email ?? null);
@@ -32,12 +34,13 @@ export default function LoginDialog() {
   const title = { login: "ログイン", signup: "新規登録", reset: "パスワード再設定", password: "新しいパスワード" }[mode];
   const googleLogin = async () => {
     if (busy || !googleAuthEnabled) return;
-    setBusy(true); setMessage("");
+    setBusy(true); setMessage(""); setMessageIsError(false);
     try {
       const { data, error } = await supabase.auth.signInWithOAuth(googleLoginOptions(authRedirect()));
       if (error || !data.url) throw new Error("oauth_start_failed");
       window.location.assign(data.url);
     } catch {
+      setMessageIsError(true);
       setMessage("Googleログインを開始できませんでした。時間をおいてもう一度お試しください。");
       setBusy(false);
     }
@@ -63,7 +66,7 @@ export default function LoginDialog() {
     }
   };
   const submit = async (event: React.FormEvent) => {
-    event.preventDefault(); setBusy(true); setMessage("");
+    event.preventDefault(); setBusy(true); setMessage(""); setMessageIsError(false);
     try {
       if (mode === "login") {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -85,11 +88,8 @@ export default function LoginDialog() {
         dialog.current?.close(); setPassword("");
       }
     } catch (error) {
-      const code = (error as { code?: string }).code;
-      setMessage(code === "invalid_credentials" ? "メールアドレスまたはパスワードを確認してください。"
-        : code === "email_not_confirmed" ? "確認メールのリンクから登録を完了してください。"
-        : code === "over_email_send_rate_limit" ? "メール送信が混み合っています。しばらく待ってからお試しください。"
-        : "認証できませんでした。入力内容・メールの受信設定をご確認ください。解決しない場合は管理者へお問い合わせください。");
+      setMessageIsError(true);
+      setMessage(authErrorMessage(error));
     } finally { setBusy(false); }
   };
   return <>
@@ -104,8 +104,11 @@ export default function LoginDialog() {
           <p className="text-center text-xs text-subtle">またはメールアドレスで続ける</p>
         </>}
         {mode !== "password" && <label className="text-sm">メールアドレス<input type="email" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} className="mt-1 w-full rounded border border-line bg-surface p-2" /></label>}
-        {mode !== "reset" && <label className="text-sm">パスワード<input type="password" minLength={mode === "login" ? 1 : 8} maxLength={128} autoComplete={mode === "login" ? "current-password" : "new-password"} required value={password} onChange={e => setPassword(e.target.value)} className="mt-1 w-full rounded border border-line bg-surface p-2" /><span className="text-xs text-faint">新規登録・再設定は8文字以上</span></label>}
-        {message && <p role="status" className="text-sm leading-relaxed">{message}</p>}
+        {mode !== "reset" && <label className="text-sm">パスワード<input type="password" aria-label="パスワード" aria-describedby="auth-password-help" minLength={mode === "login" ? 1 : 8} maxLength={128} autoComplete={mode === "login" ? "current-password" : "new-password"} required value={password} onChange={e => setPassword(e.target.value)} className="mt-1 w-full rounded border border-line bg-surface p-2" /><span id="auth-password-help" className="mt-1 block text-xs text-subtle">{mode === "login" ? "登録したパスワードを入力してください。" : "8文字以上。推測されやすい文字列や、流出したパスワードは使えません。長くランダムなものを設定してください。"}</span></label>}
+        {message && <div role={messageIsError ? "alert" : "status"} className={messageIsError ? "rounded border border-red-200 bg-red-50 p-3 text-sm leading-relaxed text-red-800" : "rounded border border-line bg-surface p-3 text-sm leading-relaxed"}>
+          {messageIsError && <p className="mb-1 font-bold">{mode === "signup" ? "登録できませんでした" : mode === "login" ? "ログインできませんでした" : "手続きを完了できませんでした"}</p>}
+          <p>{message}</p>
+        </div>}
         <button disabled={busy} className="rounded bg-brand p-2 font-bold text-white disabled:opacity-50">{busy ? "処理中…" : title}</button>
         <div className="flex flex-wrap gap-4 text-xs text-brand">{(["login", "signup", "reset"] as const).filter(m => m !== mode).map(m => <button key={m} type="button" onClick={() => { setMode(m); setMessage(""); }}>{ { login: "ログインに戻る", signup: "新規登録", reset: "パスワードを忘れた方" }[m]}</button>)}</div>
       </form>
