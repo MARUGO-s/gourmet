@@ -42,14 +42,14 @@ export function runWeeklyAssemble(argv, { log = console.error, now = new Date() 
     const out = { ...r.input, assembled: assembledStamp({ site: "tabelog", asOf, result: r, allowGaps, now }) };
     files.tabelog = path.join(args["out-dir"], "tabelog-input.json");
     fs.writeFileSync(files.tabelog, `${JSON.stringify(out, null, 2)}\n`);
-    report.sites.tabelog = { file: files.tabelog, problems: r.problems, gaps: r.gaps, knownGaps: r.knownGaps, sources: out.assembled.sources, rejected: out.assembled.rejected };
+    report.sites.tabelog = { file: files.tabelog, problems: r.problems, gaps: r.gaps, notes: r.notes ?? [], knownGaps: r.knownGaps, sources: out.assembled.sources, rejected: out.assembled.rejected };
   }
   if (ikyuStore) {
     const r = assembleIkyuSources({ storeKey: ikyuStore, storeName: name, asOf, payloadFiles: [...found.payloads, ...list(args["ikyu-payload"])] });
     const out = { ...(r.input ?? { storeKey: ikyuStore, storeName: name, asOf }), assembled: assembledStamp({ site: "ikyu", asOf, result: r, allowGaps, now }) };
     files.ikyu = path.join(args["out-dir"], "ikyu-input.json");
     fs.writeFileSync(files.ikyu, `${JSON.stringify(out, null, 2)}\n`);
-    report.sites.ikyu = { file: files.ikyu, problems: r.problems, gaps: r.gaps, knownGaps: r.knownGaps, sources: out.assembled.sources, rejected: out.assembled.rejected };
+    report.sites.ikyu = { file: files.ikyu, problems: r.problems, gaps: r.gaps, notes: r.notes ?? [], knownGaps: r.knownGaps, sources: out.assembled.sources, rejected: out.assembled.rejected };
   }
   const sites = Object.values(report.sites);
   const problems = sites.flatMap((s) => s.problems), gaps = sites.flatMap((s) => s.gaps);
@@ -67,13 +67,14 @@ export function runWeeklyAssemble(argv, { log = console.error, now = new Date() 
   for (const p of problems) log(`  ✗ ${p}`);
   for (const g of gaps) log(`  △ ${g}${allowGaps ? "（--allow-gaps: 「未取得」で続ける）" : ""}`);
   for (const k of sites.flatMap((s) => s.knownGaps)) log(`  ・ ${k}（未対応のため「未取得」）`);
+  for (const n of sites.flatMap((s) => s.notes)) log(`  ℹ ${n}`);
   return report;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const report = runWeeklyAssemble(process.argv.slice(2));
-    process.stdout.write(`${JSON.stringify({ ok: report.ok, exitCode: report.exitCode, asOf: report.asOf, sites: Object.fromEntries(Object.entries(report.sites).map(([k, s]) => [k, { file: s.file, problems: s.problems, gaps: s.gaps, sources: s.sources.length, rejected: s.rejected.length }])), next: report.next }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ ok: report.ok, exitCode: report.exitCode, asOf: report.asOf, sites: Object.fromEntries(Object.entries(report.sites).map(([k, s]) => [k, { file: s.file, problems: s.problems, gaps: s.gaps, notes: s.notes, sources: s.sources.length, rejected: s.rejected.length }])), next: report.next }, null, 2)}\n`);
     process.exitCode = report.exitCode;
   } catch (error) { console.error(String(error?.message ?? error)); process.exitCode = 1; }
 }
