@@ -213,9 +213,12 @@ try {
     const f = await fixture(mode);
     await f.page.getByRole('heading', { name: mode === 'pending' ? '管理者の承認待ちです' : '店舗の選択', exact: true }).waitFor();
     assert.equal(await f.page.getByRole('button', { name: 'ユーザー管理', exact: true }).count(), 0);
-    assert.equal(f.calls.includes('/users') || f.calls.includes('/credentials') || f.calls.includes('/requests'), false);
-    if (mode === 'pending') assert.equal(f.calls.includes('/stores'), false);
-    else {
+    assert.equal(f.calls.includes('/users') || f.calls.includes('/requests'), false);
+    if (mode === 'pending') {
+      assert.equal(f.calls.includes('/credentials'), false);
+      assert.equal(f.calls.includes('/stores'), false);
+    } else {
+      assert.equal(f.calls.includes('/credentials'), true);
       // The selection heading renders before the asynchronous store list arrives.
       await f.page.getByText('テスト店舗A', { exact: true }).waitFor();
       assert.equal(await f.page.getByText('テスト店舗A', { exact: true }).count(), 1);

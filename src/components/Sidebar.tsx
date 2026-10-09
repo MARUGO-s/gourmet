@@ -108,7 +108,7 @@ const ITEMS: { id: ViewId; label: string; signedIn?: boolean; adminOnly?: boolea
   { id: "requests", label: "取得依頼", adminOnly: true },
   { id: "schedules", label: "自動取得の設定", adminOnly: true },
   { id: "alerts", label: "口コミ通知", signedIn: true, adminOnly: true },
-  { id: "accounts", label: "アカウント管理", adminOnly: true },
+  { id: "accounts", label: "アカウント管理", signedIn: true },
   { id: "stores", label: "店舗管理", signedIn: true, adminOnly: true },
   { id: "users", label: "ユーザー管理", signedIn: true, adminOnly: true },
 ];

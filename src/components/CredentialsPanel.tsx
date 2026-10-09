@@ -79,7 +79,7 @@ export default function CredentialsPanel({ sources, onChanged, stores, scopeKeys
         if (created) onStoresChanged();
         // リンクの店舗×サイトのまま保存したときだけ、失敗した依頼（retry）を渡す（結果をその M-talk のトークへ）
         const retry = preset && preset.source === source && preset.storeKey === key ? preset.retry : null;
-        const saved = await saveCredential({ source, label, username, password, ...(source === "ikyu" ? { storeId: key } : { storeKey: key }), ...(retry ? { retry } : {}) });
+        const saved = await saveCredential({ source, label, username, password, managedStoreId: pick.storeId, ...(source === "ikyu" ? { storeId: key } : { storeKey: key }), ...(retry ? { retry } : {}) });
         setRefetch(saved.refetch ?? null);
         if (preset) onPresetDone?.();
         setLabel("");

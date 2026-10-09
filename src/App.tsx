@@ -127,7 +127,7 @@ export default function App() {
 
   useEffect(() => {
     if (!canView) { setData(null); setStores([]); setScope(null); setCredentials([]); setRequests([]); }
-    if (!isAdmin) setView(v => v === "dashboard" || v === "overview" ? v : "dashboard");
+    if (!isAdmin) setView(v => v === "dashboard" || v === "overview" || v === "accounts" ? v : "dashboard");
   }, [canView, isAdmin]);
 
   useEffect(() => {
@@ -181,13 +181,13 @@ export default function App() {
   }, [userId]);
   // 「ログイン情報を更新」のリンク: ログインして店舗を読み込んだら、その店舗のアカウント管理を開く（未ログインならログイン後に）
   useEffect(() => {
-    if (!userId || !isAdmin || !storesLoaded || deepLink?.kind !== "credentials") return;
+    if (!userId || !canView || !storesLoaded || deepLink?.kind !== "credentials") return;
     const st = stores.find((s) => s.sites.some((x) => x.source === deepLink.source && x.siteStoreKey === deepLink.storeKey));
     selectScope(st?.id ?? ALL_STORES);
     setView("accounts");
     setCredPreset({ source: deepLink.source, storeKey: deepLink.storeKey, retry: deepLink.retry });
     setDeepLink(null);
-  }, [userId, isAdmin, storesLoaded, stores, deepLink, selectScope]);
+  }, [userId, canView, storesLoaded, stores, deepLink, selectScope]);
   const currentStore = stores.find((s) => s.id === scope);
   const scopeKeys = useMemo(() => (scope && scope !== ALL_STORES ? keysForStore(scope, stores.flatMap((s) => s.sites)) : null), [scope, stores]);
   const defaultStoreId = currentStore?.id ?? "";
@@ -199,7 +199,7 @@ export default function App() {
     let alive = true;
     if (userId && !canView) return;
     getSources().then((rows) => { if (alive) setSources(rows); }).catch(() => { if (alive) setSources([]); });
-    if (isAdmin) {
+    if (canView) {
       setCredentialState("loading");
       getCredentials().then((rows) => { if (alive) { setCredentials(rows); setCredentialState("ready"); } })
         .catch(() => { if (alive) { setCredentials([]); setCredentialState("error"); } });
