@@ -181,7 +181,7 @@ test("processFollowups: waits for the request, sends once (notice_id = request i
 // ---------- 配線（ソースの確認） ----------
 test("wiring: review-api queues a refetch after saving credentials; agent-api passes the kind and runs followups; password never echoed", () => {
   const review = fs.readFileSync(new URL("../../supabase/functions/review-api/index.ts", import.meta.url), "utf8");
-  assert.match(review, /queueRefetchAfterSave\(admin,user\.id,\{source:input\.source,storeKey,retry:input\.retry\?\?null\}\)/);
+  assert.match(review, /queueRefetchAfterSave\(admin,ownerUserId,\{source:input\.source,storeKey,retry:input\.retry\?\?null\}\)/);
   assert.match(review, /return json\(req,\{ok:true,refetch\}\)/);
   assert.ok(review.indexOf("password_enc:await encrypt(input.password)") < review.indexOf("queueRefetchAfterSave(admin"), "保存してから依頼");
   const api = fs.readFileSync(new URL("../../supabase/functions/agent-api/index.ts", import.meta.url), "utf8");

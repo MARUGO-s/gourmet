@@ -101,6 +101,8 @@ export async function saveCredential(input: {
   password: string;
   storeId?: string;
   storeKey?: string;
+  // 店舗マスタのID（一般ユーザーは割り当て済み店舗のみに保存する）
+  managedStoreId?: string;
   // M-talk の「ログイン情報を更新」から来たときの失敗した依頼（保存後の取り直しの結果をそのトークへ送る）
   retry?: string | null;
 }) {

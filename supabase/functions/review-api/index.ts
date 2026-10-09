@@ -44,6 +44,7 @@ const storePath = /^\/stores\/([0-9a-f-]{36})$/;
 const sitePath = /^\/stores\/([0-9a-f-]{36})\/sites$/;
 const siteItemPath = /^\/stores\/([0-9a-f-]{36})\/sites\/([0-9a-f-]{36})$/;
 const requestColumns = "id,source,store_id,action,params,status,requested_at,claimed_at,finished_at,claimed_by,attempts,result,error,failure_kind";
+const credentialItemPath = /^\/credentials\/[0-9a-f-]{36}$/;
 
 Deno.serve(async req => {
   if (req.method === "OPTIONS") return json(req, {});
@@ -75,7 +76,9 @@ Deno.serve(async req => {
       const denied = await viewingAccess(client);
       if (denied) return json(req, denied.data, denied.status);
       isAdmin = await must(client.rpc("gourmet_is_admin"));
-      if (!isAdmin && (req.method !== "GET" || !["/sources", "/dashboard", "/overview", "/stores"].includes(path))) {
+      const isCredentialRead = req.method === "GET" && path === "/credentials";
+      const isCredentialWrite = (req.method === "POST" && path === "/credentials") || (req.method === "DELETE" && credentialItemPath.test(path));
+      if (!isAdmin && !isCredentialRead && !isCredentialWrite && (req.method !== "GET" || !["/sources", "/dashboard", "/overview", "/stores"].includes(path))) {
         return json(req, { error: "この操作は管理者のみ利用できます" }, 403);
       }
     }
@@ -160,10 +163,24 @@ Deno.serve(async req => {
       if(!/^[0-9A-Za-z_-]{0,40}$/.test(storeKey)) return json(req,{error:"店舗コードは英数字・_・-の40文字以内で入力してください"},400);
       if(!getSource(input.source) || !username || username.length>320 || typeof input.password!=="string" || !input.password || input.password.length>1000 || (input.label && (typeof input.label!=="string" || input.label.length>200))) return json(req,{error:input.source==="ikyu"?"店舗ID（6桁）・オペレータID・パスワードをご確認ください":"サイト・ID・パスワードをご確認ください"},400);
       if(input.retry!=null && !isUuid(input.retry)) return json(req,{error:"取り直す依頼が不正です"},400);
-      await must(admin.from("credentials").upsert({user_id:user.id,source:input.source,store_key:storeKey,label:input.label||"",username,password_enc:await encrypt(input.password),updated_at:new Date().toISOString()},{onConflict:"user_id,source,store_key"}));
+      const managedStoreId = typeof input.managedStoreId === "string" ? input.managedStoreId.trim() : "";
+      let ownerUserId = user.id;
+      if (managedStoreId) {
+        if (!isStoreId(managedStoreId)) return json(req,{error:"店舗の指定が不正です"},400);
+        if (!isAdmin) {
+          const assigned = await must(admin.from("gourmet_store_access").select("store_id").eq("user_id",user.id).eq("store_id",managedStoreId).limit(1));
+          if (!assigned.length) return json(req,{error:"この店舗への登録権限がありません"},403);
+        }
+        const sites = await must(admin.from("store_sites").select("user_id").eq("store_id",managedStoreId).eq("source",input.source).eq("site_store_key",storeKey).limit(1));
+        if (!sites.length) return json(req,{error:"店舗管理で、このサイトの店舗IDを設定してから登録してください"},400);
+        ownerUserId = sites[0].user_id;
+      } else if (!isAdmin) {
+        return json(req,{error:"登録先の店舗を選択してください"},400);
+      }
+      await must(admin.from("credentials").upsert({user_id:ownerUserId,source:input.source,store_key:storeKey,label:input.label||"",username,password_enc:await encrypt(input.password),updated_at:new Date().toISOString()},{onConflict:"user_id,source,store_key"}));
       // 保存したら、その店舗×サイトの取り直しを依頼する（M-talk のボタンから来たなら結果をそのトークへ）。依頼できなくても保存は成功
       let refetch;
-      try { refetch=await queueRefetchAfterSave(admin,user.id,{source:input.source,storeKey,retry:input.retry??null}); }
+      try { refetch=await queueRefetchAfterSave(admin,ownerUserId,{source:input.source,storeKey,retry:input.retry??null}); }
       catch { refetch={status:"failed",mtalk:false,message:"取り直しを依頼できませんでした。「取得依頼」から依頼してください"}; }
       return json(req,{ok:true,refetch});
     }
