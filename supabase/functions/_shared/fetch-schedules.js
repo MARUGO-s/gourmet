@@ -13,7 +13,7 @@ export const INTERVAL_CHOICES = [1, 2, 3, 4, 6, 8, 12, 24, 48, 72, 168];
 export const MAX_INTERVAL_HOURS = 168;
 // Grok Bot の稼働時間（日本時間 9:00〜22:59）。この外の予定時刻は次の稼働開始時に取得依頼になる。
 export const AGENT_WINDOW = { startHour: 9, endHour: 23 };
-export const AGENT_WINDOW_NOTE = "Grok Botは日本時間 9:00〜22:59 に約5分ごとに確認します。この時間外の予定は、次の稼働開始（9:00）以降にまとめて取得されます。";
+export const AGENT_WINDOW_NOTE = "自動取得はGrok Botが毎朝10:00ごろにまとめて行います。予定の時刻を過ぎた分は、その次の朝の取得で処理されます。";
 // 1回の enqueue-due で処理する設定の上限（agent_requests の件数制限: 1時間30件・未完了20件）
 export const ENQUEUE_LIMIT = 20;
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// アプリからの取得依頼（agent_requests）を扱う。Grok Bot は約5分ごとに --claim して処理し、--complete / --fail で報告する。
+// アプリからの取得依頼（agent_requests）を扱う。Grok Bot は毎朝の定期取得と、依頼時の Webhook 起動で --claim して処理し、--complete / --fail で報告する。
 //   node scripts/agent-queue.mjs --list [--source tabelog] [--origin mtalk_live]
 //   node scripts/agent-queue.mjs --claim [--source tabelog] [--origin mtalk_live] [--limit 1] [--agent grok-bot]
 //     --origin mtalk_live: M-talk の「最新を調べる」の依頼だけ（日本時間 9:00〜22:59 以外はこれだけ処理する）。指定が無くても mtalk_live が先に取得される

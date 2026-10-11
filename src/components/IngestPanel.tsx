@@ -1,6 +1,6 @@
 import type { AgentRequest, CredentialRow, SourceMeta, Store } from "../types";
 import { storeLabelFor } from "../../supabase/functions/_shared/stores.js";
-import { AGENT_POLL_MINUTES, INGEST_NOTE, formatTime, openRequestFor, requestLabel, statusTone } from "../lib/agent-requests";
+import { INGEST_NOTE, formatTime, openRequestFor, requestLabel, statusTone } from "../lib/agent-requests";
 import SourceRegistrationBadge, { type RegistrationState } from "./SourceRegistrationBadge";
 
 type Props = {
@@ -34,7 +34,7 @@ export default function IngestPanel({ filter, signedIn, sources, credentialState
             すべてのサイトのPV・予約・評価・口コミは、Grok Botがログイン済みのブラウザで各サイトの管理画面から取得し、このアプリへ取り込みます。アプリからサイトへログイン・取得はしません。
           </p>
           <p className="mt-1 text-[11px] leading-relaxed text-faint">
-            「今すぐ取得を依頼」はGrok Botへの依頼の登録です。Grok Botは約{AGENT_POLL_MINUTES}分ごとに依頼を確認するため、開始まで数分かかります。
+            「今すぐ取得を依頼」はGrok Botへの依頼の登録です。依頼するとすぐに取得を始め、通常5〜10分で反映されます。
           </p>
         </div>
         {signedIn ? (
