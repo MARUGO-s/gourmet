@@ -32,7 +32,7 @@
 ```
 （取得の合図）アプリ「今すぐ取得を依頼」/ 自動取得の設定 / ログイン情報の保存後の取り直し
    → agent_requests（queued）
-Grok Bot（ルーチン。約5分ごと）
+Grok Bot（ルーチン。毎朝の定期取得＋依頼時は Webhook で即起動。docs/refetch-webhook.md）
    → agent-api /schedules/enqueue-due → /requests/pending・/requests/claim
    → /credentials/fetch（ログイン情報。記録つき）
    → computerUse でふつうの Chrome を操作し、管理画面にログイン・ページを保存（ログインは1回の取得につき1回）
