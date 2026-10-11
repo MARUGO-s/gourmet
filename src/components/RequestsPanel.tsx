@@ -3,7 +3,7 @@ import type { AgentRequest, AgentRequestAction, CredentialRow, SourceMeta, Store
 import { filterByStore, storeLabelFor } from "../../supabase/functions/_shared/stores.js";
 import StorePicker, { commitPick, emptyPick } from "./StorePicker";
 import { publicFailureLabel } from "../../supabase/functions/_shared/failure-text.js";
-import { ACTION_LABELS, AGENT_POLL_MINUTES, INGEST_NOTE, formatTime, openRequestFor, requestLabel, statusTone } from "../lib/agent-requests";
+import { ACTION_LABELS, INGEST_NOTE, formatTime, openRequestFor, requestLabel, statusTone } from "../lib/agent-requests";
 
 type Props = {
   sources: SourceMeta[];
@@ -37,7 +37,7 @@ function resultSummary(r: AgentRequest) {
     return parts.length ? parts.join(" / ") : "取り込み完了";
   }
   if (r.status === "claimed") return `Grok Botが取得中です（開始 ${formatTime(r.claimedAt)}${r.attempts > 1 ? `・${r.attempts}回目` : ""}）`;
-  return `Grok Botの確認待ちです（約${AGENT_POLL_MINUTES}分ごとに確認）`;
+  return "Grok Botの取得開始待ちです（通常5〜10分で反映されます）";
 }
 
 // 店舗×サイトごとの取得依頼と、依頼の履歴（依頼中 / 取得中 / 完了 / 失敗）
@@ -60,7 +60,7 @@ export default function RequestsPanel({ sources, credentials: allCredentials, re
       <section className="rounded-md border border-line bg-card p-5">
         <h2 className="text-[13px] font-bold">Grok Botへの取得依頼</h2>
         <p className="mt-1 text-[12px] leading-relaxed text-subtle">
-          {INGEST_NOTE}。ここで登録した依頼を、Grok Botが約{AGENT_POLL_MINUTES}分ごとに確認して取得・取り込みを行います（開始まで数分かかります）。
+          {INGEST_NOTE}。ここで登録した依頼は、Grok Botがすぐに取得・取り込みを始め、通常5〜10分で反映されます。
           同じ店舗・サイト・内容の依頼は、完了するまで重ねて登録できません。24時間拾われなかった依頼は失敗になります。
         </p>
         <div className="mt-4 overflow-x-auto">

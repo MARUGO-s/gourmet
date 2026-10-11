@@ -19,6 +19,7 @@ import { loadOverviewInputs, loadStoreDailyInputs, loadStoreMaster } from "../_s
 import { STORE_BOTS_PATH, normalizeStoreBots, publicAlertEvent, publicAlertSettings, publicDelivery, validateAlertSettingsInput } from "../_shared/review-alerts.js";
 import { mtalkConfig, mtalkRequest } from "../_shared/mtalk-share.js";
 import { queueRefetchAfterSave } from "../_shared/mtalk-followups.js";
+import { fireRefetchWebhook, recentOtherRequestsQuery } from "../_shared/refetch-webhook.js";
 import { isUuid } from "../_shared/login-help.js";
 import { userManagement, viewingAccess } from "../_shared/user-management.js";
 import { CREDENTIAL_METADATA_COLUMNS, publicCredentialMetadata } from "../_shared/credential-metadata.js";
@@ -43,6 +44,9 @@ const emptyDetails = () => ({ ranking:null, topPages:null, monthly:[], ownerRevi
 const storePath = /^\/stores\/([0-9a-f-]{36})$/;
 const sitePath = /^\/stores\/([0-9a-f-]{36})\/sites$/;
 const siteItemPath = /^\/stores\/([0-9a-f-]{36})\/sites\/([0-9a-f-]{36})$/;
+// 取得依頼を登録したら Grok Bot の Webhook をすぐ呼ぶ（待たない・失敗しても依頼は成功）
+const kickRefetch = (admin: any, row: any) => { void fireRefetchWebhook(row, { getEnv:(k: string)=>Deno.env.get(k), recentOtherRequests:recentOtherRequestsQuery(admin),
+  log:(m: string)=>console.warn(m) }); };
 const requestColumns = "id,source,store_id,action,params,status,requested_at,claimed_at,finished_at,claimed_by,attempts,result,error,failure_kind";
 const credentialItemPath = /^\/credentials\/[0-9a-f-]{36}$/;
 
@@ -182,6 +186,7 @@ Deno.serve(async req => {
       let refetch;
       try { refetch=await queueRefetchAfterSave(admin,ownerUserId,{source:input.source,storeKey,retry:input.retry??null}); }
       catch { refetch={status:"failed",mtalk:false,message:"取り直しを依頼できませんでした。「取得依頼」から依頼してください"}; }
+      if ((refetch as any)?.status==="queued" && (refetch as any).requestId) kickRefetch(admin,{id:(refetch as any).requestId,source:(refetch as any).source,store_id:(refetch as any).storeId,requested_at:new Date().toISOString(),origin:"app"});
       return json(req,{ok:true,refetch});
     }
     if (/^\/credentials\/[0-9a-f-]{36}$/.test(path) && req.method === "DELETE") {
@@ -203,6 +208,7 @@ Deno.serve(async req => {
       if(error?.code==="23505") return json(req,{error:"同じ店舗・サイト・内容の依頼が処理待ちです。完了までお待ちください"},409);
       if(error?.code==="P0429") return json(req,{error:error.message},429);
       if(error) throw error;
+      kickRefetch(admin,data);
       return json(req,{request:publicRequest(data)},201);
     }
     // 自動取得の設定（店舗×サイト）。閲覧は本人のJWT（RLS）、保存は検証後に本人の user_id に限定して service_role で行う（credentials と同じ）。

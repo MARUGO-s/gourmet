@@ -53,7 +53,7 @@ export default function TopBar({ title, subtitle, lastSync, demo, signedIn, open
       <button
         onClick={onRequests}
         disabled={!signedIn}
-        title={signedIn ? "Grok Botへ取得を依頼します（約5分ごとに確認されます）" : "アプリにログインしてください"}
+        title={signedIn ? "Grok Botへ取得を依頼します（すぐに取得を始め、通常5〜10分で反映されます）" : "アプリにログインしてください"}
         className="flex items-center gap-2 rounded-md bg-brand px-3.5 py-2 text-[12px] font-bold text-white transition hover:opacity-90 disabled:opacity-50"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">

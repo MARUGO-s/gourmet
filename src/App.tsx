@@ -257,7 +257,7 @@ export default function App() {
     setNotice(null);
     try {
       await createRequest({ source, storeId, action, ...(params ? { params } : {}) });
-      if (currentUser.current === userId) setNotice({ text: "Grok Botへ依頼しました。約5分ごとに確認され、取得が始まると「取得中」になります", error: false });
+      if (currentUser.current === userId) setNotice({ text: "依頼を受け付けました。すぐに取得を始め、通常5〜10分で反映されます（取得が始まると「取得中」になります）", error: false });
     } catch (e) {
       if (currentUser.current === userId) setNotice({ text: e instanceof Error ? e.message : "依頼を登録できませんでした", error: true });
     } finally {

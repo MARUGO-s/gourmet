@@ -157,7 +157,7 @@ export async function queueRefetchAfterSave(admin, userId, { source, storeKey, r
     mtalk = !fe;
   }
   return {
-    status, requestId, mtalk,
-    message: `${status === "already_open" ? "取得の依頼はすでに処理待ちです" : "最新の取得をGrok Botへ依頼しました"}（約5分ごとに確認されます）${mtalk ? "。結果は M-talk のトークにもお知らせします" : ""}`,
+    status, requestId, mtalk, source: plan.row.source, storeId: plan.row.store_id,
+    message: `${status === "already_open" ? "取得の依頼はすでに処理待ちです" : "最新の取得をGrok Botへ依頼しました"}。すぐに取得を始め、通常5〜10分で反映されます${mtalk ? "。結果は M-talk のトークにもお知らせします" : ""}`,
   };
 }
