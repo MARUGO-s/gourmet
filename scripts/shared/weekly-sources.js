@@ -3,6 +3,7 @@
 //   食べログ: 取得の取り込み JSON（payload*.json: 月別・日別・端末内訳・口コミ・レポート〔公開ページ・競合・ジャンル順位・ニューオープン・予約通知〕）
 //            ＋ 管理トップの保存 HTML（owner-home*.html: 新着ご予約の件数のみ）＋ アクセス数ランキングの保存 HTML（pages/tabelog_access_ranking-YYYY-MM.html）
 //   一休:    取り込み JSON（当日の取得＋過去月のバックフィル＋公開ページ）を capturedAt の古い順に重ねる（assembleIkyuWeeklyInput）
+// 作成日より後の取得: stub の確認を通ったうえで、作成日より前の日付の行（日別 PV・確定月の月別）だけ使う。取得時点の値（公開ページ・予約通知・ランキング・口コミ）は使わない。
 // stub の見分け: schemaVersion/agent/runId が取り込み JSON の形でない（例 runId "t"）・日別 PV が周期的な合成値・配信の出力フォルダ（weekly-card-*.json がある）。
 // 出力には assembled（作った道具・元ファイル・取得日時・足りない項目）を付け、scripts/weekly-deliver.mjs --send はこれが無い入力を送らない。
 import fs from "node:fs";
@@ -139,7 +140,36 @@ export function discoverRunFiles(runsDir) {
   return out;
 }
 
-/** 取り込み JSON を読み、受け付けるものだけ（理由つきで落とす） */
+/** 作成日より後の取得で使う範囲（assembled.sources の scope） */
+export const LATE_SCOPE = "作成日より前の日付の行だけ（日別 PV・作成日の月より前の月別）。公開ページ・予約通知・ランキング・口コミなど取得時点の値は使わない";
+
+/**
+ * 作成日より後の取得から「作成日より前の日付がついた行」だけを残した店舗データ。
+ * 日別 PV（date < asOf）と、作成日の月より前の月別（確定月）だけ。取得時点のスナップショット
+ * （summary・reports〔公開ページ・予約通知・競合・ジャンル順位・ニューオープン・エリアランキング〕・口コミ・一休の公開ページ／クチコミ）は落とす。
+ */
+export function datedRowsBefore(store, { source, asOf }) {
+  const asOfMonth = asOf.slice(0, 7);
+  if (source === "tabelog") {
+    return {
+      storeKey: store.storeKey, name: store.name ?? null,
+      daily: (Array.isArray(store.daily) ? store.daily : []).filter((d) => d?.date && d.date < asOf),
+      monthly: (Array.isArray(store.monthly) ? store.monthly : []).filter((m) => m?.month && m.month < asOfMonth),
+    };
+  }
+  const months = (store.pageviews?.months ?? []).filter((m) => m?.month && m.month <= asOfMonth).map((m) => {
+    const { totals, ...rest } = m;
+    // 作成日の月の合計行は作成日以降の日を含むため使わない（日別の合計になる）
+    return { ...rest, ...(m.month < asOfMonth && totals ? { totals } : {}), days: (m.days ?? []).filter((d) => d?.date && d.date < asOf) };
+  });
+  return { storeId: store.storeId, name: store.name ?? null, pageviews: { months } };
+}
+
+/**
+ * 取り込み JSON を読み、受け付けるものだけ（理由つきで落とす）。
+ * 作成日（日本時間）より後の取得は、stub の確認を通ったうえで「作成日より前の日付の行」だけ使う（late: true）。
+ * 取得が遅れても（例: 10/6 の取得が止まり 10/7 に取得）、作成日前日までの日別 PV を欠けなく埋めるため。
+ */
 export function loadPayloads(files, { source, storeKey, asOf }) {
   const accepted = [], rejected = [];
   for (const file of files) {
@@ -148,10 +178,14 @@ export function loadPayloads(files, { source, storeKey, asOf }) {
     if (p?.source !== source) continue;
     const store = (p.stores ?? []).find((s) => String(source === "ikyu" ? s.storeId : s.storeKey) === String(storeKey));
     if (!store) continue;
-    const problem = payloadProblem(p);
+    const problem = payloadProblem(p); // stub・合成値の確認は取得全体で行う（遅い取得も同じ）
     if (problem) { rejected.push({ file, reason: problem }); continue; }
     const capturedOn = japanDate(p.capturedAt);
-    if (capturedOn > asOf) { rejected.push({ file, reason: `作成日 ${asOf} より後の取得（${capturedOn}）` }); continue; }
+    if (capturedOn > asOf) {
+      const dated = datedRowsBefore(store, { source, asOf });
+      accepted.push({ file, payload: { ...p, stores: [dated] }, store: dated, capturedAt: p.capturedAt, capturedOn, late: true });
+      continue;
+    }
     accepted.push({ file, payload: p, store, capturedAt: p.capturedAt, capturedOn });
   }
   accepted.sort((a, b) => String(a.capturedAt).localeCompare(String(b.capturedAt)));
@@ -168,18 +202,38 @@ export function assembleTabelogSources({ storeKey, storeName, asOf, payloadFiles
   const sources = [], gaps = [], problems = [];
   const fresh = (on, days) => on && daysBetween(on, asOf) <= days;
   const monthly = new Map(), daily = new Map();
+  const dailyFrom = new Map(); // date -> 取得（後の取得で上書き）
+  const onTimeDates = new Set();
   let reviews = null, name = storeName ?? null;
   const reports = []; // { kind, period, data, capturedAt, capturedOn, file }
   for (const a of accepted) {
     name = name ?? a.store.name ?? null;
     for (const m of Array.isArray(a.store.monthly) ? a.store.monthly : []) if (m?.month && isNum(m.pv)) monthly.set(m.month, m);
-    for (const d of Array.isArray(a.store.daily) ? a.store.daily : []) if (d?.date && d.date < a.capturedOn && d.date < asOf && isNum(d.pv)) daily.set(d.date, d);
+    for (const d of Array.isArray(a.store.daily) ? a.store.daily : []) {
+      if (!(d?.date && d.date < a.capturedOn && d.date < asOf && isNum(d.pv))) continue;
+      daily.set(d.date, d);
+      dailyFrom.set(d.date, a);
+      if (!a.late) onTimeDates.add(d.date);
+    }
+    if (a.late) {
+      // 作成日より後の取得: 日付つきの行だけ（loadPayloads で取得時点の値は落としてある）
+      sources.push({ kind: "payload", file: a.file, capturedAt: a.capturedAt, late: true, scope: LATE_SCOPE, monthly: a.store.monthly.length, daily: a.store.daily.length, reports: [] });
+      continue;
+    }
     if (Array.isArray(a.store.reviews?.items) && a.store.reviews.items.length) {
       reviews = { items: a.store.reviews.items.map((r) => ({ postedAt: r.postedAt ?? null, rating: isNum(r.rating) ? Number(r.rating) : null })), file: a.file, capturedAt: a.capturedAt };
     }
     for (const r of a.store.reports ?? []) reports.push({ ...r, capturedAt: a.capturedAt, capturedOn: a.capturedOn, file: a.file });
     if (a.store.summary?.saveCount != null) reports.push({ kind: "public_profile", period: a.capturedOn, data: { ...a.store.summary }, capturedAt: a.capturedAt, capturedOn: a.capturedOn, file: a.file, fromSummary: true });
     sources.push({ kind: "payload", file: a.file, capturedAt: a.capturedAt, monthly: (a.store.monthly ?? []).length || 0, daily: Array.isArray(a.store.daily) ? a.store.daily.length : 0, reports: (a.store.reports ?? []).map((r) => r.kind) });
+  }
+  const notes = [];
+  for (const a of accepted.filter((x) => x.late)) {
+    const used = [...dailyFrom].filter(([, from]) => from === a).map(([d]) => d).sort();
+    const filled = used.filter((d) => !onTimeDates.has(d));
+    const src = sources.find((x) => x.file === a.file && x.late);
+    if (src) Object.assign(src, { usedDates: used, filledDates: filled });
+    if (filled.length) notes.push(`食べログの日別 PV ${filled.join("・")} は作成日より後の取得（${a.capturedOn}・${path.basename(path.dirname(a.file))}）から補いました（日付つきの行だけ。取得時点の公開ページ・通知・ランキング・口コミは使っていません）`);
   }
   const latest = (kind) => reports.filter((r) => r.kind === kind).at(-1) ?? null;
   const latestBatch = (kind) => {
@@ -239,7 +293,9 @@ export function assembleTabelogSources({ storeKey, storeName, asOf, payloadFiles
     if (parsed.self) {
       const [y, m] = r.month.split("-");
       accessRanking = { area: parsed.area ?? cfg?.areas?.[0]?.areaLabel ?? null, self: { rank: parsed.self.rank, pv: parsed.self.pv }, momPct: parsed.self.momPct, competitorsNote: `${y}年${Number(m)}月（確定月）アクセス数ランキング` };
-      sources.push({ kind: "access_ranking", file: r.file, month: r.month });
+      const savedOn = mtimeOn(r.file);
+      // 確定月（作成日の月より前）の順位なので、作成日より後に保存した HTML でも使う（保存日を残す）
+      sources.push({ kind: "access_ranking", file: r.file, month: r.month, savedOn, ...(savedOn > asOf ? { late: true } : {}) });
       break;
     }
   }
@@ -293,7 +349,7 @@ export function assembleTabelogSources({ storeKey, storeName, asOf, payloadFiles
   };
   // 描画と同じ組み立てで最終確認（例外 = 入力の不整合）
   try { assembleWeeklyReportInput(input); } catch (error) { problems.push(`食べログの入力を組み立てられません: ${error.message}`); }
-  return { input, sources, rejected, gaps, problems, knownGaps: KNOWN_GAPS.tabelog };
+  return { input, sources, rejected, gaps, problems, notes, knownGaps: KNOWN_GAPS.tabelog };
 }
 
 // ---------- 一休 ----------
@@ -325,18 +381,24 @@ export function assembleIkyuSources({ storeKey, storeName, asOf, payloadFiles = 
     else if (pub.capturedOn && daysBetween(pub.capturedOn, asOf) > opt.ikyuPublicMaxAgeDays) gaps.push(`一休の公開評価が古い（${pub.capturedOn} の取得）`);
     if (!input.ownerReviews) gaps.push("一休の管理画面クチコミ（件数・要返信・新着）");
   }
-  const sources = accepted.map((a) => ({
-    kind: "payload", file: a.file, capturedAt: a.capturedAt,
-    months: (a.store.pageviews?.months ?? []).map((m) => m.month), reviews: !!a.store.reviews, public: !!a.store.public,
-  }));
-  return { input, sources, rejected, gaps, problems, knownGaps: KNOWN_GAPS.ikyu };
+  const keptDays = (a) => (a.store.pageviews?.months ?? []).flatMap((m) => m.days ?? []).filter((d) => d?.date && d.date < asOf && d.date < a.capturedOn && isNum(d.pv)).map((d) => d.date);
+  const onTime = new Set(accepted.filter((a) => !a.late).flatMap(keptDays));
+  const notes = [];
+  const sources = accepted.map((a) => {
+    const base = { kind: "payload", file: a.file, capturedAt: a.capturedAt, months: (a.store.pageviews?.months ?? []).map((m) => m.month), reviews: !!a.store.reviews, public: !!a.store.public };
+    if (!a.late) return base;
+    const filled = [...new Set(keptDays(a))].filter((d) => !onTime.has(d)).sort();
+    if (filled.length) notes.push(`一休の日別 PV ${filled.join("・")} は作成日より後の取得（${a.capturedOn}・${path.basename(path.dirname(a.file))}）から補いました（日付つきの行だけ。取得時点の公開ページ・クチコミは使っていません）`);
+    return { ...base, late: true, scope: LATE_SCOPE, filledDates: filled };
+  });
+  return { input, sources, rejected, gaps, problems, notes, knownGaps: KNOWN_GAPS.ikyu };
 }
 
 /** 入力 JSON に付ける出どころ（weekly-deliver --send が確認する） */
 export function assembledStamp({ site, asOf, result, allowGaps = false, now = new Date() }) {
   return {
     by: ASSEMBLER, version: ASSEMBLER_VERSION, site, asOf, at: now.toISOString(), allowGaps,
-    problems: result.problems, gaps: result.gaps, knownGaps: result.knownGaps,
+    problems: result.problems, gaps: result.gaps, knownGaps: result.knownGaps, notes: result.notes ?? [],
     sources: result.sources.map((s) => ({ ...s, file: s.file ? path.resolve(s.file) : undefined })),
     rejected: result.rejected.map((r) => ({ file: path.resolve(r.file), reason: r.reason })),
   };
