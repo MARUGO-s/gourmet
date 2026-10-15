@@ -10,6 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { decodeHtml } from "./ikyu/html-lite.js";
 import { SNAPSHOT_LIMITS, normalizePageSnapshots, pageInfo, routinePageList } from "../supabase/functions/_shared/page-snapshots.js";
+import { tabelogRoutineExtras } from "./tabelog/routine-extras.js";
 import { parseArgs, readToken, callAgentApi, DEFAULT_ENDPOINT } from "./agent-common.mjs";
 
 const args = parseArgs(process.argv.slice(2));
@@ -23,6 +24,7 @@ try {
     const list = routinePageList(source, store);
     if (!list.length) throw new Error("--source は ikyu か tabelog です");
     for (const p of list) console.log([p.status === "parsed" ? "解析" : "保存", p.pii ? "個人情報" : "-", p.page, p.period, p.url, p.title].join("\t"));
+    if (source === "tabelog") for (const p of tabelogRoutineExtras(store)) console.log([p.kind, "-", p.page, p.period, p.url, p.title].join("\t"));
     process.exit(0);
   }
   if (cmd !== "send" || typeof args.manifest !== "string") {

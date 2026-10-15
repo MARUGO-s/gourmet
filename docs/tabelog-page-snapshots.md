@@ -14,6 +14,13 @@
 
 アカウント・支払い・API トークン等は `NEVER_SAVE`（カタログ外は受け付けない）。
 
+### 毎朝の取得で必ず行う追加の2手順（2026-10-15〜）
+
+`list --source tabelog` の最後の2行（1列目が `公開` / `ブラウザ`）。どちらも `pages*.json`（`/pages/ingest`）には入れない。
+
+1. **公開ページ**（`公開` 行）: 自店の公開ページ（例 `https://tabelog.com/tokyo/A1309/A130903/13245351/`）をブラウザで開いて（ログイン不要。curl は Cloudflare で 403）HTML を `tabelog_public_store.html` として保存し、convert-manifest に `"public": "tabelog_public_store.html"`。無いと店舗総合点・口コミ総数が未取得になる。
+2. **よく見られるページ**（`ブラウザ` 行）: ログイン中のまま `https://owner.tabelog.com/owner_rst/my_report/` を開き、グラフ表示後に `scripts/tabelog/reports.js` の `readTopPages` 関数本体をコンソールで実行し、戻り値（`null` でないこと）を `JSON.stringify` して `top-pages.json` に保存。convert-manifest に `"topPages": "top-pages.json"`。`null` のときは入れない（値を作らない）。
+
 ## 公開（tabelog.com）— `PUBLIC_FETCH_CATALOG`
 
 **`/pages/ingest` には送らない**（ホストは owner のみ許可）。公開取得 → 構造化 JSON を `/ingest`（`agent_reports`）へ。
