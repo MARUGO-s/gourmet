@@ -100,6 +100,11 @@ function fakeStore({ schedules, requests = [], rateLimitAfter = Infinity }) {
       if (!row || row.next_due_at !== s.next_due_at) return false;
       Object.assign(row, patch); log.push(["advance", s.id, patch]); return true;
     },
+    supersede: async (id) => {
+      const r = requests.find((x) => x.id === id && ["queued", "claimed"].includes(x.status));
+      if (!r) return false;
+      Object.assign(r, { status: "failed", failure_kind: "other", error: "superseded" }); log.push(["supersede", id]); return true;
+    },
     insertRequest: async (row) => {
       if (inserted >= rateLimitAfter) throw Object.assign(new Error("取得依頼が多すぎます"), { code: "P0429" });
       if (requests.some((r) => r.source === row.source && r.store_id === row.store_id && r.action === row.action && ["queued", "claimed"].includes(r.status))) throw Object.assign(new Error("dup"), { code: "23505" });
@@ -184,4 +189,35 @@ test("migration 012: サイト一覧が共通モジュールと一致し、ブ�
   assert.match(sql, /revoke all on public\.fetch_schedules from anon, authenticated/);
   assert.doesNotMatch(sql, /grant (insert|update|delete)/i);
   assert.match(sql, /unique \(user_id, source, store_id\)/);
+});
+
+test("enqueue-due: 20時間以上前の作業中でない未完了の依頼は superseded で失敗にして新しく依頼する", async () => {
+  const store = fakeStore({
+    schedules: [sched("a", { next_due_at: "2026-09-29T01:00:00Z" }), sched("b", { store_id: "2", next_due_at: "2026-09-29T01:00:00Z" }), sched("c", { store_id: "3", next_due_at: "2026-09-29T01:00:00Z" })],
+    requests: [
+      { id: "old-q", source: "tabelog", store_id: "1", action: "sync_now", status: "queued", requested_at: "2026-09-28T01:05:00Z" },
+      // 取得中でも最後の延長が5分前なら作業中 → 置き換えない
+      { id: "busy", source: "tabelog", store_id: "2", action: "sync_now", status: "claimed", requested_at: "2026-09-28T01:05:00Z", claimed_at: "2026-09-29T11:50:00Z" },
+      // 20時間未満は置き換えない
+      { id: "young", source: "tabelog", store_id: "3", action: "sync_now", status: "queued", requested_at: "2026-09-29T01:00:00Z" },
+    ],
+  });
+  const res = await enqueueDueSchedules(store, { now: NOW });
+  assert.deepEqual(res.superseded, [{ scheduleId: "a", source: "tabelog", storeId: "1", requestId: "old-q", reason: "superseded" }]);
+  assert.deepEqual(res.enqueued.map((e) => e.scheduleId), ["a"]);
+  assert.deepEqual(res.skipped.map((e) => [e.scheduleId, e.reason]), [["b", "open_request"], ["c", "open_request"]]);
+  assert.equal(store.requests.find((r) => r.id === "old-q").status, "failed");
+});
+
+test("enqueue-due: 取得中で30分を過ぎた古い依頼も置き換える。dryRun は何も変えない", async () => {
+  const mk = () => fakeStore({
+    schedules: [sched("a", { next_due_at: "2026-09-29T01:00:00Z" })],
+    requests: [{ id: "stuck", source: "tabelog", store_id: "1", action: "sync_now", status: "claimed", requested_at: "2026-09-28T01:05:00Z", claimed_at: "2026-09-28T02:00:00Z" }],
+  });
+  const dry = mk();
+  const d = await enqueueDueSchedules(dry, { now: NOW, dryRun: true });
+  assert.equal(d.superseded.length, 1); assert.equal(d.enqueued.length, 1); assert.equal(dry.requests[0].status, "claimed");
+  const real = mk();
+  const r = await enqueueDueSchedules(real, { now: NOW });
+  assert.equal(r.enqueued.length, 1); assert.equal(real.requests[0].status, "failed"); assert.equal(real.requests.length, 2);
 });

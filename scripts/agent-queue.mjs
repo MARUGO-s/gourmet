@@ -3,6 +3,7 @@
 //   node scripts/agent-queue.mjs --list [--source tabelog] [--origin mtalk_live]
 //   node scripts/agent-queue.mjs --claim [--source tabelog] [--origin mtalk_live] [--limit 1] [--agent grok-bot]
 //     --origin mtalk_live: M-talk の「最新を調べる」の依頼だけ（日本時間 9:00〜22:59 以外はこれだけ処理する）。指定が無くても mtalk_live が先に取得される
+//   node scripts/agent-queue.mjs --extend <id> --claim-id <claimId>   取得中の期限（30分）を今から30分に延ばす（長い取得は20分ごとくらいに呼ぶ。409 なら期限切れ → 取り直し）
 //   node scripts/agent-queue.mjs --complete <id> --claim-id <claimId> [--result '{"days":30}' | --result-file r.json]
 //   node scripts/agent-queue.mjs --fail <id> --claim-id <claimId> --error "失敗の理由" [--kind needs_relogin | needs_human_check | other]
 //     --kind: 失敗の種類。needs_relogin は、ブラウザの画面でサイトが「ID・パスワードが正しくありません」のようにはっきり表示したときだけ。
@@ -23,8 +24,8 @@ export const FAILURE_KINDS = ["needs_relogin", "needs_human_check", "other"];
 
 export function queueCommand(args) {
   const one = (v) => (Array.isArray(v) ? v.at(-1) : v);
-  const modes = ["list", "claim", "complete", "fail", "enqueue-due", "weekly-due", "weekly-claim", "weekly-finish"].filter((m) => args[m] !== undefined);
-  if (modes.length !== 1) throw new Error("--list / --claim / --complete / --fail / --enqueue-due / --weekly-due / --weekly-claim / --weekly-finish のいずれか1つを指定してください");
+  const modes = ["list", "claim", "extend", "complete", "fail", "enqueue-due", "weekly-due", "weekly-claim", "weekly-finish"].filter((m) => args[m] !== undefined);
+  if (modes.length !== 1) throw new Error("--list / --claim / --extend / --complete / --fail / --enqueue-due / --weekly-due / --weekly-claim / --weekly-finish のいずれか1つを指定してください");
   const mode = modes[0], source = typeof args.source === "string" ? args.source : undefined;
   const origin = args.origin === undefined ? undefined : one(args.origin);
   if (origin !== undefined && !["app", "schedule", "mtalk_live"].includes(origin)) throw new Error("--origin は app / schedule / mtalk_live です");
@@ -58,6 +59,7 @@ export function queueCommand(args) {
   const id = one(args[mode]), claimId = one(args["claim-id"]);
   if (typeof id !== "string" || typeof claimId !== "string") throw new Error(`--${mode} <id> と --claim-id <claimId> を指定してください`);
   if (args.kind !== undefined && mode !== "fail") throw new Error("--kind は --fail で使います");
+  if (mode === "extend") return { path: "/requests/extend", body: { id, claimId } };
   let result;
   if (typeof args["result-file"] === "string") result = JSON.parse(fs.readFileSync(args["result-file"], "utf8"));
   else if (typeof args.result === "string") result = JSON.parse(args.result);

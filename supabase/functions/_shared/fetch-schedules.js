@@ -141,18 +141,51 @@ export function publicSchedule(r) {
 //   listOpenRequests()                → 依頼中・取得中の agent_requests（source, store_id）
 //   advance(schedule, patch)          → next_due_at が schedule.next_due_at のままなら patch を保存し true（他のエージェントと二重に依頼しない）
 //   insertRequest(row)                → agent_requests へ登録し { id } を返す。エラーは { code } 付きで throw
+//   supersede(id)                     → 古い未完了の依頼を「置き換え」で失敗にし、できたら true（DB側でも20時間・作業中でないことを確認）
 // 同じ店舗×サイトの依頼が依頼中・取得中なら新たに依頼せず、次回予定だけ進める（reason: "open_request"）。
+// ただし、その依頼がすべて20時間以上前で作業中でない（依頼中、または取得中で最後の claim・延長から30分超）なら
+// 失敗（kind other、superseded）にして新しく依頼する（古い依頼が残って1日分の取得が抜けないように。superseded に id を返す）。
 // 件数制限（P0429）に達したら予定を戻して終了する（次の確認で再度依頼）。
+export const SUPERSEDE_AFTER_HOURS = 20;
+const CLAIM_TIMEOUT_MS = 30 * 60 * 1000;
+
+// 置き換えてよい古い依頼か（20時間以上前、かつ依頼中、または取得中で最後の claim・延長から30分超）
+export function isSupersedable(r, nowMs) {
+  const requested = Date.parse(r.requested_at ?? "");
+  if (!Number.isFinite(requested) || nowMs - requested < SUPERSEDE_AFTER_HOURS * 3600 * 1000) return false;
+  if (r.status === "queued") return true;
+  const claimed = Date.parse(r.claimed_at ?? "");
+  return r.status === "claimed" && Number.isFinite(claimed) && nowMs - claimed > CLAIM_TIMEOUT_MS;
+}
+
 export async function enqueueDueSchedules(store, { now = new Date(), limit = ENQUEUE_LIMIT, dryRun = false } = {}) {
-  const nowIso = new Date(toMs(now)).toISOString();
+  const nowMs = toMs(now), nowIso = new Date(nowMs).toISOString();
   const due = await store.listDue(nowIso, limit);
-  const open = new Set((await store.listOpenRequests()).map((r) => `${r.source}/${r.store_id}`));
-  const enqueued = [], skipped = [];
+  const openRows = new Map();
+  for (const r of await store.listOpenRequests()) {
+    const k = `${r.source}/${r.store_id}`;
+    openRows.set(k, [...(openRows.get(k) ?? []), r]);
+  }
+  const open = new Set(openRows.keys());
+  const enqueued = [], skipped = [], superseded = [];
   for (const s of due) {
     const key = `${s.source}/${s.store_id}`, item = { scheduleId: s.id, source: s.source, storeId: s.store_id };
     let nextDueAt;
     try { nextDueAt = computeNextDue(s, nowIso, s.next_due_at); }
     catch (error) { skipped.push({ ...item, reason: "invalid", error: error.message }); continue; }
+    const stale = openRows.get(key);
+    if (open.has(key) && stale?.length && stale.every((r) => r.id && isSupersedable(r, nowMs))) {
+      if (dryRun) { superseded.push(...stale.map((r) => ({ ...item, requestId: r.id, reason: "superseded" }))); open.delete(key); }
+      else {
+        let all = true;
+        for (const r of stale) {
+          if (await store.supersede(r.id)) superseded.push({ ...item, requestId: r.id, reason: "superseded" });
+          else all = false;
+        }
+        if (all) open.delete(key);
+      }
+      openRows.delete(key);
+    }
     if (open.has(key)) {
       if (!dryRun && !await store.advance(s, { next_due_at: nextDueAt })) { skipped.push({ ...item, reason: "concurrent" }); continue; }
       skipped.push({ ...item, reason: "open_request", nextDueAt });
@@ -177,7 +210,7 @@ export async function enqueueDueSchedules(store, { now = new Date(), limit = ENQ
       throw error;
     }
   }
-  return { now: nowIso, dryRun, enqueued, skipped };
+  return { now: nowIso, dryRun, enqueued, skipped, superseded };
 }
 
 // supabase-js（service_role）での store 実装。user_id は INGEST_USER_ID に固定する。
@@ -186,12 +219,13 @@ export function supabaseScheduleStore(admin, userId) {
   return {
     listDue: async (nowIso, limit) => check(await admin.from("fetch_schedules").select("*").eq("user_id", userId).eq("enabled", true)
       .neq("mode", "off").lte("next_due_at", nowIso).order("next_due_at").limit(limit)),
-    listOpenRequests: async () => check(await admin.from("agent_requests").select("source,store_id").eq("user_id", userId).in("status", ["queued", "claimed"]).limit(1000)),
+    listOpenRequests: async () => check(await admin.from("agent_requests").select("id,source,store_id,status,requested_at,claimed_at").eq("user_id", userId).in("status", ["queued", "claimed"]).limit(1000)),
     advance: async (s, patch) => {
       let q = admin.from("fetch_schedules").update(patch).eq("user_id", userId).eq("id", s.id);
       q = s.next_due_at == null ? q.is("next_due_at", null) : q.eq("next_due_at", s.next_due_at);
       return check(await q.select("id")).length === 1;
     },
+    supersede: async (id) => check(await admin.rpc("supersede_agent_request", { p_user: userId, p_id: id })) === true,
     insertRequest: async (row) => check(await admin.from("agent_requests").insert({ ...row, origin: "schedule", user_id: userId }).select("id").single()),
   };
 }
