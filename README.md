@@ -101,17 +101,19 @@ Grok Bot（約5分ごと）→ agent-api /requests/claim（claimed）→ /creden
 | `/credentials/fetch` | `{"source","storeKey","knownVersion","agent"}` | 版が同じなら`{"unchanged":true,...}`、違えば`{"credentialsVersion","updatedAt","fields":{...}}`。毎回`credential_access_log`に記録 |
 | `/requests/pending` | `{"source"?,"origin"?}` | `{"requests":[依頼]}`（依頼中・取得中、古い順100件） |
 | `/requests/claim` | `{"agent","source"?,"origin"?,"limit"?:1〜20}` | `{"requests":[{...依頼,"claimId"}]}`。`FOR UPDATE SKIP LOCKED`で原子的に取得中へ。`origin:"mtalk_live"`（M-talk の旧「最新を調べる」・再ログイン後の取り直し）は指定が無くても先に取得 |
+| `/requests/extend` | `{"id","claimId"}` | `{"request":{...}}`。取得中の期限（30分）を今から30分に延ばす（長い取得のハートビート、migration 029）。期限切れ・終了済みは409 |
 | `/requests/complete` | `{"id","claimId","result"?:{...}}` | `{"request":{...}}`（同じ報告の再送は成功扱い） |
 | `/requests/fail` | `{"id","claimId","error":"理由","failureKind"?:"needs_relogin\|needs_human_check\|other","result"?}` | 同上。`claimId`不一致・期限切れは409。`failureKind`を省くと理由の文から判定（migration 020） |
 | `/schedules/enqueue-due` | `{"limit"?:1〜50（既定20）,"dryRun"?:false}` | `{"now","dryRun","enqueued":[{"scheduleId","source","storeId","requestId","dueAt","nextDueAt"}],"skipped":[{"scheduleId","source","storeId","reason":"open_request\|rate_limited\|concurrent\|invalid","nextDueAt"?}]}` |
 | `/weekly/deliver` | `{"storeId"?\|"site":{"source","storeKey"},"asOf":"YYYY-MM-DD","sections":[{"source","fields":[{"label","value"}],"items"?}],"pdf"?:{"base64","filename"?},"roomIds"?,"dryRun"?}` | `{"ok","store","asOf","week","dedupeKey","dryRun","bot","roomIds","rooms","html":{"url"},"pdf","preview"?\|"deduplicated"?}` または `{"ok":false,"skipped"}`。週報（要約カード＋Pages の HTML リンク「週報を開く」、PDF は任意）を店舗の M-talk 店舗Bot のルームへ（line_report `mtalk-external-post /store-post`）。店舗×週で1回だけ。手順は [docs/weekly-report.md](docs/weekly-report.md)（`scripts/weekly-deliver.mjs`、既定は dryRun） |
 | `/alerts/dispatch` | `{}` | `{"claimed","sent","skipped","retry","failed","messages":["店舗: 食べログ 総合点 3.26 → 3.28 / 新着口コミ 2件"],"notConfigured"?}`。口コミ通知の送信待ちをすぐ送る（通常は`/ingest`・`/requests/pending`のたびに自動で送るので不要） |
 
-依頼の形: `{"id","source","storeId","action":"sync_now|fetch_metrics|fetch_reviews|backfill","params":{"fromMonth"?,"toMonth"?,"note"?},"status":"queued|claimed|done|failed","origin":"app|schedule|mtalk_live","requestedAt","claimedAt","finishedAt","claimedBy","attempts","result","error","failureKind":"needs_relogin|needs_human_check|other|null"}`。`backfill`は`fromMonth`〜`toMonth`（最大120か月）の過去分。取得中のまま30分を過ぎると再び`queued`になり（3回で`failed`）、24時間拾われない依頼は`failed`になります。
+依頼の形: `{"id","source","storeId","action":"sync_now|fetch_metrics|fetch_reviews|backfill","params":{"fromMonth"?,"toMonth"?,"note"?},"status":"queued|claimed|done|failed","origin":"app|schedule|mtalk_live","requestedAt","claimedAt","finishedAt","claimedBy","attempts","result","error","failureKind":"needs_relogin|needs_human_check|other|null"}`。`backfill`は`fromMonth`〜`toMonth`（最大120か月）の過去分。取得中のまま30分を過ぎると再び`queued`になり（3回で`failed`）、24時間拾われない依頼は`failed`になります。24時間は依頼時刻、取得中から戻された依頼は戻された時刻（`released_at`）から数えます（migration 029）。長い取得は`--extend`で期限を延ばします。自動取得（`--enqueue-due`）は、同じ店舗×サイトの未完了の依頼が20時間以上前で作業中でなければ、それを`failed`（`failureKind:"other"`、superseded）にして新しく依頼します（応答の`superseded`）。
 
 ```sh
 INGEST_TOKEN=... node scripts/agent-queue.mjs --list
 INGEST_TOKEN=... node scripts/agent-queue.mjs --claim --limit 1 --agent grok-bot          # claimId を控える
+INGEST_TOKEN=... node scripts/agent-queue.mjs --extend <id> --claim-id <claimId>            # 長い取得は20分ごとくらいに期限を延ばす
 INGEST_TOKEN=... node scripts/agent-queue.mjs --complete <id> --claim-id <claimId> --result '{"days":30,"reviews":12}'
 INGEST_TOKEN=... node scripts/agent-queue.mjs --fail <id> --claim-id <claimId> --kind needs_relogin --error "一休: 要再ログイン（ID・パスワードが通らない）"
 INGEST_TOKEN=... node scripts/agent-queue.mjs --fail <id> --claim-id <claimId> --kind needs_human_check --error "一休: ログインで「私は人間です」の確認（画像パズル）"

@@ -51,3 +51,10 @@ test("agent-queue CLI maps flags to agent-api actions", () => {
   assert.throws(() => queueCommand({ _: [], fail: ID, "claim-id": ID }), /--error/);
   assert.throws(() => queueCommand({ _: [], claim: true, limit: "50" }), /limit/);
 });
+
+test("agent-queue: --extend は /requests/extend に id と claimId を送る", () => {
+  assert.deepEqual(queueCommand({ extend: "11111111-1111-1111-1111-111111111111", "claim-id": "22222222-2222-2222-2222-222222222222" }),
+    { path: "/requests/extend", body: { id: "11111111-1111-1111-1111-111111111111", claimId: "22222222-2222-2222-2222-222222222222" } });
+  assert.throws(() => queueCommand({ extend: "x" }), /--claim-id/);
+  assert.throws(() => queueCommand({ extend: "x", "claim-id": "y", kind: "other" }));
+});

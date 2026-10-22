@@ -7,6 +7,7 @@
 //   POST /agent-api/credentials/fetch      店舗×サイトの資格情報を復号して返す（毎回 credential_access_log に記録）
 //   POST /agent-api/requests/pending       アプリからの取得依頼（依頼中・取得中）の一覧
 //   POST /agent-api/requests/claim         依頼を原子的に取得開始（FOR UPDATE SKIP LOCKED）
+//   POST /agent-api/requests/extend        取得中の期限（30分）を今から30分に延ばす（長い取得のハートビート。claimId 必須。期限切れ・終了済みは409）
 //   POST /agent-api/requests/complete      取得完了を報告
 //   POST /agent-api/requests/fail          取得失敗を報告（failureKind: needs_relogin | needs_human_check | other。省略時は理由の文から判定）
 //   （/requests/pending・/requests/claim は origin（app | schedule | mtalk_live）で絞れる。mtalk_live は再ログイン後の取り直しと旧データだけ。Grok Bot は 9:00〜22:59 以外は mtalk_live だけ）
@@ -157,6 +158,13 @@ Deno.serve(async (req) => {
       const rows = await must(admin.rpc("claim_agent_requests", { p_user: userId, p_agent: agent, p_limit: limit, p_source: source, ...(origin ? { p_origin: origin } : {}) }));
       // claimId は完了・失敗の報告に必要（このエージェントだけが知る）
       return reply({ requests: (rows ?? []).map((r: any) => ({ ...publicRequest(r), claimId: r.claim_id })) });
+    }
+    if (path === "/requests/extend") {
+      const id = String(input?.id ?? ""), claimId = String(input?.claimId ?? "");
+      if (!/^[0-9a-f-]{36}$/.test(id) || !/^[0-9a-f-]{36}$/.test(claimId)) return reply({ error: "id / claimId が不正です" }, 400);
+      const { data, error } = await admin.rpc("extend_agent_request", { p_user: userId, p_id: id, p_claim: claimId });
+      if (error) return error.message.includes("Invalid claim") ? reply({ error: "取得中の依頼が見つかりません（claimId不一致・期限切れ・他の状態で終了済み）" }, 409) : reply({ error: "期限を延ばせませんでした" }, 500);
+      return reply({ request: publicRequest(data) });
     }
     if (path === "/requests/complete" || path === "/requests/fail") {
       const outcome = path === "/requests/complete" ? "done" : "failed";
