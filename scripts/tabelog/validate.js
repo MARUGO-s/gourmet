@@ -12,7 +12,8 @@ export function validateTabelogResult(result) {
     || (saveCount != null && !count(saveCount))) throw new Error("評価または口コミ数を正しく取得できませんでした");
   const missing = rating == null || reviews == null || !result.daily.length || !result.monthly.length || result.monthly.some(m=>m.reservations==null);
   if (missing && (result.status !== "partial" || !result.warning)) throw new Error("評価・口コミ数・日別PV・月別予約組数に未取得の項目があります");
-  if (rating == null && reviews == null && !result.daily.length && !result.monthly.length && !result.reviews?.length) throw new Error("保存できる数値がありません");
+  const hasPublicReports = !!(result.reports?.publicGenreRankings?.length || result.reports?.publicNewOpens?.length || result.reports?.publicCompetitors);
+  if (rating == null && reviews == null && !result.daily.length && !result.monthly.length && !result.reviews?.length && !hasPublicReports) throw new Error("保存できる数値がありません");
   if (result.daily.length > 5000 || result.monthly.length > 240 || (result.reviews?.length ?? 0) > 1000) throw new Error('取得対象の上限を超えています');
   const ids = new Set();
   for (const review of result.reviews ?? []) if (review.externalId) {
