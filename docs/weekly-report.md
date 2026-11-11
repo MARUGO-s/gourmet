@@ -77,15 +77,18 @@ INGEST_TOKEN=... node scripts/weekly-deliver.mjs …同じ引数…   # dryRun
 # 実際に投稿する（Pages に HTML が載ったあと。確認の結果が正しいときだけ）
 INGEST_TOKEN=... node scripts/weekly-deliver.mjs …同じ引数… --room 30 --send
 
+# 同じカード本文と「週報を開く」リンクを、オプトイン済み LINE グループ（BISTRO CAVA CAVA は「Cava Cava」）へも送る（PDFは付けない）
+INGEST_TOKEN=... node scripts/weekly-deliver.mjs …同じ引数… --room 30 --line --send
+
 # PDF も任意で添えるとき
 INGEST_TOKEN=... node scripts/weekly-deliver.mjs …同じ引数… --pdf --send
 ```
 
 - 作るもの: サイト別の週報 HTML＋ハブ（Pages / 手元確認）、カードの要約（サイトごとに KPI 4つ＋直近7日のPV、今週のポイント2つ）。`--pdf` または `--out-dir` のとき PDF も生成（M-talk へ載せるのは `--pdf` のときだけ）。
-- 送り先: `agent-api POST /weekly/deliver`（`X-Ingest-Token`）→ gourmet が店舗Bot・ルームを決めて line_report の `mtalk-external-post POST /store-post` へ署名つきで送る。カードの links は `{ label: "週報を開く", url: https://marugo-s.github.io/gourmet/weekly/<店舗UUID>/<asOf>/ }`。`GOURMET_MTALK_TOKEN` は gourmet の Edge Function だけが持ち、Grok Bot には渡しません。
+- 送り先: `agent-api POST /weekly/deliver`（`X-Ingest-Token`）→ gourmet が店舗Bot・ルームを決めて line_report の `mtalk-external-post POST /store-post` へ署名つきで送る。カードの links は `{ label: "週報を開く", url: https://marugo-s.github.io/gourmet/weekly/<店舗UUID>/<asOf>/ }`。`GOURMET_MTALK_TOKEN` は gourmet の Edge Function だけが持ち、Grok Bot には渡しません。`--line`（`line: true`）を付けると、同じカード本文とリンクをオプトイン済み LINE グループへも 1 通送る（PDFは付けない。line_report 側の `gourmet_weekly_line_enabled` と `gourmet_weekly_line_sends` で送り先と重複防止を決める）。
 - 店舗: `--store-id`（gourmet の店舗 UUID）、無ければ最初のサイトの店舗キーからアプリの店舗を探します。**Pages 公開（`--publish-dir`）には `--store-id` が必須**です。
 - 店舗Bot・ルーム: 店舗Bot は口コミ通知と同じ設定。ルームは「`--room <ID>` → 画面「週報の配信」で選んだルーム → 口コミ通知で選んだルーム → Bot の店舗ルーム（`is_store_room`）→ Bot が参加している全グループ」（BistroCAVACAVA は 30）。
-- 二重送信の防止: 店舗×週（作成日の週の月曜、日本時間）で同じ `dedupe_key`（`gourmet-weekly:<店舗 UUID>:<月曜>`）。月曜の作業をやり直しても、同じ週はルームごとにカードが 1 回だけ届きます。
+- 二重送信の防止: 店舗×週（作成日の週の月曜、日本時間）で同じ `dedupe_key`（`gourmet-weekly:<店舗 UUID>:<月曜>`）。月曜の作業をやり直しても、同じ週はルームごとにカードが 1 回だけ届きます。LINE も同じキーでグループごとに 1 回だけです。
 - カードに載せるのは件数・評価・PV などの集計だけ。メールアドレス・電話番号らしき文字列があれば gourmet と M-talk の両方で送りません。
 
 `agent-api POST /weekly/deliver` の本文:
@@ -155,8 +158,8 @@ node scripts/weekly-deliver.mjs --tabelog-input /workspace/run-20261005-weekly-c
   1. `--weekly-claim --schedule-id <id>`（作業中の印 claimId、期限2時間。asOf = その週の予定日の日本時間）。
   2. `weekly-assemble.mjs`（due の `sites.tabelog` / `sites.ikyu` の店舗コード）。終了コード 1 なら当日の取得（`agent-queue --claim` の依頼）が終わっていない → `--weekly-finish --outcome deferred --reason …`（30分後にもう一度、最大12回）。3 なら足りない公開ページ等を取り直し、だめなら `--allow-gaps` で続けて、足りない項目を報告に書く。
   3. `weekly-deliver.mjs … --publish-dir public --no-post` → `public/weekly/<店舗UUID>/<asOf>/` だけを含むブランチ `weekly/<asOf>-<店舗>` を作り PR → CI 成功後に main へマージ → Pages の URL が 200 を返すまで待つ（HTML だけの PR。コード変更を混ぜない）。
-  4. 確認: `INGEST_TOKEN=… weekly-deliver.mjs …同じ引数… --store-id <UUID>`（dryRun。Bot・ルーム・カードの文を確認。`alreadySent` なら送信済み）。
-  5. 送信: 同じ引数に `--send`（ルームは画面の設定。CAVA は 30。明示するなら `--room 30`）。応答の `rooms[].cardMessageId` と `html.url` を控える。
+  4. 確認: `INGEST_TOKEN=… weekly-deliver.mjs …同じ引数… --store-id <UUID>`（dryRun。Bot・ルーム・カードの文を確認。LINE へも送るときは `--line` を付け、`line.targets` と本文プレビューも確認。`alreadySent` なら送信済み）。
+  5. 送信: 同じ引数に `--send`（ルームは画面の設定。CAVA は 30。明示するなら `--room 30`。LINE へも送るときは `--line`）。応答の `rooms[].cardMessageId` と `html.url`（と `line.targets`）を控える。
   6. `--weekly-finish --schedule-id <id> --claim-id <claimId> --outcome delivered --html-url <URL> --card-ids <cardMessageId>`。送らない判断（店舗Bot なし等）は `skipped`、失敗は `failed --reason …`（30分後にもう一度）。
 - 二重送信は店舗×週の `dedupe_key` で M-talk 側でも防ぎます（同じ週をやり直しても1回だけ）。
 

@@ -17,8 +17,8 @@
 4. HTML: `node scripts/weekly-deliver.mjs --tabelog-input <out>/tabelog-input.json --ikyu-input <out>/ikyu-input.json --name "<店舗名>" --store-id <storeId> --as-of <asOf> --out-dir <out>/weekly --publish-dir public --no-post`。
    PDF は画面で「PDF」にチェックがある店舗だけ（`includePdf`）。
 5. Pages へ公開: main から `weekly/<asOf>-<店舗>` ブランチを作り、`public/weekly/<storeId>/<asOf>/` だけをコミットして PR → CI 成功後に main へマージ（HTML だけの PR。コード変更を混ぜない）→ `https://marugo-s.github.io/gourmet/weekly/<storeId>/<asOf>/` が 200 を返すまで待つ。main はきれいに保つ（作業後は main に戻す）。
-6. 確認（dryRun）: 同じ weekly-deliver の引数から `--no-post`・`--publish-dir` を外して実行。Bot・ルーム（BISTRO CAVACAVA はルーム 30）・カードの文を確かめる。`alreadySent: true` なら送らずに 8 へ（outcome delivered、送信済み）。
-7. 送信: 同じ引数に `--send` を付ける（ルームは画面の設定。CAVA は明示するなら `--room 30`）。応答の `rooms[].cardMessageId` と `html.url` を控える。
+6. 確認（dryRun）: 同じ weekly-deliver の引数から `--no-post`・`--publish-dir` を外して実行。Bot・ルーム（BISTRO CAVACAVA はルーム 30）・カードの文を確かめる。LINE へも送る店舗は `--line` を付け、`line.targets`（BISTRO CAVA CAVA は「Cava Cava」グループ）と本文プレビューも確かめる。`alreadySent: true` なら送らずに 8 へ（outcome delivered、送信済み）。
+7. 送信: 同じ引数に `--send` を付ける（ルームは画面の設定。CAVA は明示するなら `--room 30`。LINE へも送る店舗は `--line`）。応答の `rooms[].cardMessageId` と `html.url`（と `line.targets`）を控える。LINE には PDF を付けない（カード本文＋週報を開くリンクだけ）。
 8. 終了の報告: `--weekly-finish --schedule-id <id> --claim-id <claimId> --outcome delivered --html-url <URL> --card-ids <cardMessageId>`。店舗Bot が無い等で送らなかったら `skipped --reason …`、失敗したら `failed --reason …`。
 9. ユーザーへ: 配信したら店舗名・カード ID・週報 URL・足りなかった項目（あれば）を伝える。失敗・データ待ちが続いて上限に達したら、理由と次の手を伝える。
 

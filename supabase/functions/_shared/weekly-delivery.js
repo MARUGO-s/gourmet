@@ -6,6 +6,7 @@
 // 店舗Bot の決め方は口コミ通知と同じ設定（review_alert_settings: 自動＝店舗名で判定／指定／送らない、ルーム）。
 // ルームの既定: --room（roomIds）→ 画面「週報の配信」で選んだルーム（weekly_delivery_schedules.room_ids）→ 口コミ通知の設定で選んだルーム → 無ければ Bot の「店舗ルーム」（is_store_room）、それも無ければ Bot が参加している全グループ。
 // 二重送信の防止: dedupe_key = gourmet-weekly:<店舗 UUID>:<作成日の週の月曜（日本時間）>。M-talk がルームごとにカード・（任意の）PDF を1回だけ投稿する。
+// --line / line: true のとき、同じカード本文と「週報を開く」リンクを、店舗のオプトイン済み LINE グループへも1通送る（PDFは付けない。M-talk 側で重複防止）。
 // カードは件数・評価・PV などの集計だけ。お客様の個人情報らしき文字列（メールアドレス・電話番号）があれば送らない。
 // 週報の本体は HTML（承認済み共通テンプレート）。M-talk には HTML を添付せず、許可ホスト marugo-s.github.io 上の Pages URL を「週報を開く」で開く。PDF は任意。
 import { SOURCES } from "./sources.js";
@@ -96,7 +97,7 @@ function pdfBase64(value) {
 
 /**
  * agent-api POST /weekly/deliver の本文（Grok Bot から）。
- * { storeId? | site?: { source, storeKey }, asOf, sections: [{ source, fields: [{label,value}], items? }], pdf?: { base64, filename? }, roomIds?, dryRun? }
+ * { storeId? | site?: { source, storeKey }, asOf, sections: [{ source, fields: [{label,value}], items? }], pdf?: { base64, filename? }, roomIds?, dryRun?, line? }
  */
 export function validateWeeklyDeliverInput(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new WeeklyDeliveryError("送信内容が不正です");
@@ -138,7 +139,8 @@ export function validateWeeklyDeliverInput(raw) {
     roomIds = [...new Set(raw.roomIds)];
   }
   if (raw.dryRun != null && typeof raw.dryRun !== "boolean") throw new WeeklyDeliveryError("dryRun は true / false で指定してください");
-  return { storeId, site, asOf, sections, pdf, roomIds, dryRun: raw.dryRun === true };
+  if (raw.line != null && typeof raw.line !== "boolean") throw new WeeklyDeliveryError("line は true / false で指定してください");
+  return { storeId, site, asOf, sections, pdf, roomIds, dryRun: raw.dryRun === true, line: raw.line === true };
 }
 
 /** 送るルーム: 指定 → 設定のルーム → Bot の店舗ルーム → null（＝M-talk が Bot の参加している全グループへ）。 */
@@ -153,7 +155,7 @@ export function weeklyRoomIds({ requested = null, scheduled = null, settings, bo
 }
 
 /** mtalk-external-post POST /store-post の本文。 */
-export function buildWeeklyStorePost({ storeId, storeName, asOf, sections, pdf, botId, roomIds, dryRun }) {
+export function buildWeeklyStorePost({ storeId, storeName, asOf, sections, pdf, botId, roomIds, dryRun, line }) {
   const name = clip(storeName, 100) || "（店舗未設定）";
   const labels = sections.map((s) => s.heading).join("・");
   return {
@@ -169,6 +171,7 @@ export function buildWeeklyStorePost({ storeId, storeName, asOf, sections, pdf, 
     links: [{ label: "週報を開く", url: weeklyHtmlUrl(storeId, asOf) }],
     ...(pdf ? { files: [{ pdf_base64: pdf.base64, filename: pdf.filename || weeklyFileName(name, asOf) }] } : {}),
     ...(dryRun ? { dry_run: true } : {}),
+    ...(line ? { line: true } : {}),
   };
 }
 
@@ -192,16 +195,28 @@ export async function deliverWeeklyReport(input, { findStore, loadSettings, load
   const bot = effectiveBot(settings, store.name, bots);
   if (!bot) return { ok: false, ...base, skipped: `${NO_BOT_REASON}（アプリの「口コミ通知」で店舗Botを指定してください）` };
   const roomIds = weeklyRoomIds({ requested: input.roomIds, scheduled: await loadScheduleRooms(store.id), settings, bot, bots });
-  const payload = buildWeeklyStorePost({ storeId: store.id, storeName: store.name, asOf: input.asOf, sections: input.sections, pdf: input.pdf, botId: bot.id, roomIds, dryRun: input.dryRun });
+  const payload = buildWeeklyStorePost({ storeId: store.id, storeName: store.name, asOf: input.asOf, sections: input.sections, pdf: input.pdf, botId: bot.id, roomIds, dryRun: input.dryRun, line: input.line });
   const res = await send(payload);
   const rooms = (Array.isArray(res?.rooms) ? res.rooms : []).slice(0, 50).map((r) => ({
     id: r.group_id ?? null, name: clip(r.name, 100), isStoreRoom: r.is_store_room ?? undefined,
     ...(input.dryRun ? { alreadySent: !!r.already_sent } : { cardMessageId: r.card_message_id ?? null, fileMessageIds: Array.isArray(r.file_message_ids) ? r.file_message_ids : [], deduplicated: !!r.deduplicated }),
   }));
+  const lineRes = res?.line && typeof res.line === "object" ? res.line : null;
+  const line = input.line ? {
+    enabled: true,
+    skipped: lineRes?.skipped ? clip(lineRes.skipped, 80) : null,
+    preview: input.dryRun ? clip(lineRes?.text, 2000) : undefined,
+    targets: (Array.isArray(lineRes?.targets) ? lineRes.targets : []).slice(0, 20).map((r) => ({
+      id: r.room_id ?? null, name: clip(r.name, 100),
+      ...(input.dryRun ? { alreadySent: !!r.already_sent } : { deduplicated: !!r.deduplicated }),
+    })),
+    ...(input.dryRun ? {} : { deduplicated: !!lineRes?.deduplicated }),
+  } : null;
   return {
     ok: true, ...base, bot: { id: bot.id, name: res?.bot_name ? clip(res.bot_name, 100) : bot.name, how: bot.how }, roomIds, rooms,
     html: { url: weeklyHtmlUrl(store.id, input.asOf) },
     pdf: payload.files ? { filename: payload.files[0].filename } : null,
+    line,
     ...(input.dryRun ? { preview: clip(res?.text, 500) } : { deduplicated: !!res?.deduplicated }),
   };
 }
