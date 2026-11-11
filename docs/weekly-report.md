@@ -172,3 +172,11 @@ node scripts/weekly-deliver.mjs --tabelog-input /workspace/run-20261005-weekly-c
 4. テストで骨格の同一性（`server/tests/weekly-report-shared.test.js` の chrome 比較）と未取得・PII を確認する。
 
 テスト: `server/tests/weekly-assemble.test.js`（実データの組み立て・stub の拒否）、`server/tests/weekly-schedules.test.js`（配信予定・due/claim/finish・ルームの優先順）、`server/tests/weekly-delivery.test.js`（M-talk への配信・PDF・カード・CLI）、`server/tests/weekly-report-shared.test.js`（共通テンプレート・食べログの薄いラッパー・骨格の同一性・CLI）、`server/tests/ikyu-weekly-report.test.js`（一休の組み立て・未取得・PII・CLI）、`server/tests/tabelog-weekly-parity.test.js`（食べログの内容）。
+
+## 一休の競合比較（近隣の比較店）
+
+- 比較店は `scripts/ikyu/competitors-config.json`（店舗ごと。選定理由 `selection`・エリア名 `areaLabel`）。入れ替えはこのファイルの PR で行う。
+- 取得: `node scripts/ikyu-public-competitors.mjs --store 112789` → `/workspace/run-YYYYMMDD-ikyu-public/store-<ID>.html` と `ikyu-competitors.json`。一休の公開店舗ページ（`https://restaurant.ikyu.com/<ID>/`）だけ。管理画面・ログインは使わない。Chrome の UA、間隔 2.5 秒以上、リダイレクトは辿らず、403・429・503・追加認証で止める。保存済み HTML から作り直すときは `--from-dir`。
+- 読む項目: 店名・ジャンル・評価・口コミ件数・価格帯（夜／昼）・最寄駅。評価数が規定に満たず一休が評価を出していない店は評価「未取得」。口コミの本文・投稿者は読まない。
+- 組み立て: `weekly-assemble.mjs --runs-dir` が `ikyu-competitors.json` を探し、作成日以前・14日以内（`ikyuPublicMaxAgeDays`）の最新を使う。設定があるのに新しい取得が無ければ「足りない項目」（終了コード 3）。
+

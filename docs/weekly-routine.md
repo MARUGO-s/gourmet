@@ -12,7 +12,8 @@
    `node scripts/weekly-assemble.mjs --runs-dir /workspace --tabelog-store <sites.tabelog> --ikyu-store <sites.ikyu> --name "<店舗名>" --as-of <asOf> --out-dir /workspace/run-<asOf>-weekly-<店舗>`
    - 終了コード 1（当日の取得が終わっていない・日別が欠けている・stub を検出）: その日の食べログ・一休の取得依頼（`agent-queue --claim`）が終わっているか確かめ、終わっていなければ `--weekly-finish --outcome deferred --reason "<理由>"` で終える（30分後に再び予定になる）。
    - 終了コード 3（公開ページ・新着ご予約・アクセス数ランキング・競合・ニューオープンなど取れるはずの項目が欠けている）: その項目を通常の取得手順で取り直してから組み立て直す。取り直せなければ `--allow-gaps` で続け、足りない項目を最後の報告に書く。
-   - 一休の競合・エリア順位・新規オープンは取得の仕組みが無いため「未取得」のままでよい（作らない）。
+   - 一休の競合比較: 比較店は `scripts/ikyu/competitors-config.json`（CAVA は四谷周辺のワインバー・ビストロ・フレンチ・イタリアン 8 店）。組み立ての前に、`/workspace/run-*-ikyu-public/ikyu-competitors.json` が作成日以前・14日以内に無ければ `node scripts/ikyu-public-competitors.mjs --store <sites.ikyu>` で取り直す（公開ページだけ・間隔 2.5 秒・403／追加認証で停止。止まったら `--allow-gaps` で続けて報告）。評価が非表示（規定評価数未満）の店は「未取得」のまま。
+   - 一休のエリア順位・新規オープン・比較店のプラン価格は取得の仕組みが無いため「未取得」のままでよい（作らない）。
    - 作成日より後の取得（取得が遅れた日の分）も、作成日より前の日別・確定月の月別だけは自動で使われる（公開ページ・通知・口コミなど取得時点の値は使わない）。補った日は出力の `notes`（ℹ の行）に出るので、最後の報告に書く。
 4. HTML: `node scripts/weekly-deliver.mjs --tabelog-input <out>/tabelog-input.json --ikyu-input <out>/ikyu-input.json --name "<店舗名>" --store-id <storeId> --as-of <asOf> --out-dir <out>/weekly --publish-dir public --no-post`。
    PDF は画面で「PDF」にチェックがある店舗だけ（`includePdf`）。

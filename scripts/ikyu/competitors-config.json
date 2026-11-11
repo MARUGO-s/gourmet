@@ -1,0 +1,26 @@
+{
+  "comment": "一休の週報の競合比較に使う比較店（店舗ごと）。一休の公開ページだけを読む（scripts/ikyu-public-competitors.mjs）。店を入れ替えるときはここを直して PR にする。",
+  "stores": {
+    "112789": {
+      "areaLabel": "四谷三丁目・曙橋周辺",
+      "selection": "四谷周辺のワインバー・ビストロ・フレンチ・イタリアン（一休掲載店から選定）",
+      "selectedOn": "2026-11-11",
+      "selectedFrom": [
+        "https://restaurant.ikyu.com/area/tokyo/017/0148/t-genre125/",
+        "https://restaurant.ikyu.com/area/tokyo/017/0148/t-genre395/",
+        "https://restaurant.ikyu.com/area/tokyo/017/0148/t-genre46/",
+        "https://restaurant.ikyu.com/area/tokyo/017/0148/t-genre47/"
+      ],
+      "competitors": [
+        { "storeId": "113649", "category": "ビストロ・ワインバー" },
+        { "storeId": "148912", "category": "ビストロ" },
+        { "storeId": "148200", "category": "ビストロ" },
+        { "storeId": "124343", "category": "フレンチ" },
+        { "storeId": "105999", "category": "フレンチ" },
+        { "storeId": "110062", "category": "フレンチ" },
+        { "storeId": "108533", "category": "イタリアン" },
+        { "storeId": "124069", "category": "イタリアン" }
+      ]
+    }
+  }
+}
