@@ -122,6 +122,25 @@ test("deliver: auto-matches the BISTRO CAVA CAVA store bot and prefers its store
   assert.deepEqual(out.html, { url: weeklyHtmlUrl(STORE, "2026-10-05") });
 });
 
+test("revision: a user-requested corrected resend gets its own dedupe key (:rN) and a 【修正版】 title; invalid revisions are refused", async () => {
+  assert.equal(validateWeeklyDeliverInput(deliverBody()).revision, null, "通常の配信は revision なし");
+  assert.equal(validateWeeklyDeliverInput(deliverBody({ revision: 2 })).revision, 2);
+  for (const bad of [1, 0, -2, 2.5, "2", 100, true]) assert.throws(() => validateWeeklyDeliverInput(deliverBody({ revision: bad })), WeeklyDeliveryError, String(bad));
+  assert.equal(weeklyDedupeKey(STORE, "2026-10-07", 2), `gourmet-weekly:${STORE}:2026-10-05:r2`);
+  assert.equal(weeklyDedupeKey(STORE, "2026-10-07"), `gourmet-weekly:${STORE}:2026-10-05`, "revision なしは従来どおり");
+  const plain = buildWeeklyStorePost({ storeId: STORE, storeName: "BISTRO CAVA CAVA", asOf: "2026-10-05", sections: validateWeeklyDeliverInput(deliverBody()).sections, botId: CAVA_BOT.id, line: true });
+  assert.ok(!plain.title.includes("修正版"));
+  const { sent, deps: d } = deps();
+  const out = await deliverWeeklyReport(validateWeeklyDeliverInput(deliverBody({ revision: 2, line: true, pdf: null })), d);
+  assert.equal(sent[0].dedupe_key, `gourmet-weekly:${STORE}:2026-10-05:r2`);
+  assert.ok(sent[0].title.startsWith("【修正版】BISTRO CAVA CAVA 週報"), sent[0].title);
+  assert.equal(sent[0].line, true, "LINE 本文は M-talk 側で題名から作る（【修正版】も付く）");
+  assert.ok(sent[0].dedupe_key.length <= 112, "LINE 側の dedupe_key 上限に収まる");
+  assert.equal(out.dedupeKey, sent[0].dedupe_key);
+  assert.equal(out.revision, 2);
+  assert.deepEqual(out.html, { url: weeklyHtmlUrl(STORE, "2026-10-05") }, "リンク先は同じ作成日の週報");
+});
+
 test("deliver: rooms from the request, then the alert settings, then the store room, else all bot rooms", () => {
   const bot = { id: CAVA_BOT.id };
   assert.deepEqual(weeklyRoomIds({ requested: [5], settings: { roomIds: [30] }, bot, bots: [CAVA_BOT] }), [5]);
@@ -291,4 +310,13 @@ test("weekly-deliver CLI: dry run by default, --send to post, --no-post stays lo
   assert.equal(calls.length, 4, "--no-post は agent-api を呼ばない（トークンも不要）");
   assert.equal(local.posted, false);
   assert.throws(() => deliverPayload({ views: views(), pdf: null, args: { "store-id": "bad" } }), /storeId/);
+  assert.equal(liveLine.revision, undefined, "--revision 無しでは版なし（通常の週1回）");
+
+  await runWeeklyDeliver([...argv, "--line", "--revision", "2", "--store-id", STORE, "--room", "30"], { fetcher, env, log: () => {} });
+  const revised = JSON.parse(calls[4].init.body);
+  assert.equal(revised.revision, 2);
+  assert.equal(revised.dryRun, true, "--revision でも既定は確認だけ");
+  for (const bad of ["x", "1.5", "-2"]) await assert.rejects(runWeeklyDeliver([...argv, "--revision", bad, "--store-id", STORE], { fetcher, env, log: () => {} }), /revision/);
+  await assert.rejects(runWeeklyDeliver([...argv, "--revision", "1", "--store-id", STORE], { fetcher, env, log: () => {} }), /revision/);
+  assert.equal(calls.length, 5, "不正な --revision は agent-api を呼ばない");
 });

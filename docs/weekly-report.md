@@ -89,6 +89,7 @@ INGEST_TOKEN=... node scripts/weekly-deliver.mjs …同じ引数… --pdf --send
 - 店舗: `--store-id`（gourmet の店舗 UUID）、無ければ最初のサイトの店舗キーからアプリの店舗を探します。**Pages 公開（`--publish-dir`）には `--store-id` が必須**です。
 - 店舗Bot・ルーム: 店舗Bot は口コミ通知と同じ設定。ルームは「`--room <ID>` → 画面「週報の配信」で選んだルーム → 口コミ通知で選んだルーム → Bot の店舗ルーム（`is_store_room`）→ Bot が参加している全グループ」（BistroCAVACAVA は 30）。
 - 二重送信の防止: 店舗×週（作成日の週の月曜、日本時間）で同じ `dedupe_key`（`gourmet-weekly:<店舗 UUID>:<月曜>`）。月曜の作業をやり直しても、同じ週はルームごとにカードが 1 回だけ届きます。LINE も同じキーでグループごとに 1 回だけです。
+- 修正版の再送（利用者が頼んだときだけ）: `--revision 2`（本文 `revision`、2〜99 の整数）を付けると `dedupe_key` が `…:<月曜>:r2` になり、同じ週でも版ごとに 1 回だけ M-talk・LINE へ届きます。カードの題名と LINE 本文の先頭に「【修正版】」が付きます。月曜の定期配信では使いません。
 - カードに載せるのは件数・評価・PV などの集計だけ。メールアドレス・電話番号らしき文字列があれば gourmet と M-talk の両方で送りません。
 
 `agent-api POST /weekly/deliver` の本文:
