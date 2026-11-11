@@ -41,6 +41,20 @@
 - 一覧のページタイトル（例「曙橋・四ツ谷三丁目のワインバー ランキング」）でエリア・ジャンルが効いていることを確認できる。「おすすめのグルメ情報」になっていたらジャンル指定が無視されている。
 - 一覧カードは `div.list-rst[data-rst-id]`（1ページ最大20件）。静的HTMLに PR カードは無く、広告は一覧外の GPT バナー。
 
+### 日次スクリプト `scripts/tabelog/public-fetch.mjs`
+
+ログイン不要。2026-10-20 の公開取得と同じく、通常のブラウザ UA で HTTP 取得する（自店ページも一覧も静的 HTML にデータがある。curl の既定 UA は Cloudflare で 403 になることがある）。保存 HTML は Playwright（JavaScript オフ・オフライン）で既存パーサを通す。管理画面の日別・月別は含めない（公開レポートだけを `/ingest`）。CAPTCHA 回避サービスは使わない。制限されたら止める。
+
+```
+node scripts/tabelog/public-fetch.mjs --store 13245351
+  [--out-dir /workspace/run-YYYYMMDD-tabelog-public]
+  [--delay-ms 2500] [--from-dir DIR]
+  [--dry-run] [--ingest] [--token-file ~/.review-agent/ingest_token]
+```
+
+既定の保存先は `/workspace/run-YYYYMMDD-tabelog-public/`（HTML・fetch-log・results.json・payload.json）。既定は取得＋検証（`agent-ingest --dry-run`、送信しない）。`--ingest` のときだけ dry-run のあと本番取り込みする。`--from-dir` は保存済み HTML だけを読む（ネットワークなし）。
+
+
 ## 週報 HTML（既定テンプレート）
 
 **既定**は `scripts/tabelog/weekly-report.js`（`buildWeeklyReportHtml` / `assembleWeeklyReportInput`）。見た目は全サイト共通テンプレート `scripts/shared/weekly-report.js`（一休週報も同じ）。エクスポート入口は `node scripts/tabelog-weekly-report.mjs`（または `node scripts/weekly-report.mjs --site tabelog`）。UI＝サンプル週報 HTML、内容＝青写真ルール。オフライン（外部 CDN なし）。通話成立≠予約確定、通知件数≠期間合計、公開ページに投稿日なし、を脚注に明記。詳細: [weekly-report.md](weekly-report.md)・[tabelog-weekly-report.md](tabelog-weekly-report.md)。
