@@ -34,9 +34,11 @@ test("weekly deliver input: store, asOf, per-site sections; HTML is never attach
   assert.deepEqual(input.sections.map((s) => s.heading), ["食べログ", "一休"]);
   assert.deepEqual(input.sections[0].items, ["9月のPVは4,753"], "**太字** の記号はカードでは外す");
   assert.equal(input.dryRun, false);
+  assert.equal(input.line, false);
   assert.equal(input.pdf.filename, null);
   assert.equal(validateWeeklyDeliverInput(deliverBody({ storeId: STORE.toUpperCase(), site: undefined })).storeId, STORE);
   assert.equal(validateWeeklyDeliverInput(deliverBody({ dryRun: true })).dryRun, true);
+  assert.equal(validateWeeklyDeliverInput(deliverBody({ line: true })).line, true);
   assert.deepEqual(validateWeeklyDeliverInput(deliverBody({ roomIds: [30, 30] })).roomIds, [30]);
   assert.equal(validateWeeklyDeliverInput(deliverBody({ pdf: undefined })).pdf, null, "PDFは任意");
   const bad = (over, re) => assert.throws(() => validateWeeklyDeliverInput(deliverBody(over)), (e) => e instanceof WeeklyDeliveryError && re.test(e.message));
@@ -52,6 +54,7 @@ test("weekly deliver input: store, asOf, per-site sections; HTML is never attach
   bad({ pdf: { base64: "%%%" } }, /PDFの形式/);
   bad({ roomIds: [0] }, /roomIds/);
   bad({ dryRun: "yes" }, /dryRun/);
+  bad({ line: "yes" }, /line/);
   assert.equal(looksLikePersonalInfo("118 PV（09/27–10/03、前7日比 −68.8%）"), false);
   assert.equal(looksLikePersonalInfo("190,800 円"), false);
   assert.equal(looksLikePersonalInfo("０３−１２３４−５６７８"), true);
@@ -85,7 +88,10 @@ test("store-post payload: the M-talk /store-post contract (not the /alert review
   for (const k of ["reviews", "score_changes", "recipient_user_id"]) assert.equal(k in body, false, k);
   const dry = buildWeeklyStorePost({ storeId: STORE, storeName: "BISTRO CAVA CAVA", asOf: input.asOf, sections: input.sections, pdf: null, botId: CAVA_BOT.id, roomIds: null, dryRun: true });
   assert.equal(dry.dry_run, true);
-  assert.equal("files" in dry || "room_ids" in dry, false);
+  assert.equal("files" in dry || "room_ids" in dry || "line" in dry, false);
+  const withLine = buildWeeklyStorePost({ storeId: STORE, storeName: "BISTRO CAVA CAVA", asOf: input.asOf, sections: input.sections, pdf: null, botId: CAVA_BOT.id, roomIds: [30], dryRun: true, line: true });
+  assert.equal(withLine.line, true);
+  assert.equal("files" in withLine, false, "LINE 用でも PDF は任意のまま（付けないときは files を載せない）");
 });
 
 // ---------- 送信の手順 ----------
@@ -131,6 +137,15 @@ test("deliver: dry run reaches M-talk with dry_run and posts nothing; 'none' and
   assert.equal(out.dryRun, true);
   assert.deepEqual(out.rooms, [{ id: 30, name: "BISTRO CAVA CAVA", isStoreRoom: true, alreadySent: false }]);
   assert.match(out.preview, /^\[週報\]/);
+  assert.equal(out.line, null);
+
+  const lineDry = deps({ reply: (p) => ({ ok: true, dry_run: true, bot_name: "BISTRO CAVACAVA bot", rooms: [{ group_id: 30, name: "BISTRO CAVA CAVA", is_store_room: true, already_sent: false }], text: "[週報] BISTRO CAVA CAVA 週報（食べログ・一休）", cards: [], files: [], line: { enabled: true, text: "[週報] BISTRO CAVA CAVA 週報（食べログ・一休）\n週報を開く\nhttps://example/", targets: [{ room_id: "C162737896a6b9b50ab39376568e3b05a", name: "Cava Cava", already_sent: false }] } }) });
+  const lineOut = await deliverWeeklyReport(validateWeeklyDeliverInput(deliverBody({ dryRun: true, line: true, pdf: undefined })), lineDry.deps);
+  assert.equal(lineDry.sent[0].line, true);
+  assert.equal("files" in lineDry.sent[0], false);
+  assert.equal(lineOut.line.enabled, true);
+  assert.deepEqual(lineOut.line.targets, [{ id: "C162737896a6b9b50ab39376568e3b05a", name: "Cava Cava", alreadySent: false }]);
+  assert.match(lineOut.line.preview, /週報を開く/);
 
   const none = deps({ settings: { store_id: STORE, mtalk_bot_mode: "none" } });
   const skipped = await deliverWeeklyReport(validateWeeklyDeliverInput(deliverBody()), none.deps);
@@ -239,6 +254,7 @@ test("weekly-deliver CLI: dry run by default, --send to post, --no-post stays lo
   assert.equal(JSON.stringify(calls[0].init).includes("GOURMET_MTALK_TOKEN"), false);
   const sent = JSON.parse(calls[0].init.body);
   assert.equal(sent.dryRun, true);
+  assert.equal(sent.line, undefined, "既定では LINE へ送らない");
   assert.deepEqual(sent.site, { source: "tabelog", storeKey: "13245351" });
   assert.equal(sent.pdf, undefined, "既定では PDF を M-talk に載せない（HTML が本体）");
   assert.ok(fs.existsSync(path.join(dir, "BISTRO CAVA CAVA weekly 2026-10-05.pdf")), "out-dir では手元確認用に PDF も書く");
@@ -259,13 +275,20 @@ test("weekly-deliver CLI: dry run by default, --send to post, --no-post stays lo
   assert.equal(live.storeId, STORE);
   assert.deepEqual(live.roomIds, [30]);
   assert.equal(live.pdf, undefined, "--pdf 無しでは添付なし");
+  assert.equal(live.line, undefined, "--line 無しでは LINE へ送らない");
+
+  await runWeeklyDeliver([...argv, "--send", "--line", "--store-id", STORE, "--room", "30", "--allow-unassembled"], { fetcher, env, log: () => {} });
+  const liveLine = JSON.parse(calls[2].init.body);
+  assert.equal(liveLine.dryRun, false);
+  assert.equal(liveLine.line, true);
+  assert.equal(liveLine.pdf, undefined, "--line でも PDF は付けない（--pdf が別）");
 
   await runWeeklyDeliver([...argv, "--send", "--pdf", "--store-id", STORE, "--room", "30", "--allow-unassembled"], { fetcher, env, log: () => {} });
-  const withPdf = JSON.parse(calls[2].init.body);
+  const withPdf = JSON.parse(calls[3].init.body);
   assert.equal(Buffer.from(withPdf.pdf.base64, "base64").subarray(0, 5).toString(), "%PDF-");
 
   const local = await runWeeklyDeliver([...argv, "--no-post"], { fetcher, env: {}, log: () => {} });
-  assert.equal(calls.length, 3, "--no-post は agent-api を呼ばない（トークンも不要）");
+  assert.equal(calls.length, 4, "--no-post は agent-api を呼ばない（トークンも不要）");
   assert.equal(local.posted, false);
   assert.throws(() => deliverPayload({ views: views(), pdf: null, args: { "store-id": "bad" } }), /storeId/);
 });
