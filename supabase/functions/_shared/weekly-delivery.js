@@ -56,8 +56,11 @@ export function weekMonday(asOf) {
   d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
   return d.toISOString().slice(0, 10);
 }
-/** 店舗×週で1つ（月曜の作業をやり直しても、同じ週に二重に届かない）。 */
-export const weeklyDedupeKey = (storeId, asOf) => `gourmet-weekly:${String(storeId).toLowerCase()}:${weekMonday(asOf)}`;
+/** 店舗×週で1つ（月曜の作業をやり直しても、同じ週に二重に届かない）。revision（2以上）は利用者が頼んだ修正版の再送用で、版ごとに1回だけ届く（:r2 など）。 */
+export const weeklyDedupeKey = (storeId, asOf, revision = null) => `gourmet-weekly:${String(storeId).toLowerCase()}:${weekMonday(asOf)}${revision ? `:r${revision}` : ""}`;
+/** 修正版の見出しの接頭辞（カードの題名・LINE 本文に付く）。 */
+export const WEEKLY_REVISION_PREFIX = "【修正版】";
+export const WEEKLY_MAX_REVISION = 99;
 const slash = (ymd) => ymd.replace(/-/g, "/");
 
 /** M-talk 側のファイル名規則（英数字と ._() - のみ）に合わせる。 */
@@ -97,7 +100,8 @@ function pdfBase64(value) {
 
 /**
  * agent-api POST /weekly/deliver の本文（Grok Bot から）。
- * { storeId? | site?: { source, storeKey }, asOf, sections: [{ source, fields: [{label,value}], items? }], pdf?: { base64, filename? }, roomIds?, dryRun?, line? }
+ * { storeId? | site?: { source, storeKey }, asOf, sections: [{ source, fields: [{label,value}], items? }], pdf?: { base64, filename? }, roomIds?, dryRun?, line?, revision? }
+ * revision: 利用者が頼んだ修正版の再送だけに使う（2〜99 の整数）。dedupe_key に :r<番号> が付き、題名に【修正版】が付く。
  */
 export function validateWeeklyDeliverInput(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new WeeklyDeliveryError("送信内容が不正です");
@@ -140,7 +144,12 @@ export function validateWeeklyDeliverInput(raw) {
   }
   if (raw.dryRun != null && typeof raw.dryRun !== "boolean") throw new WeeklyDeliveryError("dryRun は true / false で指定してください");
   if (raw.line != null && typeof raw.line !== "boolean") throw new WeeklyDeliveryError("line は true / false で指定してください");
-  return { storeId, site, asOf, sections, pdf, roomIds, dryRun: raw.dryRun === true, line: raw.line === true };
+  let revision = null;
+  if (raw.revision != null) {
+    if (!Number.isSafeInteger(raw.revision) || raw.revision < 2 || raw.revision > WEEKLY_MAX_REVISION) throw new WeeklyDeliveryError(`revision は2〜${WEEKLY_MAX_REVISION}の整数で指定してください（修正版の再送用）`);
+    revision = raw.revision;
+  }
+  return { storeId, site, asOf, sections, pdf, roomIds, dryRun: raw.dryRun === true, line: raw.line === true, revision };
 }
 
 /** 送るルーム: 指定 → 設定のルーム → Bot の店舗ルーム → null（＝M-talk が Bot の参加している全グループへ）。 */
@@ -155,16 +164,16 @@ export function weeklyRoomIds({ requested = null, scheduled = null, settings, bo
 }
 
 /** mtalk-external-post POST /store-post の本文。 */
-export function buildWeeklyStorePost({ storeId, storeName, asOf, sections, pdf, botId, roomIds, dryRun, line }) {
+export function buildWeeklyStorePost({ storeId, storeName, asOf, sections, pdf, botId, roomIds, dryRun, line, revision = null }) {
   const name = clip(storeName, 100) || "（店舗未設定）";
   const labels = sections.map((s) => s.heading).join("・");
   return {
     bot_id: botId,
     ...(roomIds?.length ? { room_ids: roomIds } : {}),
-    dedupe_key: weeklyDedupeKey(storeId, asOf),
+    dedupe_key: weeklyDedupeKey(storeId, asOf, revision),
     type: "weekly_report",
     store_name: name,
-    title: clip(`${name} 週報（${labels}）`, 120),
+    title: clip(`${revision ? WEEKLY_REVISION_PREFIX : ""}${name} 週報（${labels}）`, 120),
     subtitle: `${slash(asOf)} 作成（日本時間）`,
     sections: sections.map((s) => ({ heading: s.heading, fields: s.fields, items: s.items })),
     note: WEEKLY_NOTE,
@@ -188,14 +197,15 @@ export async function deliverWeeklyReport(input, { findStore, loadSettings, load
   const store = await findStore(input);
   if (!store) throw new WeeklyDeliveryError("店舗が見つかりません（storeId、またはアプリの店舗に紐づいたサイトの店舗キーを指定してください）", 404);
   const settings = resolveAlertSettings(await loadSettings(store.id));
-  const dedupeKey = weeklyDedupeKey(store.id, input.asOf);
-  const base = { store: { id: store.id, name: store.name }, asOf: input.asOf, week: weekMonday(input.asOf), dedupeKey, dryRun: input.dryRun };
+  const revision = input.revision ?? null;
+  const dedupeKey = weeklyDedupeKey(store.id, input.asOf, revision);
+  const base = { store: { id: store.id, name: store.name }, asOf: input.asOf, week: weekMonday(input.asOf), dedupeKey, ...(revision ? { revision } : {}), dryRun: input.dryRun };
   if (settings.botMode === "none") return { ok: false, ...base, skipped: "この店舗は M-talk の店舗Botへ「送らない」設定です（アプリの「口コミ通知」で変更できます）" };
   const bots = await listBots();
   const bot = effectiveBot(settings, store.name, bots);
   if (!bot) return { ok: false, ...base, skipped: `${NO_BOT_REASON}（アプリの「口コミ通知」で店舗Botを指定してください）` };
   const roomIds = weeklyRoomIds({ requested: input.roomIds, scheduled: await loadScheduleRooms(store.id), settings, bot, bots });
-  const payload = buildWeeklyStorePost({ storeId: store.id, storeName: store.name, asOf: input.asOf, sections: input.sections, pdf: input.pdf, botId: bot.id, roomIds, dryRun: input.dryRun, line: input.line });
+  const payload = buildWeeklyStorePost({ storeId: store.id, storeName: store.name, asOf: input.asOf, sections: input.sections, pdf: input.pdf, botId: bot.id, roomIds, dryRun: input.dryRun, line: input.line, revision });
   const res = await send(payload);
   const rooms = (Array.isArray(res?.rooms) ? res.rooms : []).slice(0, 50).map((r) => ({
     id: r.group_id ?? null, name: clip(r.name, 100), isStoreRoom: r.is_store_room ?? undefined,

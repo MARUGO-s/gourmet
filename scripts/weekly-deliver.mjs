@@ -10,7 +10,9 @@
 //     --tabelog-input <assemble>/tabelog-input.json \
 //     --ikyu-input <assemble>/ikyu-input.json \
 //     --name "BISTRO CAVA CAVA" --store-id <gourmet の店舗 UUID> [--as-of 2026-10-05] [--room 30] \
-//     [--out-dir run-xxx/weekly] [--publish-dir public] [--pdf] [--line] [--send | --no-post]
+//     [--out-dir run-xxx/weekly] [--publish-dir public] [--pdf] [--line] [--revision 2] [--send | --no-post]
+//
+// --revision N（2以上）: 利用者が頼んだ修正版の再送だけに使う。同じ週でも版ごとに1回だけ届き、題名・LINE 本文に【修正版】が付く。
 //
 // 店舗: --store-id、無ければ最初のサイトの店舗キー（食べログの storeKey・一休の店舗ID）からアプリの店舗を探す。
 // Pages に載せる HTML は --store-id 必須（URL が店舗 UUID）。同じ店舗×週は1回だけ届く。詳細: docs/weekly-report.md
@@ -28,6 +30,10 @@ import { payloadProblem, sendBlockers } from "./shared/weekly-sources.js";
 
 const japanToday = () => new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Tokyo" }).format(new Date());
 const has = (v) => v !== undefined && v !== true;
+const parseRevision = (v) => {
+  if (typeof v !== "string" || !/^\d+$/.test(v)) throw new Error("--revision は2以上の整数で指定してください（修正版の再送用）");
+  return Number(v);
+};
 
 /** 引数 → サイトごとのビュー（指定されたサイトだけ。順番は食べログ → 一休）。 */
 export function buildViews(args) {
@@ -71,6 +77,7 @@ export function deliverPayload({ views, pdf, args }) {
     ...(args.room !== undefined ? { roomIds: [].concat(args.room).map(Number) } : {}),
     dryRun: args.send !== true,
     ...(args.line === true ? { line: true } : {}),
+    ...(args.revision !== undefined ? { revision: parseRevision(args.revision) } : {}),
   };
   validateWeeklyDeliverInput(body); // agent-api と同じ検証（個人情報・HTML の添付などを送る前に止める）
   return body;
@@ -150,7 +157,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   runWeeklyDeliver(process.argv.slice(2)).then((out) => {
     const r = out.result;
     if (r && r.ok === false) console.error(`送りませんでした: ${r.skipped}`);
-    else if (r) console.error(`${out.dryRun ? "【確認だけ（dryRun）】" : ""}${r.store?.name} → ${r.bot?.name}（${(r.rooms ?? []).map((x) => x.name).join("、") || "ルームなし"}）${r.line?.targets?.length ? ` / LINE（${r.line.targets.map((x) => x.name).join("、")}）` : r.line?.skipped ? ` / LINE（${r.line.skipped}）` : ""}${r.deduplicated ? "（送信済みのため再投稿なし）" : ""}${r.html?.url ? ` / ${r.html.url}` : ""}`);
+    else if (r) console.error(`${out.dryRun ? "【確認だけ（dryRun）】" : ""}${r.store?.name} → ${r.bot?.name}（${(r.rooms ?? []).map((x) => x.name).join("、") || "ルームなし"}）${r.line?.targets?.length ? ` / LINE（${r.line.targets.map((x) => x.name).join("、")}）` : r.line?.skipped ? ` / LINE（${r.line.skipped}）` : ""}${r.revision ? `（修正版 r${r.revision}）` : ""}${r.deduplicated ? "（送信済みのため再投稿なし）" : ""}${r.html?.url ? ` / ${r.html.url}` : ""}`);
     process.stdout.write(`${JSON.stringify(out.result ?? out.body, null, 2)}\n`);
   }).catch((error) => { console.error(String(error?.message ?? error)); process.exitCode = 1; });
 }
