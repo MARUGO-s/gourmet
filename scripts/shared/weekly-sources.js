@@ -12,6 +12,7 @@ import { parseHtml } from "../ikyu/html-lite.js";
 import { storePublicConfig } from "../tabelog/store-config.js";
 import { assembleWeeklyReportInput } from "../tabelog/weekly-report.js";
 import { assembleIkyuWeeklyInput } from "../ikyu/weekly-report.js";
+import { COMPETITORS_FILE, competitorConfig, competitorRows, competitorSnapshotProblem } from "../ikyu/competitors.js";
 import { shiftDate, weeklyPvWindows } from "./weekly-windows.js";
 
 export const ASSEMBLER = "weekly-assemble";
@@ -116,7 +117,7 @@ export function parseAccessRanking(html, shopName) {
  * 配信の出力フォルダ（weekly-card-*.json がある）は stub の入力を含むことがあるため読まない。
  */
 export function discoverRunFiles(runsDir) {
-  const out = { payloads: [], ownerHomes: [], rankings: [], skipped: [] };
+  const out = { payloads: [], ownerHomes: [], rankings: [], ikyuCompetitors: [], skipped: [] };
   if (!runsDir || !fs.existsSync(runsDir)) return out;
   for (const ent of fs.readdirSync(runsDir, { withFileTypes: true })) {
     if (!ent.isDirectory() || ent.name.startsWith(".") || ["node_modules", "gourmet"].includes(ent.name) || ent.name.startsWith("wt-")) continue;
@@ -128,6 +129,7 @@ export function discoverRunFiles(runsDir) {
       const file = path.join(dir, n);
       if (/^payload.*\.json$/.test(n)) out.payloads.push(file);
       else if (/^owner-home.*\.html$/.test(n)) out.ownerHomes.push(file);
+      else if (n === COMPETITORS_FILE) out.ikyuCompetitors.push(file);
     }
     const pages = path.join(dir, "pages");
     if (names.includes("pages") && fs.statSync(pages).isDirectory()) {
@@ -353,7 +355,7 @@ export function assembleTabelogSources({ storeKey, storeName, asOf, payloadFiles
 }
 
 // ---------- 一休 ----------
-export function assembleIkyuSources({ storeKey, storeName, asOf, payloadFiles = [], options = {} }) {
+export function assembleIkyuSources({ storeKey, storeName, asOf, payloadFiles = [], competitorFiles = [], options = {} }) {
   const opt = { ...DEFAULTS, ...options };
   const { accepted, rejected } = loadPayloads(payloadFiles, { source: "ikyu", storeKey, asOf });
   const gaps = [], problems = [];
@@ -381,6 +383,33 @@ export function assembleIkyuSources({ storeKey, storeName, asOf, payloadFiles = 
     else if (pub.capturedOn && daysBetween(pub.capturedOn, asOf) > opt.ikyuPublicMaxAgeDays) gaps.push(`一休の公開評価が古い（${pub.capturedOn} の取得）`);
     if (!input.ownerReviews) gaps.push("一休の管理画面クチコミ（件数・要返信・新着）");
   }
+  // 比較店（scripts/ikyu/competitors-config.json で選んだ近隣店の公開ページ）: 作成日以前・ikyuPublicMaxAgeDays 以内の最新
+  let knownGaps = KNOWN_GAPS.ikyu;
+  const compSources = [];
+  const cfg = (() => { try { return competitorConfig(storeKey); } catch { return null; } })();
+  if (input && (cfg || competitorFiles.length)) {
+    const snaps = [];
+    for (const file of competitorFiles) {
+      let snap;
+      try { snap = readJson(file); } catch { rejected.push({ file, reason: "JSON ではありません" }); continue; }
+      if (String(snap?.storeId) !== String(storeKey)) continue;
+      const problem = competitorSnapshotProblem(snap, storeKey);
+      if (problem) { rejected.push({ file, reason: problem }); continue; }
+      const capturedOn = japanDate(snap.capturedAt);
+      if (capturedOn > asOf) { rejected.push({ file, reason: `作成日より後の取得（${capturedOn}）。取得時点の値は使いません` }); continue; }
+      if (daysBetween(capturedOn, asOf) > opt.ikyuPublicMaxAgeDays) { rejected.push({ file, reason: `古い取得（${capturedOn}）` }); continue; }
+      snaps.push({ file, snap, capturedOn });
+    }
+    const best = snaps.sort((a, b) => String(b.snap.capturedAt).localeCompare(String(a.snap.capturedAt)))[0];
+    if (best) {
+      input.competitors = competitorRows(best.snap, { ownName: input.storeName, ownProfile: input.publicProfile ?? {} });
+      input.areaLabel = input.areaLabel ?? best.snap.areaLabel ?? null;
+      input.competitorsNote = best.snap.selection ?? null;
+      input.competitorsCapturedOn = best.capturedOn;
+      compSources.push({ kind: "competitors", file: best.file, capturedAt: best.snap.capturedAt, rows: best.snap.competitors.length });
+      knownGaps = [...KNOWN_GAPS.ikyu.filter((g) => !g.startsWith("一休の競合比較")), "一休の比較店のプラン価格: 未対応（公開ページの価格帯だけ）"];
+    } else if (cfg) gaps.push(`一休の比較店（${cfg.competitors.length}店）の公開ページ: ${opt.ikyuPublicMaxAgeDays}日以内の取得がありません（scripts/ikyu-public-competitors.mjs）`);
+  }
   const keptDays = (a) => (a.store.pageviews?.months ?? []).flatMap((m) => m.days ?? []).filter((d) => d?.date && d.date < asOf && d.date < a.capturedOn && isNum(d.pv)).map((d) => d.date);
   const onTime = new Set(accepted.filter((a) => !a.late).flatMap(keptDays));
   const notes = [];
@@ -391,7 +420,7 @@ export function assembleIkyuSources({ storeKey, storeName, asOf, payloadFiles = 
     if (filled.length) notes.push(`一休の日別 PV ${filled.join("・")} は作成日より後の取得（${a.capturedOn}・${path.basename(path.dirname(a.file))}）から補いました（日付つきの行だけ。取得時点の公開ページ・クチコミは使っていません）`);
     return { ...base, late: true, scope: LATE_SCOPE, filledDates: filled };
   });
-  return { input, sources, rejected, gaps, problems, notes, knownGaps: KNOWN_GAPS.ikyu };
+  return { input, sources: [...sources, ...compSources], rejected, gaps, problems, notes, knownGaps };
 }
 
 /** 入力 JSON に付ける出どころ（weekly-deliver --send が確認する） */

@@ -348,11 +348,13 @@ export function buildIkyuWeeklyView(input) {
       idea: reviewIdea,
     },
     competitors: {
-      heading: { number: "03 / COMPETITORS", title: "競合比較（評価上位店）", lead: "評価と口コミ件数を切り替えて確認できます。" },
+      heading: input.competitorsNote
+        ? { number: "03 / COMPETITORS", title: "競合比較（近隣の比較店）", lead: `${input.competitorsNote}。評価と口コミ件数を切り替えて確認できます。` }
+        : { number: "03 / COMPETITORS", title: "競合比較（評価上位店）", lead: "評価と口コミ件数を切り替えて確認できます。" },
       areaLabel,
       list: competitors.map((c) => ({ name: c.own ? `${name}（自店）` : c.name, rating: c.rating ?? null, reviews: c.reviews ?? null, own: !!c.own })),
       insight: input.competitorInsight ?? (ratedOthers.length && isNum(profile.rating)
-        ? `自店の公開評価は${ownRatingText}。比較店（${Math.min(...ratedOthers.map((c) => c.rating)).toFixed(2)}–${Math.max(...ratedOthers.map((c) => c.rating)).toFixed(2)}）と並べています。`
+        ? `自店の公開評価は${ownRatingText}。比較店（${Math.min(...ratedOthers.map((c) => c.rating)).toFixed(2)}–${Math.max(...ratedOthers.map((c) => c.rating)).toFixed(2)}）と並べています。${otherComps.length > ratedOthers.length ? `評価が出ていない比較店${otherComps.length - ratedOthers.length}店は、一休の規定評価数に達しておらず評価が非表示のため「未取得」です。` : ""}`
         : "一休の競合スナップショット：未取得（エリア上位店の取得は未対応）。"),
       side: {
         title: "価格帯の確認",
@@ -362,13 +364,15 @@ export function buildIkyuWeeklyView(input) {
         bullets: [
           { label: "評価", text: `${ownRatingText}${ratedOthers.length ? ` ／ 比較店 ${Math.min(...ratedOthers.map((c) => c.rating)).toFixed(2)}–${Math.max(...ratedOthers.map((c) => c.rating)).toFixed(2)}` : " ／ 比較店：未取得"}` },
           { label: "口コミ数", text: `${fmt(profile.reviewCount)} ／ 比較店：${otherComps.some((c) => isNum(c.reviews)) ? "一覧参照" : NA}` },
-          { label: "プラン価格", text: "比較店：未取得。プラン掲載ページの取得後に比較します。" },
+          otherComps.some((c) => c.price)
+            ? { label: "価格帯", text: `比較店の価格帯（公開ページの表示）は表5を参照。プラン価格は未取得です。` }
+            : { label: "プラン価格", text: "比較店：未取得。プラン掲載ページの取得後に比較します。" },
         ],
       },
       table: competitors.length ? {
-        caption: `表5 競合比較（出典：一休公開ページ／${slashDate(asOf)} 取得／評価は点、口コミは件）`,
+        caption: `表5 競合比較（出典：一休公開ページ／${slashDate(input.competitorsCapturedOn ?? asOf)} 取得／評価は点、口コミは件${input.competitorsNote ? `／${input.competitorsNote}` : ""}）`,
         head: [{ label: "#" }, { label: "店名" }, { label: "評価", num: true }, { label: "口コミ", num: true }, { label: "価格帯" }, { label: "最寄駅" }],
-        rows: competitors.map((c, i) => ({ cls: c.own ? "own" : "", cells: [c.own ? "—" : String(i + 1), `${c.name}${c.own ? "（自店）" : ""}`, n(isNum(c.rating) ? Number(c.rating).toFixed(2) : NA), n(fmt(c.reviews)), c.price ?? NA, c.station ?? NA] })),
+        rows: competitors.map((c) => ({ cls: c.own ? "own" : "", cells: [c.own ? "—" : String(otherComps.indexOf(c) + 1), `${c.name}${c.own ? "（自店）" : ""}`, n(isNum(c.rating) ? Number(c.rating).toFixed(2) : NA), n(fmt(c.reviews)), c.price ?? NA, c.station ?? NA] })),
       } : null,
       changeNote: "前回スナップショットが無い項目は、変化の有無を推定していません。",
       missing: "一休の競合詳細",

@@ -3,7 +3,8 @@
 //   node scripts/weekly-assemble.mjs --runs-dir /workspace \
 //     --tabelog-store 13245351 --ikyu-store 112789 --name "BISTRO CAVA CAVA" [--as-of 2026-10-05] \
 //     --out-dir /workspace/run-YYYYMMDD-weekly-<店舗> [--allow-gaps]
-//   追加・上書きの元ファイル（任意・複数可）: --tabelog-payload f.json --ikyu-payload f.json --owner-home owner-home.html --access-ranking tabelog_access_ranking-2026-09.html
+//   追加・上書きの元ファイル（任意・複数可）: --tabelog-payload f.json --ikyu-payload f.json --owner-home owner-home.html --access-ranking tabelog_access_ranking-2026-09.html --ikyu-competitors ikyu-competitors.json
+//   一休の競合比較: runs-dir の ikyu-competitors.json（scripts/ikyu-public-competitors.mjs。作成日以前・14日以内の最新）
 // 出力: <out-dir>/tabelog-input.json・ikyu-input.json（assembled = 元ファイル・取得日時・足りない項目）と assemble-report.json。
 // 終了コード: 0 = 送ってよい / 1 = 必須の実データが欠けている・stub を検出（送らない）/ 3 = 公開ページなど取れるはずの項目が欠けている（取り直すか --allow-gaps）。
 // 次: node scripts/weekly-deliver.mjs --tabelog-input <out>/tabelog-input.json --ikyu-input <out>/ikyu-input.json … --publish-dir public（docs/weekly-report.md）
@@ -26,7 +27,7 @@ export function runWeeklyAssemble(argv, { log = console.error, now = new Date() 
   if (typeof args["out-dir"] !== "string") throw new Error("--out-dir を指定してください");
   const name = typeof args.name === "string" ? args.name : undefined;
   const allowGaps = args["allow-gaps"] === true;
-  const found = typeof args["runs-dir"] === "string" ? discoverRunFiles(args["runs-dir"]) : { payloads: [], ownerHomes: [], rankings: [], skipped: [] };
+  const found = typeof args["runs-dir"] === "string" ? discoverRunFiles(args["runs-dir"]) : { payloads: [], ownerHomes: [], rankings: [], ikyuCompetitors: [], skipped: [] };
   const ranking = (file) => ({ file, month: path.basename(file).match(/(\d{4}-\d{2})/)?.[1] ?? "" });
   fs.mkdirSync(args["out-dir"], { recursive: true });
 
@@ -45,7 +46,7 @@ export function runWeeklyAssemble(argv, { log = console.error, now = new Date() 
     report.sites.tabelog = { file: files.tabelog, problems: r.problems, gaps: r.gaps, notes: r.notes ?? [], knownGaps: r.knownGaps, sources: out.assembled.sources, rejected: out.assembled.rejected };
   }
   if (ikyuStore) {
-    const r = assembleIkyuSources({ storeKey: ikyuStore, storeName: name, asOf, payloadFiles: [...found.payloads, ...list(args["ikyu-payload"])] });
+    const r = assembleIkyuSources({ storeKey: ikyuStore, storeName: name, asOf, payloadFiles: [...found.payloads, ...list(args["ikyu-payload"])], competitorFiles: [...(found.ikyuCompetitors ?? []), ...list(args["ikyu-competitors"])] });
     const out = { ...(r.input ?? { storeKey: ikyuStore, storeName: name, asOf }), assembled: assembledStamp({ site: "ikyu", asOf, result: r, allowGaps, now }) };
     files.ikyu = path.join(args["out-dir"], "ikyu-input.json");
     fs.writeFileSync(files.ikyu, `${JSON.stringify(out, null, 2)}\n`);
